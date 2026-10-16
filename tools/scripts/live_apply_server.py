@@ -72,8 +72,14 @@ def main():
     parser.add_argument('--port', type=int, default=8020)
     # The real-site test plan caps each application at 60 model calls (W6 acceptance).
     parser.add_argument('--max-model-calls', type=int, default=60)
+    # Whole-task hard caps enforced per provider attempt by the usage ledger (career agent,
+    # application agent, nested decisions and retries; pause/continue do not reset them).
+    parser.add_argument('--max-provider-attempts', type=int, default=60)
+    parser.add_argument('--max-input-tokens', type=int, default=1_000_000)
     args = parser.parse_args()
     os.environ['APPLY_MAX_MODEL_CALLS'] = str(args.max_model_calls)
+    os.environ['JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS'] = str(args.max_provider_attempts)
+    os.environ['JOB_AGENT_TASK_MAX_INPUT_TOKENS'] = str(args.max_input_tokens)
     data = Path(args.data).resolve()
     data.mkdir(parents=True, exist_ok=True)
     os.environ['JOB_AGENT_DATABASE_URL'] = 'sqlite:///' + (data / 'eregion-apply-test.sqlite3').as_posix()
