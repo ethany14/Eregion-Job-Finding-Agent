@@ -641,9 +641,13 @@ class AgentTools:
                 "next_offset": end if end < len(options) else None}
 
     def _bind_education(self,args):
-        record=next((r for r in self.state['profile'].get('education',[]) if r['id']==args['education_id']),None)
+        # W6: the model sent the fact-reference form "education:<id>"; accept it as the id.
+        wanted=str(args['education_id']).removeprefix('education:')
+        records=self.state['profile'].get('education',[])
+        record=next((r for r in records if r['id']==wanted),None)
         if not record or not isinstance(args['fields'],list) or not 1<=len(args['fields'])<=20:
-            raise BrowserBlocked('Choose a saved education record and its observed row fields.')
+            raise BrowserBlocked('Choose a saved education record and its observed row fields. Record ids: '
+                                 + ', '.join(r['id'] for r in records))
         bindings=dict(self.state.get('education_bindings',{}));seen=set()
         from .education import combined_bindings
         for item in combined_bindings(args['fields']):

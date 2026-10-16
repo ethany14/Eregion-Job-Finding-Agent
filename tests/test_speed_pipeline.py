@@ -622,3 +622,18 @@ def test_resolve_field_writes_a_checkbox_from_a_yes_no_decision(monkeypatch):
     result=session.execute('resolve_field',{'observation_id':obs['observation_id'],'field_key':'current','value':'true','mode':'equivalent',
         'source_refs':[f"experience:{job['id']}:current"],'reason':'The resume says Present for this job.'})
     assert browser.fields[0]['value'] is True and result['verified']
+
+
+def test_bind_education_accepts_the_reference_form_of_a_record_id(monkeypatch):
+    # W6 (Adobe): "education:<id>" was refused twice before the bare id was used.
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.education import normalize_records
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    record=normalize_records([{'school':'University of Wisconsin-Madison','degree':'B.A.'}])[0]
+    browser=FakeBrowser('');browser.fields=[field('school',label='School or University*')]
+    session=AgentTools(browser,{'profile':{'education':[record]},'answers':{}},autofill=lambda:{},active=lambda:True)
+    obs=session.observe()
+    result=session.execute('bind_education',{'observation_id':obs['observation_id'],'education_id':'education:'+record['id'],
+        'fields':[{'component':'school','field_key':'school'}]})
+    assert result['education_id']==record['id'] and result['bound']==['school']
