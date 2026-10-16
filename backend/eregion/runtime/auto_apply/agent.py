@@ -77,7 +77,11 @@ TOOLS = [
          {"observation_id": TEXT, "control_id": TEXT}),
     tool("record_answers", "Interpret explicit user answers in context and save grounded, normalized field values before autofill.",
          {"observation_id": TEXT, "answers": {"type": "array", "items": {
-             "type": "object", "properties": {"field_key": TEXT, "message_id": TEXT, "quote": TEXT, "value": TEXT},
+             "type": "object", "properties": {"field_key": TEXT, "message_id": TEXT, "quote": TEXT, "value": TEXT,
+                 "reuse": {"type": "string", "enum": ["all_applications", "this_employer", "this_application"],
+                     "description": "Where this answer applies, judged from the question's meaning: a general fact (a profile URL) "
+                         "applies to all applications; a company-specific one (worked here before) to this employer; one that "
+                         "varies by posting (how you heard about this job) to this application only."}},
              "required": ["field_key", "message_id", "quote", "value"], "additionalProperties": False}}}),
     tool("update_plan", "Save the remaining steps and the current approach for this application.",
          {"steps": {"type": "array", "items": TEXT}, "approach": TEXT}),
@@ -919,8 +923,10 @@ class AgentTools:
         prepared, seen, semantic = [], set(), []
         revision = self.state.get("chat_revision", 0)
         for item in items:
-            if not isinstance(item, dict) or set(item) != {"field_key", "message_id", "quote", "value"}:
-                raise BrowserBlocked("Each answer needs a field, source message, literal quote and value.")
+            if not isinstance(item, dict) or not {"field_key", "message_id", "quote", "value"} <= set(item) <= {
+                    "field_key", "message_id", "quote", "value", "reuse"} or item.get("reuse", "this_application") not in {
+                    "all_applications", "this_employer", "this_application"}:
+                raise BrowserBlocked("Each answer needs a field, source message, literal quote and value (and optionally its reuse scope).")
             key, message_id, quote, value = (item[k] for k in ("field_key", "message_id", "quote", "value"))
             field = fields.get(key)
             message = next((m for m in messages if m["id"] == message_id and m["role"] == "user"), None)

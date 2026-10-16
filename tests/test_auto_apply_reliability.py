@@ -184,3 +184,30 @@ def test_application_allowance_survives_continue_and_grows_only_on_explicit_gran
         assert state['budget_extensions'][-1]['added']==loop_module.BUDGET_EXTENSION
     finally:
         loop.close()
+
+
+def test_verbatim_answers_the_model_scopes_broadly_are_reusable_now(database, monkeypatch):
+    # §13: LinkedIn and similar facts were re-asked on every application because chat answers
+    # became reusable only after review approval. Interpretations still wait for approval.
+    from eregion.runtime.auto_apply.loop import ApplicationLoop
+    from eregion.runtime.auto_apply.repository import ApplyRepository
+    from test_auto_apply import FakeBrowser, field, request, wait
+    repo=ApplyRepository(database.session_factory)
+    loop=ApplicationLoop(repo,browser_factory=FakeBrowser)
+    try:
+        run=loop.start(request())['run_id'];state=wait(loop,run)
+        message={'id':'m1','role':'user','text':'https://www.linkedin.com/in/example and I heard about it on their careers site'}
+        state=repo.save(state,messages=[message],fields=[*state['fields'],field('LinkedIn URL'),field('How did you hear about us?')])
+        monkeypatch.setattr(loop,'_active',lambda run_id:repo.get(run_id))
+        loop._bind_answers(run,[
+            {'field_key':'LinkedIn URL','message_id':'m1','quote':'https://www.linkedin.com/in/example','value':'https://www.linkedin.com/in/example','reuse':'all_applications'},
+            {'field_key':'How did you hear about us?','message_id':'m1','quote':'on their careers site','value':'Company website','reuse':'this_application'}],
+            state.get('chat_revision',0))
+        sources=repo.get(run)['answer_sources']
+        assert sources['LinkedIn URL']['pending_approval'] is False and sources['LinkedIn URL']['interpretation']=='user_statement'
+        assert sources['How did you hear about us?']['pending_approval'] is True
+        other,_=repo.create(request().model_copy(update={'url':'https://jobs.lever.co/other/xyz','idempotency_key':'request-0002'}))
+        recalled,_=repo.recalled_answers(other,[field('LinkedIn URL'),field('How did you hear about us?')])
+        assert recalled=={'LinkedIn URL':'https://www.linkedin.com/in/example'}
+    finally:
+        loop.close()

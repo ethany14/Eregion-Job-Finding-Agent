@@ -441,10 +441,18 @@ class ApplicationLoop:
                 if bound:
                     message["bound_answers"] = {**message.get("bound_answers", {}), **bound}
                     message["binding_method"] = "model"
-            sources = {item["field_key"]: {"type": "chat", "message_id": item["message_id"],
-                "quote": item["quote"], "interpretation": "model", "pending_approval": True} for item in items}
+            # §13: the model judges each answer's reuse scope; a verbatim statement of the user
+            # with a broader scope is reusable now, while interpretations wait for review.
+            literal = lambda item: re.sub(r'\s+', ' ', str(item['value'])).strip().casefold() == re.sub(r'\s+', ' ', item['quote']).strip().casefold()
+            scopes = {item["field_key"]: {"all_applications": "global", "this_employer": "employer"}[item["reuse"]]
+                      for item in items if item.get("reuse") in {"all_applications", "this_employer"} and literal(item)}
+            sources = {item["field_key"]: {"type": "chat", "message_id": item["message_id"], "quote": item["quote"],
+                "interpretation": "user_statement" if item["field_key"] in scopes else "model",
+                "pending_approval": item["field_key"] not in scopes} for item in items}
             updated=self.repository.save(state, answers={**state["answers"], **values},
                 answer_sources={**state.get("answer_sources", {}), **sources}, messages=messages)
+            if scopes:
+                self.repository.remember(updated, {key: values[key] for key in scopes}, scopes=scopes)
             for message_id in dict.fromkeys(item['message_id'] for item in items):
                 self._save_literal_profile_facts(updated,{i['field_key']:i['value'] for i in items if i['message_id']==message_id},message_id)
 
