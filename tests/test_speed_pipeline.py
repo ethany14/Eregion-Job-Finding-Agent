@@ -556,3 +556,17 @@ def test_no_model_request_starts_when_the_slice_cannot_fit_it(monkeypatch):
     host.deadline=time.monotonic()+120
     host.invoke([],[],Turn('',{},[]))
     assert calls==[1]
+
+
+def test_city_only_fields_are_left_to_the_model_which_may_use_a_verbatim_part():
+    # §13: autofill typed the profile's "Ithaca, NY" into City-only fields.
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.autofill import autofill
+    from eregion.runtime.auto_apply.decisions import preserves_format
+    browser=FakeBrowser('');browser.fields=[field('City*')]
+    state={'profile':{'city':'Ithaca, NY'},'answers':{},'automation_mode':'hybrid'}
+    autofill(browser,state,lambda:b'')
+    assert browser.fields[0]['value']==''  # the model decides the representation
+    assert preserves_format('Ithaca',{'profile:city':'Ithaca, NY'})
+    assert not preserves_format('Boston',{'profile:city':'Ithaca, NY'})
+    assert not preserves_format('Ith',{'profile:city':'Ithaca, NY'})

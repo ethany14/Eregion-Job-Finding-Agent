@@ -94,4 +94,8 @@ def preserves_format(value, sources):
             if len(proposed) >= 4 and international.endswith(proposed) and 0 < len(international)-len(proposed) <= 3:
                 return True
         elif clean(value) == clean(original): return True
+        # One delimited part of a compound fact, chosen by the model for a narrower control
+        # (a City-only field takes "Ithaca" from "Ithaca, NY"). The part must be verbatim.
+        elif clean(value) and any(clean(value) == clean(part) for part in re.split(r"[,;/|]", str(original))):
+            return True
     return False

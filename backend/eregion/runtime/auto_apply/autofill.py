@@ -154,10 +154,11 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
                 from eregion.domain.pdf_rendering import render_letter_pdf
                 value = render_letter_pdf(state['cover_letter'])
             if value is not None:
-                if (state.get("automation_mode") == "hybrid" and value == state["profile"].get("phone")
-                        and key not in state["answers"] and not active_decision(field,state)):
-                    # The model sees the whole contact section and decides whether
-                    # this website expects a full number or separate components.
+                if (state.get("automation_mode") == "hybrid" and value in {state["profile"].get("phone"), state["profile"].get("city")}
+                        and field["kind"] != "location" and key not in state["answers"] and not active_decision(field,state)):
+                    # The model sees the whole contact section and decides whether this
+                    # website expects a full number or separate components, or the city alone
+                    # rather than the profile's "City, ST" (Adobe/Salesforce: City = "Ithaca, NY").
                     continue
                 # A custom picker can contain text while still having no selected
                 # value. Let the model explore its choices instead of repeatedly
