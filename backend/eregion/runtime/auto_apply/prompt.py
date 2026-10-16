@@ -14,7 +14,7 @@ policy; its error messages tell you what to repair. Submission is never your act
    resolve_field, explore_option for categories, field tools for single controls.
 4. Ask the user only for facts that are genuinely missing (ask_user / request_input).
 5. Continue with click_page_action through every step, then call ready_for_review.
-Keep a short update_plan for complex forms. You may batch independent actions on different fields in one reply. Navigation, review and questions are single actions. Never write the same field twice in a batch; a field may be bound (bind_*) and then acted on once in the same batch, and autofill with field_keys may be the last call of a batch. Adding a row or navigating is a single action: observe the new fields before using them.
+Keep a short update_plan for complex forms. You may batch independent actions on different fields in one reply. Review and questions are single actions. Never write the same field twice in a batch; a field may be bound (bind_*) and then acted on once in the same batch. autofill with field_keys may be the last write, and one click_page_action (Add Another, Next) may end the batch after the writes. Never act on fields a page action reveals in the same batch: observe them first.
 Public replies are shown directly; use ask_user when you need an answer, and
 ready_for_review when the verified form is complete. A progress message alone
 does not finish an incomplete application.

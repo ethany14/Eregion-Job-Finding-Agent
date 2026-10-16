@@ -65,7 +65,16 @@ def test_bind_decide_and_scoped_fill_fit_one_turn():
           ('autofill', {'field_keys': ['a', 'b']}))
 
 
+def test_writes_then_one_page_action_fit_one_turn():
+    batch(('bind_experience', {'fields': [{'field_key': 'a'}]}), ('resolve_field', {'field_key': 'c'}),
+          ('autofill', {'field_keys': ['a']}), ('click_page_action', {'control_id': 'add'}))
+    batch(('click_page_action', {'control_id': 'next'}),)
+
+
 @pytest.mark.parametrize('calls', [
+    [('click_page_action', {'control_id': 'add'}), ('resolve_field', {'field_key': 'a'})],     # page action not last
+    [('click_page_action', {'control_id': 'add'}), ('click_page_action', {'control_id': 'next'})],
+    [('autofill', {'field_keys': ['a']}), ('resolve_field', {'field_key': 'b'}), ('click_page_action', {'control_id': 'x'})],
     [('resolve_field', {'field_key': 'a'}), ('type_from_source', {'field_key': 'a'})],          # two writes
     [('resolve_field', {'field_key': 'a'}), ('bind_experience', {'fields': [{'field_key': 'a'}]})],  # bind after write
     [('autofill', {'field_keys': ['a']}), ('resolve_field', {'field_key': 'b'})],               # autofill not last

@@ -671,6 +671,9 @@ class AgentTools:
             self.state.update(page_history=history, review_fields=list(review.values()))
             if self.checkpoint: self.checkpoint(page_history=history, review_fields=list(review.values()))
             self.browser.click_page_action(control)
+            # A page action changes the structure (Add Another keeps url and heading): the next
+            # observation must show the whole changed page, not a detail scope chosen before it.
+            self._save_decisions(observation_scope=None, observation_scope_page=None)
             self.visual_field_key = None
             self.autofill_called = False
             self.observed_options.clear()

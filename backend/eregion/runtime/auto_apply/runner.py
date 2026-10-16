@@ -163,7 +163,7 @@ class ApplicationHost:
         return Turn(SYSTEM, snapshot, tools, snapshot.get('chat_revision', 0), images,
             batchable=frozenset({'type_from_source', 'choose_option', 'resolve_field', 'record_answers',
                 'use_remembered_answer', 'bind_document', 'bind_education', 'bind_experience', 'draft_answer', 'say',
-                'update_plan', 'search_options', 'inspect_field', 'autofill'}),
+                'update_plan', 'search_options', 'inspect_field', 'autofill', 'click_page_action'}),
             compatibility_tools=[t for t in TOOLS if t['function']['name'] in {'observe', 'use_chat_answer'} | ({'autofill'} if not fill_available else set())])
 
     def validate_batch(self, calls, turn):
@@ -173,13 +173,22 @@ class ApplicationHost:
         # Experience-page test: binding a row, saving its checkbox decision and filling it took
         # separate rounds. A field may be bound and then acted on once in the same turn, and a
         # scoped autofill may close the batch for fields no other call in it writes.
+        # Experience-page test 2 (12 calls, Next not reached): each Add Another took its own
+        # round. A page action may close a batch after its writes; it runs on the refreshed
+        # fields (Next re-checks them) and the next turn observes the changed page.
+        last = len(calls) - 1
+        if any(c['name'] == 'click_page_action' for c in calls[:-1]):
+            raise ToolArgumentsError('click_page_action changes the page: it may only be the last call of a batch.')
+        tail = last - (calls[-1]['name'] == 'click_page_action')
         for index, call in enumerate(calls):
+            if call['name'] == 'click_page_action':
+                continue
             if call['name'] == 'autofill' and len(calls) == 1:
                 continue  # A lone autofill keeps its own rules (saved or page scope).
             if call['name'] == 'autofill':
                 keys = call['args'].get('field_keys')
-                if index != len(calls) - 1 or not isinstance(keys, list) or not keys:
-                    raise ToolArgumentsError('autofill in a batch must be the last call and name its field_keys.')
+                if index != tail or not isinstance(keys, list) or not keys:
+                    raise ToolArgumentsError('autofill in a batch must be the last write (before any page action) and name its field_keys.')
                 if any(key not in observed for key in keys):
                     raise ToolArgumentsError('Observe a newly revealed field before batching an action for it.')
                 if set(keys) & seen:

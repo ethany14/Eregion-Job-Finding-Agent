@@ -97,3 +97,76 @@ def test_sibling_corruption_is_not_reported_as_success():
         with pytest.raises(BrowserBlocked) as error:b.fill_plain(month,'08')
         assert error.value.code=='date_group_changed'
     finally:b.close()
+
+
+def test_batched_turns_fill_four_records_and_reach_next_through_the_loop(monkeypatch):
+    """Experience-page test 2: the real model needed 12 rounds and never pressed Next. Through the
+    production loop, three scripted turns (writes + one page action each) complete the page.
+    Proves tools and flow only; the decisions here are scripted, not a model's."""
+    import json
+    from langchain_core.messages import AIMessage, HumanMessage
+    from eregion.runtime.auto_apply.agent import HybridApplicationAgent
+    monkeypatch.setattr('eregion.runtime.auto_apply.fast_options.fill_options', lambda *a, **k: [])
+    b = PageBrowser(URL)
+    state = {'automation_mode': 'hybrid', 'answers': {}, 'status': 'running', 'chat_revision': 1, 'messages': [], 'profile': {'experience': [
+        {'id': 'one', 'title': 'Research', 'company': 'University', 'start_date': 'Aug 2026', 'current': 'Present'},
+        {'id': 'two', 'title': 'Intern', 'company': 'Employer', 'start_date': 'Jul 2022', 'end_date': 'Aug 2022'}],
+        'education': [{'id': 'a', 'school': 'School A', 'degree': 'Masters', 'field_of_study': 'Systems Engineering'},
+                      {'id': 'b', 'school': 'School B', 'degree': 'Bachelors', 'field_of_study': 'Computer Science'}]}}
+    work = {'jobTitle': 'title', 'companyName': 'company', 'startDate-dateSectionMonth-input': 'start_month', 'startDate-dateSectionYear-input': 'start_year'}
+
+    def k(snap, part, n):
+        return next(f['key'] for f in snap['fields'] if part in f['key'] and f['key'].endswith(f':{n}'))
+
+    def control(snap, label):
+        return next(c['id'] for c in snap['page']['controls'] if c['label'].startswith(label))
+
+    def turn1(s):
+        jobs = [{'field_key': k(s, p, 1), 'component': c} for p, c in work.items()]
+        school = [{'field_key': k(s, 'schoolName', 1), 'component': 'school'}, {'field_key': k(s, 'fieldOfStudy', 1), 'component': 'field_of_study'}]
+        return [('bind_experience', {'experience_id': 'one', 'fields': jobs}),
+                ('bind_education', {'education_id': 'a', 'fields': [*school, {'field_key': k(s, 'degree', 1), 'component': 'degree'}]}),
+                ('resolve_field', {'field_key': k(s, 'current', 1), 'mode': 'equivalent', 'value': 'true', 'source_refs': ['experience:one:current'], 'reason': 'Scripted.'}),
+                ('resolve_field', {'field_key': k(s, 'degree', 1), 'mode': 'equivalent', 'value': 'Masters', 'source_refs': ['education:a:degree'], 'reason': 'Scripted.'}),
+                ('autofill', {'field_keys': [x['field_key'] for x in jobs + school]}),
+                ('click_page_action', {'control_id': control(s, 'Add Another Work')})]
+
+    def turn2(s):
+        jobs = [{'field_key': k(s, p, 2), 'component': c} for p, c in {**work, 'endDate-dateSectionMonth-input': 'end_month', 'endDate-dateSectionYear-input': 'end_year'}.items()]
+        return [('bind_experience', {'experience_id': 'two', 'fields': jobs}),
+                ('resolve_field', {'field_key': k(s, 'current', 2), 'mode': 'equivalent', 'value': 'false', 'source_refs': ['experience:two:end_date'], 'reason': 'Scripted.'}),
+                ('autofill', {'field_keys': [x['field_key'] for x in jobs]}),
+                ('click_page_action', {'control_id': control(s, 'Add Another Education')})]
+
+    def turn3(s):
+        school = [{'field_key': k(s, 'schoolName', 2), 'component': 'school'}, {'field_key': k(s, 'fieldOfStudy', 2), 'component': 'field_of_study'}]
+        return [('bind_education', {'education_id': 'b', 'fields': [*school, {'field_key': k(s, 'degree', 2), 'component': 'degree'}]}),
+                ('resolve_field', {'field_key': k(s, 'degree', 2), 'mode': 'equivalent', 'value': 'Bachelors', 'source_refs': ['education:b:degree'], 'reason': 'Scripted.'}),
+                ('autofill', {'field_keys': [x['field_key'] for x in school]}),
+                ('click_page_action', {'control_id': control(s, 'Next')})]
+
+    class Batches:
+        def __init__(self):
+            self.turns, self.results = iter([turn1, turn2, turn3]), []
+
+        def invoke(self, messages, tools):
+            snap = json.loads(next(m.content for m in reversed(messages) if isinstance(m, HumanMessage) and isinstance(m.content, str)))
+            self.results.append(snap.get('last_tool_result'))
+            calls = next(self.turns)(snap)
+            for name, args in calls:
+                if name not in {'autofill'}:
+                    args.setdefault('observation_id', snap['observation_id'])
+            return AIMessage(content='', tool_calls=[{'id': f'{len(self.results)}-{i}', 'name': n, 'args': a} for i, (n, a) in enumerate(calls)])
+
+    model = Batches()
+    done = lambda: b.page.get_by_role('heading', name='Application Questions').count() > 0
+    try:
+        outcome = HybridApplicationAgent(model_factory=lambda: model).run(b, state, autofill=lambda: autofill(b, state, lambda: b''),
+            active=lambda: not done(), reserve=lambda kind: True, report=lambda *a: None)
+        assert done(), (outcome, len(model.results), [h.get("tool") for h in state.get("decision_history", [])][-12:], [(h.get("result") or {}).get("error") for h in state.get("decision_history", [])][-12:])
+        assert len(model.results) == 3
+        assert b.page.evaluate('window.nextCount===1 && window.submitCount===0')
+        assert {k: d['value'] for k, d in state['field_decisions'].items() if 'current' in k} == {
+            'checkbox:workExperience--current:on:1': True, 'checkbox:workExperience--current:on:2': False}
+    finally:
+        b.close()
