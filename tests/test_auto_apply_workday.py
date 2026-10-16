@@ -268,3 +268,30 @@ def test_covered_workday_radio_is_chosen_through_its_label():
         browser.fill(radio,'No')
         assert browser.observe()[0]['value']=='false'
     finally:browser.close()
+
+
+@pytest.mark.parametrize('decided,checked',[('true',True),('yes',True),('Yes',True),('false',False),('no',False)])
+def test_resolve_field_ticks_a_workday_checkbox_and_the_end_date_is_no_longer_required(monkeypatch,decided,checked):
+    # W6 re-test: "I currently work here" stayed unticked ("true" reached a boolean-only writer),
+    # so the To date stayed required and Next was refused.
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.experience import normalize_records
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    class JobBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_current_job.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    job=normalize_records([{'title':'Research','company':'Cornell University','start_date':'Aug 2026','current':'Present'}])[0]
+    browser=JobBrowser(URL)
+    try:
+        session=AgentTools(browser,{'profile':{'experience':[job]},'answers':{}},autofill=lambda:{},active=lambda:True)
+        obs=session.observe()
+        box=next(f for f in session.fields if f['kind']=='checkbox')
+        assert any(f['required'] and 'To' in f['label'] for f in session.fields)
+        result=session.execute('resolve_field',{'observation_id':obs['observation_id'],'field_key':box['key'],'value':decided,
+            'mode':'equivalent','source_refs':[f"experience:{job['id']}:current"],'reason':'Resume says Present.'})
+        fields=browser.observe()
+        assert next(f for f in fields if f['key']==box['key'])['value'] is checked and result['verified']
+        assert any(f['required'] and 'To' in f['label'] for f in fields) is (not checked)
+    finally:browser.close()

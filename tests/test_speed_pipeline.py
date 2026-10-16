@@ -637,3 +637,57 @@ def test_bind_education_accepts_the_reference_form_of_a_record_id(monkeypatch):
     result=session.execute('bind_education',{'observation_id':obs['observation_id'],'education_id':'education:'+record['id'],
         'fields':[{'component':'school','field_key':'school'}]})
     assert result['education_id']==record['id'] and result['bound']==['school']
+
+
+def test_refusals_execute_nothing_end_as_refused_and_leave_resolve_field_available(monkeypatch):
+    # W6 review: a guard refusal must not execute the action, add attempts, or lead to an
+    # automatic recovery that repeats the same refusals.
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.runner import ApplicationHost, FIELD_ATTEMPT_LIMIT
+    from eregion.runtime.core.engine import Turn, LoopStop
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    browser=FakeBrowser('');browser.fields=[{**field('major',required=False),'kind':'combobox','choice_control':True,
+        'options':[{'label':'Industrial Engineering','value':'i'}]}]
+    session=AgentTools(browser,{'profile':{},'answers':{'major':'Systems Engineering'}},autofill=lambda:{},active=lambda:True)
+    session.observe()
+    host=ApplicationHost(session,object(),active=lambda:True,reserve=lambda _:True,report=lambda *args:None)
+    executed=[]
+    monkeypatch.setattr(session,'execute',lambda name,args:executed.append(name) or {'options':[]})
+    turn=Turn('',{},[])
+    for i in range(FIELD_ATTEMPT_LIMIT):
+        call={'id':str(i),'name':'search_options','args':{'field_key':'major','query':f'q{i}'}}
+        host.after_action(call,host.execute(call,turn),turn)
+    assert host.attempts(session.fields[0])==FIELD_ATTEMPT_LIMIT
+    stop=None
+    for i in range(6):
+        call={'id':f'r{i}','name':'search_options','args':{'field_key':'major','query':'same'}}
+        try:host.after_action(call,host.execute(call,turn),turn)
+        except LoopStop as exc:stop=exc;break
+    assert executed==['search_options']*FIELD_ATTEMPT_LIMIT  # refusals ran nothing
+    assert host.attempts(session.fields[0])==FIELD_ATTEMPT_LIMIT  # and added no attempts
+    assert stop is not None and stop.result['reason']=='no_progress' and stop.result['refused'] is True
+    # A different mapping decided by the model is still possible.
+    call={'id':'x','name':'resolve_field','args':{'field_key':'major'}}
+    host.history=[];host.execute(call,turn)
+    assert executed[-1]=='resolve_field'
+
+
+def test_education_reference_ids_bind_only_the_named_record(monkeypatch):
+    # W6 review: normalizing "education:<id>" must never bind another record.
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.browser import BrowserBlocked
+    from eregion.runtime.auto_apply.education import normalize_records
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    cornell,uw=normalize_records([{'school':'Cornell University','degree':'M.Eng.'},{'school':'University of Wisconsin-Madison','degree':'B.A.'}])
+    browser=FakeBrowser('');browser.fields=[field('school1',label='School or University*'),field('school2',label='School or University*')]
+    session=AgentTools(browser,{'profile':{'education':[cornell,uw]},'answers':{}},autofill=lambda:{},active=lambda:True)
+    obs=session.observe()
+    bind=lambda record_id,key:session.execute('bind_education',{'observation_id':obs['observation_id'],'education_id':record_id,
+        'fields':[{'component':'school','field_key':key}]})
+    assert bind('education:'+uw['id'],'school2')['education_id']==uw['id']
+    assert session.state['education_bindings']['school2']['source_ref']==f"education:{uw['id']}:school"
+    for wrong in ('education:'+cornell['id']+':school','edu-unknown','education:'):
+        with pytest.raises(BrowserBlocked,match='Record ids'):bind(wrong,'school1')
+    assert 'school1' not in session.state['education_bindings']

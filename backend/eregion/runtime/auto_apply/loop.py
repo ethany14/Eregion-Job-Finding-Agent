@@ -993,7 +993,7 @@ class ApplicationLoop:
             if reason=='ready' and pending_documents(state,fields):reason='document_upload_required'
             if reason == "ready" and page is not None and not page["can_submit"]:
                 reason = "navigation_required"
-            if reason != "ready" and self._schedule_recovery(run_id, reason, retry_after=outcome.get("retry_after"),
+            if reason != "ready" and not outcome.get("refused") and self._schedule_recovery(run_id, reason, retry_after=outcome.get("retry_after"),
                     progressed=self._progress_digest(fields,page,state) != before_digest):
                 return
             if reason == 'yielded':
@@ -1062,7 +1062,12 @@ class ApplicationLoop:
                         return
                     review = {f["key"]:f for f in state.get("review_fields", [])}
                     review.update({f["key"]:f for f in fields})
+                    # Optional fields left empty are the model's decision; show them at review.
+                    unfilled = [{"key": f["key"], "label": f["label"], "set_aside": f["key"] in state.get("abandoned_fields", [])}
+                                for f in review.values() if not f.get("required") and f.get("value") in (None, "", False)
+                                and f["kind"] not in {"checkbox", "file"}]
                     self.repository.save(state, status="awaiting_review", fields=fields, review_fields=list(review.values()),
+                        unfilled_optional=unfilled,
                         pending_fields=[], review_digest=digest, pending_approvals=pending_approvals(state, fields),
                         task_plan=[],
                         message="The form is filled. Check the browser and the answers below before submitting.")

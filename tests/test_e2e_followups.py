@@ -449,3 +449,19 @@ def test_new_grad_title_satisfies_junior_request_and_vice_versa():
     assert recommendation_warning({'levels': ['new_grad'], 'strict': False}, 'Junior Data Analyst', '') is None
     assert recommendation_warning({'levels': ['junior'], 'strict': False}, 'Data Analyst Intern', '')['actual'] == 'intern'
     assert recommendation_warning({'levels': ['junior'], 'strict': False}, 'Senior Data Analyst', '')['actual'] == 'senior'
+
+
+def test_inspect_application_defaults_to_what_blocks_progress():
+    # W6 review: the raw field list (~19k characters) made the career agent page through it
+    # six times. The default view names only the blocking fields; include_fields has the rest.
+    from types import SimpleNamespace
+    from eregion.runtime.career.harness import CareerHarness
+    harness = CareerHarness.__new__(CareerHarness)
+    fields = [{'key': 'end', 'label': 'To*', 'kind': 'text', 'required': True, 'value': '', 'options': [{'label': str(i)} for i in range(200)]},
+              {'key': 'title', 'label': 'Job Title*', 'kind': 'text', 'required': True, 'value': 'Research'}]
+    child = {'run_id': 'r1', 'status': 'needs_input', 'version': 3, 'fields': fields, 'messages': [], 'agent_reason': 'page_budget'}
+    harness.applications = SimpleNamespace(repository=SimpleNamespace(get=lambda run_id: child))
+    view = harness.application('r1')
+    assert 'fields' not in view and view['blocking_fields'] == [{'key': 'end', 'label': 'To*', 'kind': 'text'}]
+    assert len(str(view)) < 1000
+    assert [f['key'] for f in harness.application('r1', include_fields=True)['fields']] == ['end', 'title']

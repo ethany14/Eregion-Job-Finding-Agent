@@ -646,6 +646,13 @@ class CareerHarness:
                 'awaiting_review means prepared for the user to review; it does not mean submitted.')
         elif include_fields:
             result['fields']=compact
+        else:
+            # W6 review: the raw field list (DOM metadata, every option) was ~19k characters and
+            # the career agent paged through it 6 times. By default only what blocks progress.
+            result.pop('fields',None)
+            result['blocking_fields']=[{k:f.get(k) for k in ('key','label','kind','invalid','error') if f.get(k) not in (None,'',False)}
+                for f in controls if (f.get('required') and f.get('value') in (None,'',False)) or f.get('invalid')][:20]
+            result['field_count']=len(controls)
         if field_key:
             field = next((f for f in controls if f.get('key')==field_key),None)
             if field is None:raise ValueError('Unknown field_key. Use a key from the current application observation.')

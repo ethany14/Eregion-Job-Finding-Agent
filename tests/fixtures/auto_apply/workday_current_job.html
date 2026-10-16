@@ -1,0 +1,17 @@
+<!doctype html>
+<!-- Workday work experience (Adobe W6 re-test 2026-10-16), reduced: ticking "I currently work
+     here" removes the required To date; unticked, the To date is required. -->
+<html><body>
+<div data-automation-id="formField-currentlyWorkHere">
+  <input type="checkbox" id="workExperience-4--currentlyWorkHere" name="currentlyWorkHere">
+  <label for="workExperience-4--currentlyWorkHere">I currently work here</label>
+</div>
+<div id="to">
+  <label for="workExperience-4--endDate-dateSectionYear-input">To*</label>
+  <input id="workExperience-4--endDate-dateSectionYear-input" aria-required="true" value="">
+</div>
+<script>
+const box = document.getElementById('workExperience-4--currentlyWorkHere');
+box.addEventListener('change', () => { document.getElementById('to').style.display = box.checked ? 'none' : ''; });
+</script>
+</body></html>

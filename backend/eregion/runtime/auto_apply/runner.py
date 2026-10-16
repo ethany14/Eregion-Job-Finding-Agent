@@ -21,6 +21,8 @@ FIELD_ATTEMPT_LIMIT = 4
 # Adobe Workday spent 523 model calls, most on one page, because the step budget resets on
 # every message. One page gets this many calls per user message, then the user is asked.
 PAGE_MODEL_CALL_LIMIT = 30
+# Refusals by the progress guards: the action was not executed.
+PROTECTIVE = {'repeated_action', 'field_attempt_limit', 'unchanged_failure'}
 NON_FIELD_ACTIONS = {'observe', 'view_browser', 'say', 'ask_user', 'request_input', 'read_context', 'record_answers',
     'update_plan', 'computer_wait', 'draft_answer'}
 
@@ -349,16 +351,25 @@ class ApplicationHost:
                 'education_answer_overrides', 'document_bindings', 'document_refresh')}])
         failures = sum(h.get('fingerprint') == self.fingerprint and h.get('failed', False) for h in self.history)
         if failures >= 5:
-            raise LoopStop('no_progress', field_keys=[args['field_key']] if args.get('field_key') else [])
+            # Stopped by protective refusals (nothing was executed): a recovery would repeat
+            # the same refusals, so the loop hands back instead (W6 review).
+            refused = all((h.get('result') or {}).get('error_code') in PROTECTIVE for h in self.history
+                          if h.get('fingerprint') == self.fingerprint and h.get('failed') and isinstance(h.get('result'), dict))
+            raise LoopStop('no_progress', field_keys=[args['field_key']] if args.get('field_key') else [], refused=refused)
         if failures >= 2 and name not in {'observe', 'view_browser', 'say', 'ask_user', 'request_input', 'computer_wait'}:
             return {**action_failure('repeated_action', 'This failed action was not executed again because the page and inputs are unchanged.'), 'repeated_action': True}
         key = args.get('field_key') if isinstance(args.get('field_key'), str) else None
         field = next((f for f in session.fields if f['key'] == key), None) if key else None
-        if field is not None and name not in NON_FIELD_ACTIONS and self.attempts(field) >= FIELD_ATTEMPT_LIMIT:
+        # The limit stops repeating the same unsuccessful operation. resolve_field (a different
+        # mapping decided by the model) stays available; leaving the field empty is the model's
+        # decision, reported at review (W6 review: the count must not decide for it).
+        if (field is not None and name not in NON_FIELD_ACTIONS and name != 'resolve_field'
+                and self.attempts(field) >= FIELD_ATTEMPT_LIMIT):
             if field.get('required'):
                 raise LoopStop('no_progress', field_keys=[key])
-            return {**action_failure('field_attempt_limit', f'{FIELD_ATTEMPT_LIMIT} attempts did not fill this optional field and '
-                'nothing relevant has changed. Leave it empty or ask the user for a different answer; it does not block review.'),
+            return {**action_failure('field_attempt_limit', f'{FIELD_ATTEMPT_LIMIT} attempts with this target did not fill the field, '
+                'so repeating them is blocked. Decide from its observed options: map the fact to an option with resolve_field, '
+                'ask the user, or leave this optional field empty and say so; empty optional fields are listed at review.'),
                 'abandoned': key}
         self.text_turns = 0
         session._cached_fields = None
@@ -439,7 +450,8 @@ class ApplicationHost:
         current = {f['key']: f for f in fields}
         key = args.get('field_key') if isinstance(args.get('field_key'), str) else None
         # A refusal by the attempt limit ('abandoned') was not an attempt (W6: count reached 9).
-        tried = [key] if key and name not in NON_FIELD_ACTIONS and not outcome.get('abandoned') else []
+        refused = outcome.get('abandoned') or outcome.get('error_code') in PROTECTIVE
+        tried = [key] if key and name not in NON_FIELD_ACTIONS and not refused else []
         if name in {'autofill', 'host:autofill'}:
             # Batch failures count too, except fills skipped as unchanged (not attempted).
             tried += [k for k, d in (outcome.get('failure_details') or {}).items() if d.get('error_code') != 'unchanged_failure']

@@ -489,6 +489,7 @@ function decisions(){
     const reused=all.filter(f=>item.answer_sources?.[f.key]?.type==='memory');
     if(approvals.length)box.append(memoryApprovals(approvals,choices));
     if(reused.length){const saved=el('details','','saved-answers');saved.append(el('summary',`Filled from your saved answers (${reused.length})`));const list=el('div','','review-list');for(const f of reused){const row=el('div','','review-row');row.append(el('span',f.label,'k'),el('span',typeof f.value==='boolean'?(f.value?'Yes':'No'):String(f.value||'Not filled'),'v'));list.append(row);}saved.append(list);box.append(saved);}
+    if(item.unfilled_optional?.length){const empty=el('details','','saved-answers');empty.append(el('summary',`Optional questions left empty (${item.unfilled_optional.length})`));const list=el('div','','review-list');for(const f of item.unfilled_optional){const row=el('div','','review-row');row.append(el('span',f.label,'k'),el('span',f.set_aside?'No matching option; check it':'Left empty','v'));list.append(row);}empty.append(list);box.append(empty);}
     const actions=el('div','','actions'),submit=button('Submit application',()=>act('continue',{confirm_submit:true,
       remember:Object.fromEntries(approvals.map(a=>[a.key,choices.remember[a.key]??true])),
       memory_scopes:Object.fromEntries(approvals.map(a=>[a.key,choices.scopes[a.key]||a.scope]))},id),'primary-button');submit.disabled=chatBusy||actionBusy;
