@@ -37,6 +37,13 @@ def prepare(source, data, stop):
     app.update(status='needs_input', agent_reason='page_budget', message=stop_message, retry_at=None,
                input_request=None, pause_requested=False, cancel_requested=False)
     app['events'] = [e for e in app.get('events', []) if e['at'] <= stop]
+    # Searches observed on the real Adobe Field of Study control (read-only probe, 2026-10-15);
+    # the saved state predates the search log, so the evidence is attached with its source.
+    observed = json.loads((ROOT / 'tests/fixtures/replays/adobe_field_of_study.json').read_text(encoding='utf-8'))['observed_searches']
+    cornell = next((f['key'] for f in app['fields'] if f['key'].endswith('fieldOfStudy:1')), None)
+    if cornell:
+        app.setdefault('option_search_log', {})[cornell] = {'queries': list(observed), 'source': 'observed on Adobe 2026-10-15',
+            'seen': list(dict.fromkeys(o for results in observed.values() for o in results)), 'more_pages': False}
     task['history'] = [h for h in task['history'] if h['at'] <= stop]
     task['messages'] = [m for m in task['messages'] if m.get('at', '') <= stop]
     task.update(status='waiting', wait={'kind': 'application', 'id': run_id, 'token': 'replay-stale-token'},
@@ -66,12 +73,36 @@ def install_replay_guard(trace_path):
     CareerHarness.execute = execute
 
 
+def install_precheck_probe(path):
+    """--precheck-out: build the career agent's first real request with its real model wrapper,
+    write its size and reservation, and stop before sending (no provider attempt, no ledger row)."""
+    from eregion.runtime.provider_usage import input_reservation
+    from eregion.runtime.tasks.loop import TaskModel
+
+    def invoke(self, messages, tools):
+        bound = self.model.bind_tools(tools)
+        payload = self.model._get_request_payload(messages, **getattr(bound, 'kwargs', {}))
+        parts = {}
+        for index, message in enumerate(messages):
+            content = message.content if isinstance(message.content, str) else json.dumps(message.content, default=str)
+            parts[f'{index}:{type(message).__name__}'] = len(content)
+        record = {'model': getattr(self.model, 'model_name', None), 'messages': len(messages), 'tools': len(tools),
+                  'tool_schema_chars': len(json.dumps(tools, ensure_ascii=False)), 'message_chars': parts,
+                  'payload_bytes': len(json.dumps(payload, ensure_ascii=False, default=str).encode('utf-8')),
+                  'reservation': input_reservation(payload),
+                  'budget_sizes': self.model._budget_sizes(messages, None, getattr(bound, 'kwargs', {}))}
+        Path(path).write_text(json.dumps(record, indent=1), encoding='utf-8')
+        raise SystemExit('precheck: stopped before sending')
+    TaskModel.invoke = invoke
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', required=True)
     parser.add_argument('--data', required=True)
     parser.add_argument('--stop', required=True)
     parser.add_argument('--port', type=int, default=8025)
+    parser.add_argument('--precheck-out')
     args = parser.parse_args()
     for name in ('JOB_AGENT_EXPERIMENT_ID', 'JOB_AGENT_EXPERIMENT_LEDGER', 'JOB_AGENT_EXPERIMENT_MAX_PROVIDER_ATTEMPTS',
                  'JOB_AGENT_EXPERIMENT_MAX_INPUT_TOKENS'):
@@ -87,6 +118,8 @@ def main():
     from scripts.live_apply_server import install_guards
     install_guards(data)
     install_replay_guard(data / 'career-tool-trace.jsonl')
+    if args.precheck_out:
+        install_precheck_probe(args.precheck_out)
     import uvicorn
     uvicorn.run('eregion.api.main:app', host='127.0.0.1', port=args.port)
 

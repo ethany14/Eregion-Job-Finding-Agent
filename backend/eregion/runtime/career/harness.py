@@ -658,15 +658,32 @@ class CareerHarness:
                 # blocking (required) field does not mean every optional field is settled.
                 from eregion.runtime.auto_apply.autofill import desired_answer, matches
                 answers_state={'answers':{},'profile':{},**state}
-                result['unresolved_optional_fields']=[{'key':f['key'],'label':f.get('label')} for f in controls
+                searches=state.get('option_search_log',{})
+                def unresolved(f,wanted):
+                    # Career replay: the agent asked whether to use "Systems Engineering" without
+                    # knowing the site lists no such option. Say why each field is unresolved.
+                    log=searches.get(f['key']) or {}
+                    seen=[str(o) for o in log.get('seen',[])]
+                    entry={'key':f['key'],'label':f.get('label'),'target':wanted,
+                           **({'selected':f['value']} if f.get('value') else {})}
+                    if f.get('value'):entry['reason']='selected_value_differs_from_fact'
+                    elif log:entry['reason']=('no_matching_option_in_searches' if str(wanted).casefold() not in
+                        {x.casefold() for x in seen} else 'matching_option_seen_not_selected')
+                    else:entry['reason']='not_filled'
+                    if log:entry['search']={'queries':log.get('queries',[]),'candidates_seen':len(seen),
+                        'target_seen':str(wanted).casefold() in {x.casefold() for x in seen},
+                        **({'source':log['source']} if log.get('source') else {})}
+                    return entry
+                result['unresolved_optional_fields']=[unresolved(f,wanted) for f in controls
                     if f.get('kind') and not f.get('required') and f.get('kind')!='file'
                     and (wanted:=desired_answer(f,answers_state)) is not None and not matches(f,wanted)][:20]
                 result['budget']=self.task_budget(state.get('origin_task_id'))
                 if state.get('agent_reason') in {'page_budget','application_budget','agent_limit','no_progress'}:
                     result['next']=("Stopped on a limit: page_budget is this page's allowance, application_budget the whole "
                         "application's; budget is the task's remaining provider allowance. Tell the user the reason, the "
-                        "blocking and unresolved fields and the remaining budget, then ask how to proceed. Do not re-read all "
-                        "fields, search jobs or say the application is continuing.")
+                        "blocking and unresolved fields (with their reasons and search evidence) and the remaining budget, then "
+                        "ask how to proceed. Do not re-read all fields or search jobs. Nothing is running: any text you send must "
+                        "not say the application is continuing, being pushed toward review or being prepared.")
         if field_key:
             field = next((f for f in controls if f.get('key')==field_key),None)
             if field is None:raise ValueError('Unknown field_key. Use a key from the current application observation.')

@@ -182,7 +182,8 @@ def test_the_default_view_of_a_limit_stop_reports_budget_and_unresolved_optional
     harness.repository = SimpleNamespace(sessions=database.session_factory)
     view = harness.application('r1')
     assert view['blocking_fields'] == []
-    assert view['unresolved_optional_fields'] == [{'key': study['key'], 'label': 'Field of Study'}]
+    assert view['unresolved_optional_fields'] == [{'key': study['key'], 'label': 'Field of Study', 'target': 'Systems Engineering',
+                                                   'reason': 'not_filled'}]
     assert view['budget']['provider_attempts_left'] == 14 and 'page_budget' in view['next'] and 'application_budget' in view['next']
 
 
@@ -249,3 +250,31 @@ def test_the_replay_browser_reports_an_unrecorded_search_as_unsupported_not_as_n
     with pytest.raises(BrowserBlocked, match='no recorded website result'):
         browser.inspect_options('text:education--fieldOfStudy:1', 'Systems Engineering')
     assert browser.unsupported == [{'action': 'search', 'field_key': 'text:education--fieldOfStudy:1', 'query': 'Systems Engineering'}]
+
+
+def test_unresolved_optional_fields_carry_their_reason_and_search_evidence(database, monkeypatch):
+    # Career replay round 3: the agent asked "use Systems Engineering?" without knowing the
+    # site lists no such option. Each unresolved field now says why, with the searches made.
+    from types import SimpleNamespace
+    from eregion.runtime.career.harness import CareerHarness
+    from eregion.runtime.auto_apply.education import normalize_records
+    north, south = normalize_records([{'school': 'North University', 'degree': 'M.Eng.', 'field_of_study': 'Systems Engineering'},
+                                      {'school': 'South College', 'degree': 'B.A.', 'field_of_study': 'Computer Science'}])
+    def study(n, value):
+        return {'key': f'text:education--fieldOfStudy:{n}', 'label': 'Field of Study', 'kind': 'text', 'required': False, 'value': value, 'group': 'From'}
+    one, two = study(1, ''), study(2, 'Computer and Information Science')
+    bind = lambda f, rec: {'education_id': rec['id'], 'component': 'field_of_study', 'source_ref': f"education:{rec['id']}:field_of_study",
+                           'field': {k: f.get(k) for k in ('key', 'dom_id', 'label', 'group')}}
+    child = {'run_id': 'r1', 'status': 'needs_input', 'version': 3, 'messages': [], 'agent_reason': 'page_budget', 'message': 'stopped',
+             'fields': [one, two], 'answers': {}, 'profile': {'education': [north, south]},
+             'education_bindings': {one['key']: bind(one, north), two['key']: bind(two, south)},
+             'option_search_log': {one['key']: {'queries': ['Systems', 'Engineering'], 'seen': ['Computer Systems Analysis', 'Industrial Engineering'],
+                                                'source': 'observed on Adobe 2026-10-15'}}}
+    harness = CareerHarness.__new__(CareerHarness)
+    harness.applications = SimpleNamespace(repository=SimpleNamespace(get=lambda run_id: child))
+    harness.repository = SimpleNamespace(sessions=database.session_factory)
+    fields = {f['key']: f for f in harness.application('r1')['unresolved_optional_fields']}
+    assert fields[one['key']]['reason'] == 'no_matching_option_in_searches' and fields[one['key']]['target'] == 'Systems Engineering'
+    assert fields[one['key']]['search'] == {'queries': ['Systems', 'Engineering'], 'candidates_seen': 2, 'target_seen': False,
+                                            'source': 'observed on Adobe 2026-10-15'}
+    assert fields[two['key']]['reason'] == 'selected_value_differs_from_fact' and fields[two['key']]['selected'] == 'Computer and Information Science'
