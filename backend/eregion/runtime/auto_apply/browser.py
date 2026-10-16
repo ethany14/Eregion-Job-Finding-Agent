@@ -193,7 +193,11 @@ SCAN = r"""() => {
       const selected = [...(shell?.querySelectorAll('[data-automation-id="selectedItem"], [data-automation-id="selectedItemLabel"], [data-automation-id="selectedPrompt"]') || [])].filter(visible).map(x => clean(x.textContent));
       if (selected.length) {value = [...new Set(selected)].join('; ');committed=true;}
     }
-    const base = `${kind}:${el.name || el.id || (buttonChoice && wrapper?.getAttribute("data-field-path")) || text}${kind === 'checkbox' ? ':' + el.value : ''}`;
+    // Workday ids carry a per-render instance number ("education-148--fieldOfStudy" was
+    // "education-10--fieldOfStudy" before a re-render). Keys drop it; which entry a field
+    // belongs to is its occurrence order below. dom_id keeps the raw id for locating.
+    const stableId = (el.id || '').replace(/^([A-Za-z]+)-\d+--/, '$1--');
+    const base = `${kind}:${el.name || stableId || (buttonChoice && wrapper?.getAttribute("data-field-path")) || text}${kind === 'checkbox' ? ':' + el.value : ''}`;
     const occurrence = (counts.get(base) || 0) + 1; counts.set(base, occurrence);
     const key = `${base}:${occurrence}`.slice(0, 1000);
     // Modal menus hide sibling controls using aria-hidden. Count their stable

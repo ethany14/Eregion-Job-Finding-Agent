@@ -16,6 +16,7 @@ RECOVERY = {
     'input_pending': ('Read and bind the latest user reply. Wait or ask only if an actual fact is still missing.', False),
     'browser_session_lost': ('The browser session closed. Reopen it and restore saved progress; coordinates from the old session cannot be used.', False),
     'dom_interaction_failed': ('DOM interaction failed. Inspect the current viewport and use computer tools if available, then verify the field.', True),
+    'unchanged_failure': ('This fill already failed and nothing relevant changed. Choose a different option or source with field tools, leave an optional field, or ask the user; autofill will not retry it until something changes.', False),
     'repeated_action': ('This failed action has not changed the page. Repair its cause, try a different action, or continue independent work; do not repeat it unchanged.', False),
 }
 

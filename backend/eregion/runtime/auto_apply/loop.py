@@ -828,7 +828,8 @@ class ApplicationLoop:
                     with self.lock:
                         latest=self.repository.get(run_id)
                         if self._can_act(run_id) and latest.get('chat_revision',0)==current.get('chat_revision',0):
-                            self._checkpoint(run_id,document_refresh=current.get('document_refresh',{}))
+                            self._checkpoint(run_id,document_refresh=current.get('document_refresh',{}),
+                                autofill_failures=current.get('autofill_failures',{}))
                     fill_report.update(result)
                     return result
                 if state.get("automation_mode", "autofill") == "hybrid":

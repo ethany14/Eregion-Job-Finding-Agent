@@ -1,4 +1,6 @@
 """Reusable bulk-fill tool, with field-level failures and bounded verification."""
+import hashlib
+import json
 import time
 import re
 
@@ -103,8 +105,19 @@ def pending_documents(state,fields):
     return [kind for kind in ('resume','cover_letter') if refresh.get(kind) and kind in observed]
 
 
+def failure_signature(field, value):
+    """What must change before a failed fill is worth trying again: the target answer, the
+    control's value/options or its error state (W1, Adobe: 164 of 272 host autofills failed,
+    mostly re-attempting the same unchanged Field of Study)."""
+    target = 'document' if isinstance(value, (bytes, bytearray)) else value
+    payload = [target, field.get('value'), [o.get('label') for o in field.get('options') or []],
+               bool(field.get('invalid')), field.get('errors') or []]
+    return hashlib.sha256(json.dumps(payload, default=str, sort_keys=True).encode()).hexdigest()[:16]
+
+
 def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: True, progress=lambda *args: None):
     attempts, failed, completed, details = {}, {}, [], {}
+    memory = state.setdefault('autofill_failures', {})
     deadline = time.monotonic() + 90
     for _ in range(60):
         if not active():
@@ -152,6 +165,12 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
                 if (field.get("choice_control") and field["kind"] not in {"select", "radio", "combobox"}
                         and not field.get("options") and state.get("automation_mode") == "hybrid"):
                     continue
+                # Across calls only: within one call the bounded retry above still applies.
+                if not attempts.get(key) and memory.get(key, {}).get('signature') == failure_signature(field, value):
+                    failed[key] = memory[key]['code']
+                    details[key] = failure('unchanged_failure', 'Not retried: this fill failed before and its target, control and '
+                        'options are unchanged. Decide a different option or source, or ask the user.')
+                    continue
                 plain = field['kind'] in {'text', 'email', 'tel', 'url', 'textarea', 'number', 'search'} and not field.get('choice_control')
                 if not plain and pending:
                     break
@@ -177,6 +196,7 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
             except Exception as exc:
                 details[key] = failure_detail(exc)
                 failed[key] = details[key]['error_code']
+                memory[key] = {'signature': failure_signature(field, value), 'code': failed[key]}
         observed = browser.observe()
         current_fields = {f['key']: f for f in observed}
         for field, value in attempted:
@@ -185,11 +205,12 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
             verified = (current is None or bool(current['value'])) if field['kind'] == 'file' else current is not None and matches(current, value)
             if verified:
                 completed.append(key)
-                failed.pop(key, None); details.pop(key, None)
+                failed.pop(key, None); details.pop(key, None); memory.pop(key, None)
                 if document_kind(field, state) and state.get('document_refresh'):
                     state['document_refresh'][document_kind(field, state)] = False
             else:
                 failed[key] = 'value_not_retained'
                 details[key] = failure('value_not_retained', 'The control did not retain the supplied value.')
+                memory[key] = {'signature': failure_signature(field, value), 'code': failed[key]}
         progress(observed, 'autofill', None, 'needs_agent' if failed else 'verified')
     return {"filled": list(dict.fromkeys(completed)), "failed": failed, "failure_details": details}

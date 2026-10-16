@@ -158,7 +158,9 @@ def new_browser_bindings(state):
 def binding(field,state):
     saved=state.get('education_bindings',{}).get(field['key'])
     if not saved:return None
-    if saved.get('field')!={k:field.get(k) for k in ('key','dom_id','label','group')}:return None
+    # The raw DOM id changes on Workday re-renders; the stable key (with its entry order),
+    # label and group identify the field.
+    if {k:(saved.get('field') or {}).get(k) for k in ('key','label','group')}!={k:field.get(k) for k in ('key','label','group')}:return None
     return saved
 
 

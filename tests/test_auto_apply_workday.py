@@ -206,3 +206,29 @@ def test_filled_workday_picker_can_be_changed_without_inspecting_first():
         browser.choose_option(degree['key'],'Bachelors')
         assert browser.observe()[0]['value']=='Bachelors'
     finally:browser.close()
+
+
+def test_workday_rerender_keeps_field_keys_and_education_bindings():
+    # W1 (Adobe): education-10--fieldOfStudy became education-148--fieldOfStudy after a
+    # re-render, which dropped the record binding and the failure counts.
+    from eregion.runtime.auto_apply.education import binding
+    class RerenderBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_rerender.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=RerenderBrowser(URL)
+    try:
+        before=browser.observe()
+        keys=[f['key'] for f in before]
+        assert len(set(keys))==4 and keys[0].endswith(':1') and keys[2].endswith(':2')  # two entries kept apart
+        school2=before[2]
+        state={'education_bindings':{school2['key']:{'education_id':'uw','component':'school','source_ref':'education:uw:school',
+            'field':{k:school2.get(k) for k in ('key','dom_id','label','group')}}}}
+        browser.fill(school2,'University of Wisconsin-Madison')
+        browser.page.click('#rerender')
+        after=browser.observe()
+        assert [f['key'] for f in after]==keys and after[2]['dom_id']!=school2['dom_id']
+        assert after[2]['value']=='University of Wisconsin-Madison' and binding(after[2],state)['education_id']=='uw'
+        assert binding(after[0],state) is None  # the first entry is not the bound record
+    finally:browser.close()

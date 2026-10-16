@@ -394,8 +394,11 @@ def test_field_attempt_limit_leaves_optional_fields_and_returns_required_ones(mo
     else:
         assert host.execute(call,turn)['abandoned']=='school'
     assert len(attempted)==FIELD_ATTEMPT_LIMIT
-    # A new user message gives the field fresh attempts.
-    assert host.field_attempts(Turn('',{},[],revision=turn.revision+1))=={}
+    # A plain new message ("continue") keeps the count; a new fact for the field resets it.
+    school=session.fields[0]
+    assert host.attempts(school)==FIELD_ATTEMPT_LIMIT
+    session.state['answers']['school']='Cornell University'
+    assert host.attempts(school)==0
 
 
 def test_education_mapping_ignores_gpa_and_other_follow_up_questions():
@@ -502,3 +505,28 @@ def test_one_page_gets_a_bounded_number_of_model_calls_per_user_message(monkeypa
     assert stop.value.result['reason']=='page_budget'
     session.page_context={**session.page_context,'heading':'Application Questions'}
     host.invoke([],[],turn)  # a new page starts a new budget
+
+
+def test_autofill_does_not_repeat_an_unchanged_failure_but_retries_after_a_change():
+    # W1 (Adobe): host autofill re-attempted the same unchanged Field of Study 164 times.
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.autofill import autofill
+    browser=FakeBrowser('');browser.fields=[{**field('major',required=False),'kind':'select',
+        'options':[{'label':'Accounting','value':'a'},{'label':'Biology','value':'b'}]}]
+    tries=[]
+    def fill(current,value):
+        tries.append(value)
+        from eregion.runtime.auto_apply.browser import BrowserBlocked
+        raise BrowserBlocked('no such option',code='option_mapping_required')
+    browser.fill=fill
+    state={'profile':{},'answers':{'major':'Systems Engineering'},'automation_mode':'hybrid'}
+    first=autofill(browser,state,lambda:b'')
+    assert tries==['Systems Engineering'] and first['failed']=={'major':'option_mapping_required'}
+    again=autofill(browser,state,lambda:b'')
+    assert tries==['Systems Engineering'] and again['failure_details']['major']['error_code']=='unchanged_failure'
+    browser.fields[0]['options'].append({'label':'Systems Engineering','value':'s'})  # new candidates
+    autofill(browser,state,lambda:b'')
+    assert len(tries)==2
+    state['answers']['major']='Biology'  # a new fact
+    autofill(browser,state,lambda:b'')
+    assert tries[-1]=='Biology'

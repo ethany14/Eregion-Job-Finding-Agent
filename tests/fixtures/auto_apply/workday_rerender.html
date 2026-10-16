@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- Workday education entries (Adobe pilot 2026-10-15), reduced: re-rendering gives every
+     input a new instance number ("education-10--..." becomes "education-148--..."). -->
+<html><body>
+<div id="section"></div>
+<button type="button" id="rerender">Re-render</button>
+<script>
+let instance = 10;
+function render() {
+  const values = [...document.querySelectorAll('#section input')].map(el => el.value);
+  document.getElementById('section').innerHTML = [1, 2].map((entry, i) => {
+    const id = instance + i;
+    return `<div role="group"><h4>Education ${entry}</h4>
+      <label for="education-${id}--schoolName">School or University*</label>
+      <input id="education-${id}--schoolName" aria-required="true">
+      <label for="education-${id}--fieldOfStudy">Field of Study</label>
+      <input id="education-${id}--fieldOfStudy"></div>`;
+  }).join('');
+  document.querySelectorAll('#section input').forEach((el, i) => { el.value = values[i] || ''; });
+  instance += 138;
+}
+render();
+document.getElementById('rerender').addEventListener('click', render);
+</script>
+</body></html>

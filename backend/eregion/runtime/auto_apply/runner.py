@@ -349,12 +349,13 @@ class ApplicationHost:
         if failures >= 2 and name not in {'observe', 'view_browser', 'say', 'ask_user', 'request_input', 'computer_wait'}:
             return {**action_failure('repeated_action', 'This failed action was not executed again because the page and inputs are unchanged.'), 'repeated_action': True}
         key = args.get('field_key') if isinstance(args.get('field_key'), str) else None
-        if key and name not in NON_FIELD_ACTIONS and self.field_attempts(turn).get(key, 0) >= FIELD_ATTEMPT_LIMIT:
-            field = next((f for f in session.fields if f['key'] == key), {})
+        field = next((f for f in session.fields if f['key'] == key), None) if key else None
+        if field is not None and name not in NON_FIELD_ACTIONS and self.attempts(field) >= FIELD_ATTEMPT_LIMIT:
             if field.get('required'):
                 raise LoopStop('no_progress', field_keys=[key])
-            return {**action_failure('field_attempt_limit', f'{FIELD_ATTEMPT_LIMIT} attempts did not fill this optional field. '
-                'Leave it empty; it does not block review. Continue with other fields or call ready_for_review.'), 'abandoned': key}
+            return {**action_failure('field_attempt_limit', f'{FIELD_ATTEMPT_LIMIT} attempts did not fill this optional field and '
+                'nothing relevant has changed. Leave it empty or ask the user for a different answer; it does not block review.'),
+                'abandoned': key}
         self.text_turns = 0
         session._cached_fields = None
         outcome = session.execute(name, args)
@@ -365,13 +366,27 @@ class ApplicationHost:
             outcome = {key: value for key, value in outcome.items() if key != 'image'}
         return outcome
 
-    def field_attempts(self, turn):
-        """Unsuccessful actions per field since the user's last message."""
-        record = self.session.state.get('field_attempts') or {}
-        if record.get('revision') != turn.revision:
-            record = self.session.state['field_attempts'] = {'revision': turn.revision, 'counts': {}}
-            self.session.state['abandoned_fields'] = self.pending['abandoned_fields'] = []
-        return record['counts']
+    def _target(self, field):
+        """What a field is being filled towards: the desired answer and its current options.
+        A new fact or new choices starts a fresh count; a plain "continue" does not (W1)."""
+        from .autofill import desired_answer
+        return outcome_fingerprint([desired_answer(field, self.session.state),
+                                    [o.get('label') for o in field.get('options') or []]])
+
+    def attempts(self, field):
+        entry = (self.session.state.get('field_attempts') or {}).get(field['key'])
+        return entry['count'] if isinstance(entry, dict) and entry.get('target') == self._target(field) else 0
+
+    def count_attempt(self, field):
+        record = self.session.state.setdefault('field_attempts', {})
+        count = self.attempts(field) + 1
+        record[field['key']] = {'target': self._target(field), 'count': count}
+        self.pending['field_attempts'] = record
+        abandoned = [k for k in self.session.state.get('abandoned_fields', []) if k != field['key']]
+        if count >= FIELD_ATTEMPT_LIMIT and not field.get('required'):
+            # Autofill skips it too; otherwise each round re-reports it as failed (Adobe).
+            abandoned.append(field['key'])
+        self.session.state['abandoned_fields'] = self.pending['abandoned_fields'] = abandoned
 
     def action_error(self, exc):
         if isinstance(exc, ToolArgumentsError):
@@ -402,16 +417,16 @@ class ApplicationHost:
                     'verified', 'decision', 'value', 'filled', 'failed', 'field_key', 'action', 'saved', 'options', 'goal', 'screen', 'target'}}})
         fields = self.browser.observe()
         self.session.fields = fields
+        current = {f['key']: f for f in fields}
         key = args.get('field_key') if isinstance(args.get('field_key'), str) else None
-        field = next((f for f in fields if f['key'] == key), None) if key and name not in NON_FIELD_ACTIONS else None
-        if field is not None and (not field.get('value') or field.get('invalid')):
-            counts = self.field_attempts(turn)
-            counts[key] = counts.get(key, 0) + 1
-            self.pending['field_attempts'] = self.session.state['field_attempts']
-            if counts[key] >= FIELD_ATTEMPT_LIMIT and not field.get('required'):
-                # Autofill skips it too; otherwise each round re-reports it as failed (Adobe).
-                abandoned = list(dict.fromkeys([*self.session.state.get('abandoned_fields', []), key]))
-                self.session.state['abandoned_fields'] = self.pending['abandoned_fields'] = abandoned
+        tried = [key] if key and name not in NON_FIELD_ACTIONS else []
+        if name in {'autofill', 'host:autofill'}:
+            # Batch failures count too, except fills skipped as unchanged (not attempted).
+            tried += [k for k, d in (outcome.get('failure_details') or {}).items() if d.get('error_code') != 'unchanged_failure']
+        for k in dict.fromkeys(tried):
+            field = current.get(k)
+            if field is not None and (not field.get('value') or field.get('invalid')):
+                self.count_attempt(field)
         self.session._cached_fields = (time.monotonic(), fields)
         self.report(fields, name, args.get('field_key'), 'failed' if failed else 'completed')
         if name == 'ready_for_review' and 'error' not in outcome:
