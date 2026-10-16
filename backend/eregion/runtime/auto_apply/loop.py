@@ -777,6 +777,28 @@ class ApplicationLoop:
             return updated
 
     @track_run('run_id', 'application')
+    def _adopt_manual_edits(self, run_id, browser, before):
+        """§13: after the user controlled the browser, their changes are their answers.
+        A field whose value changed during the takeover and differs from the agent's target
+        is kept as a manual answer, so the resumed agent does not overwrite it."""
+        try:
+            current = browser.observe()
+        except Exception:
+            return
+        earlier = {f["key"]: f.get("value") for f in before}
+        with self.lock:
+            state = self._active(run_id)
+            if state is None:
+                return
+            edits = {f["key"]: f["value"] for f in current
+                     if f["key"] in earlier and f["kind"] not in {"file", "password"} and f.get("value") not in (None, "")
+                     and f["value"] != earlier[f["key"]] and not f.get("invalid")
+                     and (desired_answer(f, state) is None or not matches(f, desired_answer(f, state)))}
+            if edits:
+                self.repository.save(state, answers={**state["answers"], **edits},
+                    answer_sources={**state.get("answer_sources", {}),
+                        **{key: {"type": "manual", "interpretation": "browser_edit", "pending_approval": True} for key in edits}})
+
     def _drive(self, run_id, approval, edited_keys=frozenset()):
         fields = None
         try:
@@ -785,12 +807,15 @@ class ApplicationLoop:
                 if state is None or state.get("pause_requested"):
                     return
                 state = self.repository.refresh_education(state)
+                taken_over = state.get("paused_for_control") and state.get("fields")
                 state = self.repository.save(state, status="running", retry_at=None, account_request=None,
                     handoff_kind=None, paused_for_control=False, message="Inspecting the application and choosing the next step.")
             browser = self.browsers.get(run_id)
             if browser is not None and not browser.is_open():
                 self._close_browser(run_id)
                 browser = None
+            if browser is not None and taken_over:
+                self._adopt_manual_edits(run_id, browser, taken_over)
             if browser is not None and getattr(browser, "headless", True) is False and hasattr(browser, "set_visible"):
                 # The user controlled the real Chrome window; the agent works hidden again.
                 try:browser.set_visible(False)

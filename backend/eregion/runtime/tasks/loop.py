@@ -151,6 +151,11 @@ class TaskLoop:
                 error=None,model_activity=None,
                 visual_fallback=state['visual_fallback'] if visual_fallback is None else visual_fallback)
             self.harness.control(state,'pause' if pause else 'resume' if resume else 'feedback')
+            if hold and not pause:
+                # A message during a pause (e.g. while the user controls the browser) is kept
+                # for the resumed agent; say so instead of answering with silence.
+                self.repository.append(task_id,role='assistant',text='Paused, so I have not acted on this yet. Your message '
+                    'is saved and I will read it when you resume: send "continue" or use Resume when you are done.')
             route=getattr(self.harness,'route_user_control',None)
             if not hold and route:
                 try:routed=route(state,message)

@@ -361,3 +361,24 @@ def test_text_with_tool_call_is_visible_before_slow_tool_finishes_and_context_is
         assert isinstance(request[1],HumanMessage)
         assert json.loads(request[-1].content)['long_context']==marker
     finally:release.set();loop.close()
+
+
+def test_a_message_during_a_pause_is_kept_and_answered_with_the_pause_state(database):
+    # §13: while the user controlled the browser, a long message with answers got no reply
+    # and the task stayed paused, which looked like the agent ignoring it.
+    from langchain_core.messages import AIMessage
+    repo=TaskRepository(database.session_factory);entered,release=Event(),Event()
+    class Model:
+        def invoke(self,*args):
+            entered.set();assert release.wait(5);return AIMessage(content='Working.')
+    loop=TaskLoop(repo,Harness(),model_factory=Model)
+    try:
+        task=loop.start('Start work.','pause-reply')
+        assert entered.wait(5);loop.chat(task['task_id'],'pause','pause-1');release.set()
+        settled(repo,task['task_id'])
+        loop.chat(task['task_id'],'My Cornell start was Aug 2026. Use that for the form.','held-1')
+        state=repo.get(task['task_id'])
+        assert state['pause_requested'] and state['status']=='needs_input'
+        assert any(m['role']=='user' and m['id']=='held-1' for m in state['messages'])
+        assert 'Paused' in state['messages'][-1]['text'] and state['messages'][-1]['role']=='assistant'
+    finally:release.set();loop.close()

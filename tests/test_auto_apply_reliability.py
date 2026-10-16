@@ -211,3 +211,26 @@ def test_verbatim_answers_the_model_scopes_broadly_are_reusable_now(database, mo
         assert recalled=={'LinkedIn URL':'https://www.linkedin.com/in/example'}
     finally:
         loop.close()
+
+
+def test_changes_made_while_the_user_controlled_the_browser_become_their_answers(database, monkeypatch):
+    # §13: resuming after a takeover could overwrite the user's manual corrections.
+    from eregion.runtime.auto_apply.autofill import autofill
+    from eregion.runtime.auto_apply.loop import ApplicationLoop
+    from eregion.runtime.auto_apply.repository import ApplyRepository
+    from test_auto_apply import FakeBrowser, request, wait
+    repo=ApplyRepository(database.session_factory);browser=FakeBrowser('')
+    loop=ApplicationLoop(repo,browser_factory=lambda _:browser)
+    try:
+        run=loop.start(request())['run_id'];state=wait(loop,run)
+        before=browser.observe()
+        assert before[0]['value']=='Test'
+        browser.fields[0]['value']='Alexandra'  # the user's manual correction
+        monkeypatch.setattr(loop,'_active',lambda run_id:repo.get(run_id))
+        loop._adopt_manual_edits(run,browser,before)
+        state=repo.get(run)
+        assert state['answers']['First name']=='Alexandra' and state['answer_sources']['First name']['type']=='manual'
+        autofill(browser,state,lambda:b'')
+        assert browser.fields[0]['value']=='Alexandra'  # not overwritten
+    finally:
+        loop.close()
