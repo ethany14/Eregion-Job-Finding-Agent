@@ -198,9 +198,6 @@ def gaps(state,fields,page,*,final=False):
             continue
         if matches(field,value):
             if item['component']=='school':represented.add(item['education_id'])
-        # An optional field the attempt limit set aside must not hold the step (Adobe:
-        # Field of Study had no option for "Systems Engineering").
-        elif not field.get('required') and field['key'] in state.get('abandoned_fields',()):continue
         else:pending.append(field['label'])
     if multiple:
         pending.extend(f"Add/complete education: {r.get('school') or r['id']} ({r.get('degree','')})"

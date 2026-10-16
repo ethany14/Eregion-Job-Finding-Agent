@@ -22,8 +22,8 @@ def _desired_answer(field, state):
     # A field tied to one education record keeps that record's facts. Adobe: the second
     # school's Degree kept a decision sourced from the profile's latest degree (M.Eng. ->
     # "Masters") although it was bound to the B.A. record.
-    if decision and bound and not any(ref == bound['source_ref'] or ref.startswith(('answer:', 'message:'))
-                                      for ref in decision.get('sources', {})):
+    if decision and bound and decision.get('mode') != 'leave_empty' and not any(
+            ref == bound['source_ref'] or ref.startswith(('answer:', 'message:')) for ref in decision.get('sources', {})):
         decision = None
     if decision: return decision["value"]
     if field['key'] in state['answers']:return state['answers'][field['key']]

@@ -465,6 +465,9 @@ function decisions(){
     if(!item.application_run_id)return;
   }
   if(item.career&&item.status==='completed'){container.append(el('p','You can keep working on these jobs or send a new request.','status-line'));return;}
+  // The agent's decisions to leave optional questions empty are shown as soon as they are made.
+  const leftEmpty=Object.entries(item.field_decisions||{}).filter(([,d])=>d?.mode==='leave_empty');
+  if(leftEmpty.length&&!terminal.has(item.status)){const note=el('div','','decision left-empty');note.append(el('p',`Left empty by the agent (${leftEmpty.length})`,'eyebrow'));for(const [key,d] of leftEmpty){const field=(item.fields||[]).find(f=>f.key===key);note.append(el('p',`${field?.label||d.field?.label||key}: ${d.reason}`));}container.append(note);}
   if(!terminal.has(item.status)&&renderPendingQuestion({item,container,drafts:answerDrafts,busy:chatBusy||actionBusy,reply:body=>act('reply',body,id),el,button,renderText:renderMarkdown}))return;
   if(['running','queued','waiting','submitting'].includes(item.status)){container.append(el('p',item.message,'status-line'));return;}
   if(terminal.has(item.status)){const box=el('div','','decision');box.append(el('h3',statuses[item.status]),el('p',item.confirmation?.text||item.message));if(item.can_reopen){const resumeButton=button('Resume application',()=>act('resume',{},id),'primary-button');resumeButton.disabled=chatBusy||actionBusy;box.append(resumeButton);}box.append(button('Next application',()=>reset()));container.append(box);return;}

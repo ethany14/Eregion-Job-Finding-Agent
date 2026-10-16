@@ -1617,6 +1617,17 @@ class CareerHarness:
         if args.get('kind')!='application':return False
         return self.applications.repository.get(args['id'])['status'] in {'submitted','submission_unknown','failed','cancelled'}
 
+    def task_budget(self,task_id):
+        """Used and remaining provider attempts / input tokens for the task (None when uncapped)."""
+        from eregion.runtime.provider_usage import task_limits, UsageLedger
+        limits=task_limits()
+        if not task_id or not limits:return None
+        used=UsageLedger(self.repository.sessions).summary(task_id=task_id)
+        result={'provider_attempts_used':used['calls'],'input_tokens_used':used['budget_input_tokens']}
+        if 'provider_attempts' in limits:result['provider_attempts_left']=max(0,limits['provider_attempts']-used['calls'])
+        if 'input_tokens' in limits:result['input_tokens_left']=max(0,limits['input_tokens']-used['budget_input_tokens'])
+        return result
+
     def capability_stopped(self,args):
         """An application paused for input never wakes a wait by itself (Veeva pilot: a
         model-timeout pause left the task waiting while the user's "continue" went nowhere)."""
@@ -1625,7 +1636,8 @@ class CareerHarness:
         if child['status'] in {'queued','running','submitting'} or self.capability_finished(args):return None
         view=self.application(args['id'])
         result={'changed':True,'status':child['status'],'message':child.get('message'),'agent_reason':child.get('agent_reason'),
-            'blocking_fields':view.get('blocking_fields',[]),'input_request':child.get('input_request')}
+            'blocking_fields':view.get('blocking_fields',[]),'input_request':child.get('input_request'),
+            'budget':self.task_budget(child.get('origin_task_id'))}
         if child.get('input_request'):
             result['next']=("The application asks the user the input_request question. Ask the user unless their latest "
                             "message already answers it; then forward that message with reply_application.")
@@ -1633,7 +1645,7 @@ class CareerHarness:
             # Adobe re-test: after a page-budget stop the career agent spent 10 calls re-inspecting
             # the full field list and searching jobs, and never told the user what was blocking.
             result['next']=("The application stopped on a limit and needs the user's decision. Tell the user what blocks "
-                            "it (message, blocking_fields) and ask whether to continue. Do not inspect it again, search "
+                            "it (message, blocking_fields) and the remaining budget, and ask whether to continue. Do not inspect it again, search "
                             "jobs or open the posting unless the user asks; if you must investigate, say which "
                             "uncertainty you are resolving.")
         else:

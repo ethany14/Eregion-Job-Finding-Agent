@@ -68,8 +68,11 @@ TOOLS = [
     tool("computer_type", "Type a confirmed source into the currently focused control; replace selects its existing text first. Never type a password here.",
          {**SCREEN, "field_key":TEXT, "source_ref":TEXT, "replace":{"type":"boolean"}}),
     tool("computer_wait", "Wait briefly for a visual transition, then read a fresh screenshot.", SCREEN),
-    tool("resolve_field", "Apply a model-decided representation of a confirmed fact, semantic option mapping, or incidental default. Saves only a run-local decision, never a new candidate fact.",
-         {**FIELD, "mode":{"type":"string", "enum":["format", "equivalent", "default"]}, "value":TEXT,
+    tool("resolve_field", "Apply a model-decided representation of a confirmed fact, semantic option mapping, or incidental default. "
+         "Saves only a run-local decision, never a new candidate fact. mode=leave_empty records your decision to leave an "
+         "OPTIONAL field empty when no observed option reliably represents the fact (value may be empty; give the reason); "
+         "it is shown to the user immediately. Never pick a merely similar option instead.",
+         {**FIELD, "mode":{"type":"string", "enum":["format", "equivalent", "default", "leave_empty"]}, "value":TEXT,
           "source_refs":{"type":"array", "items":TEXT}, "reason":TEXT}),
     tool("explore_option", "Enter an observed category to find a user's intended leaf. Read returned children/new fields; the category is not the final answer.",
          {**FIELD, "source_ref":TEXT, "option_label":TEXT, "reason":TEXT}),
@@ -822,6 +825,19 @@ class AgentTools:
 
     def _resolve_field(self, field, args):
         value, mode, refs, reason = (args[k] for k in ("value", "mode", "source_refs", "reason"))
+        if mode == "leave_empty":
+            # The model's explicit decision for an optional field; the attempt limit only stops
+            # repetition and never decides this (W6 review).
+            if field.get("required"):
+                raise BrowserBlocked("Only an optional field can be left empty; ask the user for a required one.")
+            if not isinstance(reason,str) or not 0 < len(reason) <= 1000:
+                raise BrowserBlocked("Explain why no observed option represents the fact.")
+            decisions = {**self.state.get("field_decisions", {}), field["key"]: {"field": signature(field), "value": None,
+                "mode": "leave_empty", "sources": {}, "original_answer": candidate_answer(field, self.state["profile"], self.state["answers"]),
+                "reason": reason}}
+            self._save_decisions(field_decisions=decisions)
+            return {"field_key": field["key"], "left_empty": True, "reason": reason,
+                    "next": "Recorded and shown to the user. Continue with the other fields or the next step."}
         if mode not in {"format", "equivalent", "default"} or not isinstance(value,str) or not 0 < len(value) <= 2000 or not isinstance(reason,str) or not 0 < len(reason) <= 1000:
             raise BrowserBlocked("Give a bounded value and explain its relationship to the source and page.")
         if not isinstance(refs,list) or len(refs)>6 or not all(isinstance(r,str) for r in refs):

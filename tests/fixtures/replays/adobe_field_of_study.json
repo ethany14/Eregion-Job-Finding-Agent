@@ -1,0 +1,166 @@
+{
+ "source": "apply-test-04 run 7f0ac8fb (Adobe Workday, 2026-10-16), saved state; no personal values",
+ "field": {
+  "key": "text:education--fieldOfStudy:1",
+  "kind": "text",
+  "label": "Field of Study",
+  "required": false,
+  "value": "",
+  "choice_control": true,
+  "options": [
+   {
+    "label": "Accounting",
+    "value": "Accounting",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Actuarial Science",
+    "value": "Actuarial Science",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Advertising",
+    "value": "Advertising",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Aerospace Engineering",
+    "value": "Aerospace Engineering",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "African-American Studies",
+    "value": "African-American Studies",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "African Languages, Literatures, and Linguistics",
+    "value": "African Languages, Literatures, and Linguistics",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "African Studies",
+    "value": "African Studies",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Agricultural/Biological Engineering and Bioengineering",
+    "value": "Agricultural/Biological Engineering and Bioengineering",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Agricultural Business and Management",
+    "value": "Agricultural Business and Management",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Agricultural Economics",
+    "value": "Agricultural Economics",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Agricultural Education",
+    "value": "Agricultural Education",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Agricultural Journalism",
+    "value": "Agricultural Journalism",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Agricultural Mechanization",
+    "value": "Agricultural Mechanization",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   },
+   {
+    "label": "Agricultural Technology Management",
+    "value": "Agricultural Technology Management",
+    "role": "option",
+    "automation_id": "menuItem",
+    "expandable": false,
+    "disabled": false
+   }
+  ],
+  "group": "From",
+  "section": "Field of Study / Education / My Experience",
+  "dom_id": "education-10--fieldOfStudy"
+ },
+ "binding": {
+  "education_id": "edu-c06892cd6928ceac",
+  "component": "field_of_study",
+  "source_ref": "education:edu-c06892cd6928ceac:field_of_study"
+ },
+ "profile_fact": "Systems Engineering",
+ "observed_searches": {
+  "Systems": [
+   "Computer Systems Analysis",
+   "Management Information Systems"
+  ],
+  "Engineering": [
+   "Aerospace Engineering",
+   "Agricultural/Biological Engineering and Bioengineering",
+   "Architectural Engineering",
+   "Automotive Engineering",
+   "Biomedical Engineering",
+   "Ceramic Engineering",
+   "Chemical Engineering",
+   "Civil Engineering",
+   "Computer Engineering",
+   "Electrical Engineering",
+   "Engineering Mechanics",
+   "Engineering Physics",
+   "Environmental/Environmental Health Engineering",
+   "Geological Engineering",
+   "Industrial Engineering",
+   "Mechanical Engineering",
+   "Metallurgical Engineering",
+   "Mineral Engineering",
+   "Nuclear Engineering",
+   "Ocean Engineering",
+   "Petroleum Engineering",
+   "Sound Engineering",
+   "Textile Engineering",
+   "Welding Engineering"
+  ]
+ }
+}

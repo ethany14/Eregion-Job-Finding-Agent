@@ -369,7 +369,7 @@ class ApplicationHost:
                 raise LoopStop('no_progress', field_keys=[key])
             return {**action_failure('field_attempt_limit', f'{FIELD_ATTEMPT_LIMIT} attempts with this target did not fill the field, '
                 'so repeating them is blocked. Decide from its observed options: map the fact to an option with resolve_field, '
-                'ask the user, or leave this optional field empty and say so; empty optional fields are listed at review.'),
+                'ask the user, or record resolve_field mode=leave_empty with your reason (shown to the user).'),
                 'abandoned': key}
         self.text_turns = 0
         session._cached_fields = None

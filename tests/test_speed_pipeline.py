@@ -455,15 +455,17 @@ def test_workday_single_segment_dates_need_only_their_own_part():
     assert format_date(segment('Month'),'2026') is None
 
 
-def test_set_aside_optional_education_field_does_not_hold_the_step():
-    # Adobe pilot: the limit set Field of Study aside, but the education check still blocked Next.
+def test_only_the_models_leave_empty_decision_releases_an_optional_education_field():
+    # W6 review: the attempt count must not decide to skip a field; the model's explicit
+    # leave_empty decision does, and it is saved right away.
     from eregion.runtime.auto_apply.education import gaps
+    from eregion.runtime.auto_apply.decisions import signature
     record={'id':'e1','school':'Cornell University','field_of_study':'Systems Engineering'}
     field={'key':'study','label':'Field of Study','kind':'text','value':'','required':False,'group':'','section':''}
     binding={'education_id':'e1','component':'field_of_study','source_ref':'education:e1:field_of_study','field':{k:field.get(k) for k in ('key','dom_id','label','group')}}
-    state={'profile':{'education':[record]},'answers':{},'education_bindings':{'study':binding}}
-    assert gaps(state,[field],None)==['Field of Study']
-    state['abandoned_fields']=['study']
+    state={'profile':{'education':[record]},'answers':{},'education_bindings':{'study':binding},'abandoned_fields':['study']}
+    assert gaps(state,[field],None)==['Field of Study']  # set aside by the count: still a gap
+    state['field_decisions']={'study':{'field':signature(field),'value':None,'mode':'leave_empty','sources':{},'original_answer':None,'reason':'No such option'}}
     assert gaps(state,[field],None)==[]
 
 

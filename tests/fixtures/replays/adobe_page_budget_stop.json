@@ -1,0 +1,387 @@
+{
+ "source": "apply-test-04 run 7f0ac8fb at its page_budget stop (2026-10-16); values redacted; message as shown at the stop (meter-log 00:04:46)",
+ "application": {
+  "run_id": "7f0ac8fb-46df-489c-adb9-b2b5df264d81",
+  "status": "needs_input",
+  "agent_reason": "page_budget",
+  "message": "This page used its model-call budget without finishing. Completed fields are saved; check the highlighted fields, answer or fix them, then continue.",
+  "version": 233,
+  "origin_task_id": "7e9d866a-df4b-43cf-8c5d-88b952dd57f1",
+  "messages": [],
+  "fields": [
+   {
+    "key": "combobox:languageSelectorButton:1",
+    "label": "languageSelectorButton",
+    "kind": "combobox",
+    "required": false,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:jobTitle:1",
+    "label": "Job Title*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:companyName:1",
+    "label": "Company*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:location:1",
+    "label": "Location",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "checkbox:currentlyWorkHere:on:1",
+    "label": "I currently work here",
+    "kind": "checkbox",
+    "required": false,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:workExperience--startDate-dateSectionMonth-input:1",
+    "label": "From*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:workExperience--startDate-dateSectionYear-input:1",
+    "label": "From*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "textarea:workExperience--roleDescription:1",
+    "label": "Role Description",
+    "kind": "textarea",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "text:jobTitle:2",
+    "label": "Job Title*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:companyName:2",
+    "label": "Company*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:location:2",
+    "label": "Location",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "checkbox:currentlyWorkHere:on:2",
+    "label": "I currently work here",
+    "kind": "checkbox",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "text:workExperience--startDate-dateSectionMonth-input:2",
+    "label": "From*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:workExperience--startDate-dateSectionYear-input:2",
+    "label": "From*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:workExperience--endDate-dateSectionMonth-input:1",
+    "label": "To*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:workExperience--endDate-dateSectionYear-input:1",
+    "label": "To*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "textarea:workExperience--roleDescription:2",
+    "label": "Role Description",
+    "kind": "textarea",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "text:schoolName:1",
+    "label": "School or University*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "combobox:degree:1",
+    "label": "Degree*",
+    "kind": "combobox",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:education--fieldOfStudy:1",
+    "label": "Field of Study",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "text:gradeAverage:1",
+    "label": "Overall Result (GPA)",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "text:education--firstYearAttended-dateSectionYear-input:1",
+    "label": "From",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "text:education--lastYearAttended-dateSectionYear-input:1",
+    "label": "To (Actual or Expected)",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:schoolName:2",
+    "label": "School or University*",
+    "kind": "text",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "combobox:degree:2",
+    "label": "Degree*",
+    "kind": "combobox",
+    "required": true,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:education--fieldOfStudy:2",
+    "label": "Field of Study",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:gradeAverage:2",
+    "label": "Overall Result (GPA)",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "text:education--firstYearAttended-dateSectionYear-input:2",
+    "label": "From",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "text:education--lastYearAttended-dateSectionYear-input:2",
+    "label": "To (Actual or Expected)",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:skills--skills:1",
+    "label": "Type to Add Skills",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "file:Resume/CV:1",
+    "label": "Resume/CV",
+    "kind": "file",
+    "required": false,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "text:linkedInAccount:1",
+    "label": "Share your LinkedIn Profile site",
+    "kind": "text",
+    "required": false,
+    "invalid": false,
+    "value": "<filled>"
+   },
+   {
+    "key": "radio:lgvhdn:1",
+    "label": "lgvhdn",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhdo:1",
+    "label": "lgvhdo",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhdy:1",
+    "label": "lgvhdy",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhdz:1",
+    "label": "lgvhdz",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe0:1",
+    "label": "lgvhe0",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe1:1",
+    "label": "lgvhe1",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe2:1",
+    "label": "lgvhe2",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe3:1",
+    "label": "lgvhe3",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe4:1",
+    "label": "lgvhe4",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe5:1",
+    "label": "lgvhe5",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe6:1",
+    "label": "lgvhe6",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe7:1",
+    "label": "lgvhe7",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe8:1",
+    "label": "lgvhe8",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   },
+   {
+    "key": "radio:lgvhe9:1",
+    "label": "lgvhe9",
+    "kind": "radio",
+    "required": false,
+    "invalid": false,
+    "value": ""
+   }
+  ],
+  "input_request": null
+ },
+ "ledger": {
+  "provider_attempts": 56,
+  "input_tokens": 909467
+ }
+}
