@@ -570,3 +570,21 @@ def test_city_only_fields_are_left_to_the_model_which_may_use_a_verbatim_part():
     assert preserves_format('Ithaca',{'profile:city':'Ithaca, NY'})
     assert not preserves_format('Boston',{'profile:city':'Ithaca, NY'})
     assert not preserves_format('Ith',{'profile:city':'Ithaca, NY'})
+
+
+def test_a_category_can_be_explored_after_its_leaves_were_inspected(monkeypatch):
+    # W6 (Adobe): after "Adobe Source" opened, observed options held only its leaves and
+    # explore_option refused the category three times ("Explore an option actually observed").
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.agent import AgentTools
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    browser=FakeBrowser('');browser.fields=[{**field('source'),'kind':'combobox','choice_control':True,
+        'options':[{'label':'Adobe Source','value':'a','expandable':True},{'label':'Job Board','value':'j','expandable':True}]}]
+    explored=[]
+    browser.explore_option=lambda key,label:explored.append(label) or [{'label':'Adobe.com','value':'c'}]
+    session=AgentTools(browser,{'profile':{},'answers':{'source':'Adobe.com'}},autofill=lambda:{},active=lambda:True)
+    obs=session.observe()
+    session.observed_options['source']=[{'label':'Adobe.com','value':'c'},{'label':'Adobe MAX','value':'m'}]  # leaves only
+    result=session.execute('explore_option',{'observation_id':obs['observation_id'],'field_key':'source','option_label':'Adobe Source',
+        'source_ref':'answer:source','reason':'Adobe.com is under Adobe Source'})
+    assert explored==['Adobe Source'] and result['options'][0]['label']=='Adobe.com'

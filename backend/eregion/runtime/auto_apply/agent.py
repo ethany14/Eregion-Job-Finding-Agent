@@ -75,7 +75,9 @@ TOOLS = [
          {**FIELD, "source_ref":TEXT, "option_label":TEXT, "reason":TEXT}),
     tool("click_page_action", "Open the application, move between steps, or add an experience/education section using an observed page control. Cannot submit.",
          {"observation_id": TEXT, "control_id": TEXT}),
-    tool("record_answers", "Interpret explicit user answers in context and save grounded, normalized field values before autofill.",
+    tool("record_answers", "Interpret explicit user answers in context and save grounded, normalized field values before autofill. "
+         "For a picker with categories, record the final choice the user named (\"Adobe Source, then Adobe.com\" -> Adobe.com), "
+         "not the category; reach it with explore_option.",
          {"observation_id": TEXT, "answers": {"type": "array", "items": {
              "type": "object", "properties": {"field_key": TEXT, "message_id": TEXT, "quote": TEXT, "value": TEXT,
                  "reuse": {"type": "string", "enum": ["all_applications", "this_employer", "this_application"],
@@ -866,7 +868,9 @@ class AgentTools:
         if goal is None or not isinstance(args["reason"],str) or not 0 < len(args["reason"]) <= 1000:
             raise BrowserBlocked("Explore categories only for an available confirmed answer.")
         if protected(field): self._require_confirmed_sources(field,{args["source_ref"]:goal})
-        options = self.observed_options.get(field["key"]) or field.get("options",[])
+        # W6 (Adobe): after a category opened, observed_options held only its leaves, so the
+        # category itself could not be explored again. Any option seen for this field counts.
+        options = [*(self.observed_options.get(field["key"]) or []), *field.get("options",[])]
         if not any(o["label"]==args["option_label"] and not o.get("disabled") for o in options):
             raise BrowserBlocked("Explore an option actually observed for this field.")
         old_keys = {f["key"] for f in self.fields}
