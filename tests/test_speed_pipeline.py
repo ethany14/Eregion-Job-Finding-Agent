@@ -691,3 +691,21 @@ def test_education_reference_ids_bind_only_the_named_record(monkeypatch):
     for wrong in ('education:'+cornell['id']+':school','edu-unknown','education:'):
         with pytest.raises(BrowserBlocked,match='Record ids'):bind(wrong,'school1')
     assert 'school1' not in session.state['education_bindings']
+
+
+def test_searching_a_picker_does_not_reset_its_attempt_count(monkeypatch):
+    # Adobe re-test (a455c9f): each search changed the picker's options, which reset the count,
+    # so one optional Field of Study used 8 searches and 5 inspections.
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.runner import ApplicationHost
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    browser=FakeBrowser('');browser.fields=[{**field('major',required=False),'kind':'combobox','choice_control':True,'options':[{'label':'Accounting','value':'a'}]}]
+    session=AgentTools(browser,{'profile':{},'answers':{'major':'Systems Engineering'}},autofill=lambda:{},active=lambda:True)
+    session.observe()
+    host=ApplicationHost(session,object(),active=lambda:True,reserve=lambda _:True,report=lambda *args:None)
+    host.count_attempt(session.fields[0])
+    session.fields[0]['options']=[{'label':'Computer Systems Analysis','value':'c'}]  # a search's results
+    assert host.attempts(session.fields[0])==1
+    session.state['answers']['major']='Industrial Engineering'  # a new fact still resets it
+    assert host.attempts(session.fields[0])==0

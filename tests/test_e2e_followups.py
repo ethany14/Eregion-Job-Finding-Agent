@@ -465,3 +465,20 @@ def test_inspect_application_defaults_to_what_blocks_progress():
     assert 'fields' not in view and view['blocking_fields'] == [{'key': 'end', 'label': 'To*', 'kind': 'text'}]
     assert len(str(view)) < 1000
     assert [f['key'] for f in harness.application('r1', include_fields=True)['fields']] == ['end', 'title']
+
+
+def test_a_limit_stop_tells_the_career_agent_to_report_the_blocker_not_to_forward_again():
+    # Adobe re-test (a455c9f): after a page-budget stop the career agent re-inspected the full
+    # field list and searched jobs for 10 calls, never telling the user what was blocking.
+    from types import SimpleNamespace
+    from eregion.runtime.career.harness import CareerHarness
+    harness = CareerHarness.__new__(CareerHarness)
+    child = {'run_id': 'r1', 'status': 'needs_input', 'version': 4, 'messages': [], 'agent_reason': 'page_budget',
+             'message': 'This page used its model-call budget without finishing.',
+             'fields': [{'key': 'major', 'label': 'Field of Study', 'kind': 'text', 'required': False, 'value': ''}]}
+    harness.applications = SimpleNamespace(repository=SimpleNamespace(get=lambda run_id: child))
+    stopped = harness.capability_stopped({'kind': 'application', 'id': 'r1'})
+    assert stopped['agent_reason'] == 'page_budget' and stopped['blocking_fields'] == []
+    assert 'Tell the user what blocks it' in stopped['next'] and 'reply_application' not in stopped['next']
+    child.update(agent_reason='user_question', input_request={'id': 'q1', 'text': 'Start year?'})
+    assert 'input_request' in harness.capability_stopped({'kind': 'application', 'id': 'r1'})['next']

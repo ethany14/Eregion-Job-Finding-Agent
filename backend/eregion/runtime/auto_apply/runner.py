@@ -394,8 +394,12 @@ class ApplicationHost:
         """What a field is being filled towards: the desired answer and its current options.
         A new fact or new choices starts a fresh count; a plain "continue" does not (W1)."""
         from .autofill import desired_answer
+        # A fixed list (select/radio) that changes is new information. A searchable picker
+        # shows different options for every query, which reset the count each search
+        # (Adobe re-test: 8 searches + 5 inspections of one optional Field of Study).
+        fixed = field.get('kind') in {'select', 'radio'} and not field.get('choice_control')
         return outcome_fingerprint([desired_answer(field, self.session.state),
-                                    [o.get('label') for o in field.get('options') or []]])
+                                    [o.get('label') for o in field.get('options') or []] if fixed else None])
 
     def attempts(self, field):
         entry = (self.session.state.get('field_attempts') or {}).get(field['key'])

@@ -1623,9 +1623,23 @@ class CareerHarness:
         if args.get('kind')!='application':return None
         child=self.applications.repository.get(args['id'])
         if child['status'] in {'queued','running','submitting'} or self.capability_finished(args):return None
-        return {'changed':True,'status':child['status'],'message':child.get('message'),
-            'next':"The application is stopped, not running. Forward the user's latest message with reply_application "
-                   'to resume it, or ask the user for what it needs.'}
+        view=self.application(args['id'])
+        result={'changed':True,'status':child['status'],'message':child.get('message'),'agent_reason':child.get('agent_reason'),
+            'blocking_fields':view.get('blocking_fields',[]),'input_request':child.get('input_request')}
+        if child.get('input_request'):
+            result['next']=("The application asks the user the input_request question. Ask the user unless their latest "
+                            "message already answers it; then forward that message with reply_application.")
+        elif child.get('agent_reason') in {'page_budget','application_budget','agent_limit','no_progress'}:
+            # Adobe re-test: after a page-budget stop the career agent spent 10 calls re-inspecting
+            # the full field list and searching jobs, and never told the user what was blocking.
+            result['next']=("The application stopped on a limit and needs the user's decision. Tell the user what blocks "
+                            "it (message, blocking_fields) and ask whether to continue. Do not inspect it again, search "
+                            "jobs or open the posting unless the user asks; if you must investigate, say which "
+                            "uncertainty you are resolving.")
+        else:
+            result['next']=("The application is stopped, not running. Forward the user's latest message with "
+                            'reply_application to resume it, or ask the user for what it needs.')
+        return result
 
     def wake(self,state):
         wait = state.get('wait') or {}

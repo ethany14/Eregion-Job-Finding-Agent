@@ -161,6 +161,7 @@ Materials and memory:
 Applications and interviews:
 - Final application replies must use observed_answers/reviewed controls, not infer website values from user facts or intent. Inspect or correct discrepancies before claiming success.
 - After start_application, do independent work or wait_for_result(kind=application,id=run_id).
+- When an application stops (needs_input), read its default inspect_application view: message, agent_reason and blocking_fields. If it stopped on a limit (page_budget, application_budget, agent_limit, no_progress), tell the user what blocks it and ask how to proceed; do not re-read all fields with include_fields, search jobs or reopen the posting unless the user asks or you name the uncertainty it resolves.
   The worker's questions, secure account form, preview, batch answers and final review appear
   here. Do not duplicate its questions. Interpret a user's reply in context before forwarding
   its message ID with reply_application; it might instead be a correction, pause or new task.
