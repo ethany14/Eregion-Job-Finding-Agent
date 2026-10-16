@@ -194,6 +194,37 @@ def test_workday_date_segments_are_typed_and_empty_placeholders_are_not_values(p
     finally:browser.close()
 
 
+@pytest.mark.parametrize('component,expected',[('start_month',['08','']),('start_year',['','2026']),('start_date',['08',''])])
+def test_type_from_source_fills_a_workday_date_segment_from_a_cited_experience_component(monkeypatch,component,expected):
+    # Adobe W6 re-test (2026-10-16): experience:<id>:start_month ("8") was refused for the MM
+    # segment as lacking precision, and the error told the model to ask the user.
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.experience import normalize_records
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    class DateBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_date.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    job=normalize_records([{'title':'Research','company':'Cornell University','start_date':'Aug 2026','current':'Present'}])[0]
+    browser=DateBrowser(URL)
+    try:
+        session=AgentTools(browser,{'profile':{'experience':[job]},'answers':{}},autofill=lambda:{},active=lambda:True)
+        obs=session.observe()
+        target=next(f for f in session.fields if ('Year' if component=='start_year' else 'Month') in f['key'])
+        result=session.execute('type_from_source',{'observation_id':obs['observation_id'],'field_key':target['key'],
+            'source_ref':f"experience:{job['id']}:{component}"})
+        assert 'error' not in result
+        assert [f['value'] for f in browser.observe()]==expected
+    finally:browser.close()
+
+
+def test_a_month_component_does_not_fill_a_full_date_control():
+    from eregion.runtime.auto_apply.education import format_date
+    assert format_date({'key':'text:start:1','label':'Start date (MM/YYYY)'},'8','month') is None
+    assert format_date({'key':'text:x--dateSectionMonth-input:1','label':'From*'},'13','month') is None
+
+
 def test_filled_workday_picker_can_be_changed_without_inspecting_first():
     # Adobe pilot (2026-10-15): the UW-Madison degree read "Masters" and every choose_option
     # for "Bachelors" failed, because the menu was never opened for it.

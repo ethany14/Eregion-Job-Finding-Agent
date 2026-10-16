@@ -18,7 +18,7 @@ from .matching import resolve_option, search_text, boolean_answer, is_consent, c
 from .autofill import desired_answer, matches, pending_documents
 from .decisions import active_decision, protected, preserves_format, signature, source_value
 from .contracts import candidate_answer
-from .education import COMPONENTS, facts as education_facts, binding as education_binding, gaps as education_gaps, repeatable as repeatable_education, format_date
+from .education import COMPONENTS, facts as education_facts, binding as education_binding, gaps as education_gaps, repeatable as repeatable_education, format_date, date_format
 from .drafting import prepare_draft, visible_drafts
 
 from eregion.runtime.browser.tools import BROWSER_TOOLS, BROWSER_NAMES, VISUAL_NAMES as BROWSER_VISUAL_NAMES
@@ -653,8 +653,11 @@ class AgentTools:
         if name == "click_field":
             self.browser.click_field(key)
         elif name == "type_from_source":
-            answer = format_date(field, self.source(field, args["source_ref"]))
-            if answer is None:raise BrowserBlocked("The source date lacks unambiguous precision for this field. Ask for the missing detail.")
+            part = args["source_ref"].rsplit(":", 1)[-1].rsplit("_", 1)[-1]
+            answer = format_date(field, self.source(field, args["source_ref"]), part)
+            if answer is None:
+                raise BrowserBlocked(f"The cited value does not give this control's {date_format(field)} format. Cite the "
+                    "record's full date or its matching month/year component; ask the user only if the resume lacks it.")
             if matches(field, answer):
                 return {"field_key": key, "already_filled": True, "value": field["value"]}
             self.browser.type_field(key, answer)

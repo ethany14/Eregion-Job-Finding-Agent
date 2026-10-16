@@ -74,9 +74,12 @@ def date_format(field):
     return {'month':'YYYY-MM','date':'YYYY-MM-DD'}.get(native)
 
 
-def format_date(field, value):
+def format_date(field, value, part=None):
     template=date_format(field)
     if not template or not isinstance(value,str):return value
+    # A cited month component ("experience:<id>:start_month") is already a parsed month number.
+    if part=='month' and re.fullmatch(r'(0?[1-9]|1[0-2])',value.strip()):
+        return f"{int(value):02d}" if template=='MM' else None
     parts=date_parts(value,confirmed_quote=value)
     # A single Workday segment needs only its own part ("Aug" -> MM, "2026" -> YYYY).
     if template=='YYYY':return parts['year'] if 'year' in parts else None
