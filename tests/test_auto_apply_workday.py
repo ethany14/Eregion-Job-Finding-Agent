@@ -175,7 +175,8 @@ def test_workday_prompt_reads_late_lists_categories_and_releases_the_covered_rad
     finally:browser.close()
 
 
-def test_workday_date_segments_are_typed_and_empty_placeholders_are_not_values():
+@pytest.mark.parametrize('path',['fill','fill_plain','type_field'])
+def test_workday_date_segments_are_typed_and_empty_placeholders_are_not_values(path):
     # Adobe pilot (2026-10-15): "MM" read as a value and a set month turned into 08/2008.
     class DateBrowser(WorkdayBrowser):
         def _guard_request(self,route):
@@ -186,7 +187,9 @@ def test_workday_date_segments_are_typed_and_empty_placeholders_are_not_values()
     try:
         month,year=browser.observe()
         assert month['value']=='' and year['value']==''
-        browser.fill(month,'08');browser.fill(year,'2026')
+        # Autofill uses fill_plain and type_from_source uses type_field; all must type (W2).
+        write={'fill':browser.fill,'fill_plain':browser.fill_plain,'type_field':lambda f,v:browser.type_field(f['key'],v)}[path]
+        write(month,'08');write(year,'2026')
         assert [f['value'] for f in browser.observe()]==['08','2026']
     finally:browser.close()
 

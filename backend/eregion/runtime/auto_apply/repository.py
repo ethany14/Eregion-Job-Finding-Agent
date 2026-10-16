@@ -65,6 +65,8 @@ class ApplyRepository:
         from .education import normalize_records
         profile=CandidateDetails.model_validate(profile).model_dump()
         profile['education']=normalize_records(profile.get('education',[]))
+        from .experience import normalize_records as normalize_experience
+        profile['experience']=normalize_experience(profile.get('experience',[]))
         with self.sessions.begin() as session:
             row=session.get(SavedCandidateRow,'local')
             if row is None:

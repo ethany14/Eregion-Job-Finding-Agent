@@ -268,3 +268,31 @@ def test_chat_ui_restores_resume_edits_education_and_batches_answers(tmp_path):
         assert browser.page.locator('#profile-fields input[name=city]').input_value()=='Ithaca, NY'
         assert errors==[]
     finally:browser.close()
+
+
+def test_resume_extracts_work_experience_with_evidence_and_cites_it_per_component(database):
+    # W2/§13 (Adobe pilot): both jobs had to be typed in chat; the profile held no experience.
+    from reportlab.pdfgen.canvas import Canvas
+    from eregion.runtime.auto_apply.experience import facts as experience_facts
+    from eregion.runtime.auto_apply.decisions import source_value
+    jobs=[dict(title='Research Assistant',company='North University',location='Ithaca, NY',start_date='Aug 2026',current='Present'),
+          dict(title='Data Analyst Intern',company='Example Group',location='Beijing, China',start_date='Jul 2022',end_date='Aug 2022')]
+    stream=BytesIO();canvas=Canvas(stream)
+    lines=['Alex Demo','alex@example.com']+[v for job in jobs for v in job.values()]
+    for i,line in enumerate(lines):canvas.drawString(30,790-i*22,line)
+    canvas.save()
+    class Model:
+        def with_structured_output(self,schema):return self
+        def invoke(self,messages):
+            return ResumeFacts(experience=[{'facts':[{'field':k,'value':v,'quote':v} for k,v in job.items()]} for job in jobs]+[
+                {'facts':[{'field':'company','value':'Invented Corp','quote':'Invented Corp'}]}])
+    result=extract_profile(base64.b64encode(stream.getvalue()).decode(),model_factory=Model)
+    records=result['profile']['experience']
+    assert [(r['title'],r['company'],r['current']) for r in records]==[('Research Assistant','North University','Present'),('Data Analyst Intern','Example Group','')]
+    sources=experience_facts(result['profile']);intern=records[1]['id']
+    assert sources[f'experience:{intern}:start_month']=='7' and sources[f'experience:{intern}:end_year']=='2022'
+    # Saving keeps the records; a cited component resolves to the evidenced value.
+    repo=ApplyRepository(database.session_factory)
+    saved=repo.save_candidate({**request().profile.model_dump(),'experience':records})
+    assert saved['experience']==records
+    assert source_value({'profile':saved},f'experience:{intern}:company')=='Example Group'

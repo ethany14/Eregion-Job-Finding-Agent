@@ -103,6 +103,17 @@ class Education(StrictModel):
     graduation_status: str = Field(default="", max_length=100)
 
 
+class Experience(StrictModel):
+    id: str = Field(default="", max_length=100, pattern=r"^[a-zA-Z0-9_-]*$")
+    title: str = Field(default="", max_length=300)
+    company: str = Field(default="", max_length=300)
+    location: str = Field(default="", max_length=300)
+    start_date: str = Field(default="", max_length=300)
+    end_date: str = Field(default="", max_length=300)
+    current: str = Field(default="", max_length=300)
+    description: str = Field(default="", max_length=2000)
+
+
 class CandidateDetails(StrictModel):
     first_name: str = Field(default="", max_length=120)
     last_name: str = Field(default="", max_length=120)
@@ -116,6 +127,7 @@ class CandidateDetails(StrictModel):
     country: str = Field(default="", max_length=120)
     city: str = Field(default="", max_length=200)
     education: list[Education] = Field(default_factory=list, max_length=15)
+    experience: list[Experience] = Field(default_factory=list, max_length=20)
 
 
 class Candidate(CandidateDetails):

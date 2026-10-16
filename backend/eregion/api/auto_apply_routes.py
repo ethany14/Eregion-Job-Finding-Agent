@@ -74,8 +74,9 @@ def resume_profile(body: ResumeProfileRequest, loop=Depends(service)):
         saved=loop.repository.saved_candidate()
         profile=result['profile']
         if saved['resume_base64']==body.resume_base64:
-            profile={**profile,**{k:v for k,v in saved['profile'].items() if v and k!='education'},
-                'education':profile.get('education') or saved['profile'].get('education',[])}
+            profile={**profile,**{k:v for k,v in saved['profile'].items() if v and k not in {'education','experience'}},
+                'education':profile.get('education') or saved['profile'].get('education',[]),
+                'experience':profile.get('experience') or saved['profile'].get('experience',[])}
         result['profile']=profile
         return result
     except ValueError as exc:

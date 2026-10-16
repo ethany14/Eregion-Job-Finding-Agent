@@ -241,8 +241,10 @@ class AgentTools:
             if desired_answer(f, self.state) is not None and matches(f, desired_answer(f, self.state))]
         self.failed_fields.difference_update(completed_keys)
         self.observation_id = str(uuid4())
-        sources = {f"profile:{key}": value for key, value in self.state["profile"].items() if value and key!='education'}
+        sources = {f"profile:{key}": value for key, value in self.state["profile"].items() if value and key not in {'education', 'experience'}}
         sources.update(education_facts(self.state['profile'], self.state.get('education_answer_overrides')))
+        from .experience import facts as experience_facts
+        sources.update(experience_facts(self.state['profile']))
         if self.state.get('cover_letter'):sources['material:cover_letter'] = self.state['cover_letter']
         sources.update({f"answer:{key}": value for key, value in self.state["answers"].items()})
         # The resume text is only needed to draft open-ended answers.
@@ -336,6 +338,12 @@ class AgentTools:
                 raise BrowserBlocked('This field is already bound. Use its component source: '+bound['source_ref'], code='education_source_mismatch')
             value=source_value(self.state,reference)
             if value is None:raise BrowserBlocked('That education detail is not in the resume; do not invent it.')
+            return value
+        if reference.startswith('experience:'):
+            # The reference names the resume record and component the model chose for this
+            # entry; the value must exist in that record.
+            value = source_value(self.state, reference)
+            if value is None:raise BrowserBlocked('That work-experience detail is not in the resume; do not invent it.')
             return value
         if not reference.startswith("profile:"):
             raise BrowserBlocked("Use an explicit answer for this field.", code='source_required')

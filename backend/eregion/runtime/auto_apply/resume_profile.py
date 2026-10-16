@@ -16,6 +16,7 @@ class ResumeFact(BaseModel):
 class ResumeFacts(BaseModel):
     facts: list[ResumeFact] = Field(default_factory=list, max_length=20)
     education: list["ResumeEducation"] = Field(default_factory=list, max_length=15)
+    experience: list["ResumeExperience"] = Field(default_factory=list, max_length=20)
 
 
 class ResumeEducationFact(BaseModel):
@@ -27,6 +28,16 @@ class ResumeEducationFact(BaseModel):
 class ResumeEducation(BaseModel):
     record_id: str | None = None
     facts: list[ResumeEducationFact] = Field(default_factory=list, max_length=6)
+
+
+class ResumeExperienceFact(BaseModel):
+    field: Literal["title","company","location","start_date","end_date","current","description"]
+    value: str = Field(max_length=2000)
+    quote: str = Field(max_length=3000)
+
+
+class ResumeExperience(BaseModel):
+    facts: list[ResumeExperienceFact] = Field(default_factory=list, max_length=7)
 
 
 ResumeFacts.model_rebuild()
@@ -42,7 +53,7 @@ def extract_facts(model,messages):
     from langchain_core.utils.function_calling import convert_to_openai_tool
     if isinstance(model,ChatOpenAI):
         tool=convert_to_openai_tool(ResumeFacts)
-        tool['function']['description']='Record evidenced applicant contact facts and every education record from the supplied text.'
+        tool['function']['description']='Record evidenced applicant contact facts, every education record and every work-experience record from the supplied text.'
         result=model.invoke([('system','Return extracted facts by calling ResumeFacts once.'),*messages],tools=[tool])
         calls=[c for c in result.tool_calls if c['name']=='ResumeFacts']
         if len(calls)!=1:raise ValueError('The model did not return one set of resume facts.')
@@ -176,7 +187,10 @@ def extract_profile(encoded, *, model_factory=None):
              "Country/city must be the applicant's explicit current address, not an employer or school's location. "
              "Keep the full literal City, ST token from the contact header, including its state abbreviation. "
              "Omit uncertain, missing or ambiguous facts. Never infer nationality, work authorization, consent or sponsorship. "
-             "Split the applicant name into first_name/last_name only when clear. Return each field at most once."),
+             "Split the applicant name into first_name/last_name only when clear. Return each field at most once. "
+             "Also return each paid or research position under work/professional experience as a separate experience record: "
+             "title, company, location, start_date and end_date as written, current='Present' only when the resume says so, "
+             "and description as the position's own bullet text. Projects, coursework and education are not experience."),
             ("human", text[:50000])])
         facts = result if isinstance(result, ResumeFacts) else ResumeFacts.model_validate(result)
         normalize = lambda value: re.sub(r"\s+", " ", value).strip().casefold()
@@ -195,6 +209,15 @@ def extract_profile(encoded, *, model_factory=None):
                 records.append(values)
                 evidence[f"education:{len(records)-1}"]={f.field:f.quote for f in record.facts if f.field in values}
         profile["education"]=normalize_records(records)
+        from .experience import normalize_records as normalize_experience
+        jobs=[]
+        for record in facts.experience:
+            values={fact.field:fact.value for fact in record.facts if fact.value and fact.quote and
+                normalize(fact.quote) in normalize(text) and normalize(fact.value) in normalize(fact.quote)}
+            if values.get("title") or values.get("company"):
+                jobs.append(values)
+                evidence[f"experience:{len(jobs)-1}"]={f.field:f.quote for f in record.facts if f.field in values}
+        profile["experience"]=normalize_experience(jobs)
     except Exception:
         warning = "AI extraction is unavailable. Detected contact details are shown; complete the remaining fields."
     patterns = {"email": r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}",

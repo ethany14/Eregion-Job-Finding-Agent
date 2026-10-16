@@ -317,6 +317,11 @@ def _release_playwright(instance):
         instance.stop()
 
 
+def date_segment(field):
+    """A Workday month/day/year segment input (its format lives only in its id)."""
+    return bool(re.search(r'dateSection(Month|Day|Year)', field.get("dom_id") or field.get("key") or ""))
+
+
 class ApplicationBrowser:
     def __init__(self, url, *, headless=None, session_store=None, owner_key=None, purpose='application'):
         try:
@@ -905,10 +910,22 @@ class ApplicationBrowser:
         except Exception:
             pass  # Navigation/replaced documents are inspected by the next action.
 
+    def _type_segment(self, locator, value):
+        """Workday date segments mishandle a set value (Adobe: month "08" became "08/2008",
+        then 12/2012 after a select-all). Focus and type digits as a person does (a display
+        layer covers the inputs, so a click times out), then verify the segment kept them."""
+        locator.focus()
+        self.page.keyboard.type(str(value), delay=60)
+        self.page.wait_for_timeout(200)
+        if locator.input_value() != str(value):
+            raise BrowserBlocked("The date segment did not keep the typed value. Check it in the browser.", code='value_not_retained')
+
     def fill_plain(self, field, value):
         """Fill one already observed ordinary input; the caller verifies the pass."""
         self._check_page()
         locator = self.locate(field)
+        if date_segment(field):
+            return self._type_segment(locator, value)
         if not locator.evaluate("e => (e.matches('textarea') || e.matches('input:not([type=password]):not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio])')) && e.getAttribute('role') !== 'combobox'"):
             raise BrowserBlocked('The control changed; observe it before filling.', code='stale_observation')
         locator.fill(str(value), timeout=5000)
@@ -919,6 +936,9 @@ class ApplicationBrowser:
         if field["kind"] not in {"text", "email", "tel", "url", "textarea", "number", "search", "combobox", "location"}:
             raise BrowserBlocked("This field does not accept text.")
         locator = self.locate(field)
+        if date_segment(field):
+            self._type_segment(locator, value)
+            return self._settle()
         if field.get('choice_control') or field['kind'] in {'combobox', 'location'}:
             locator.fill('')
             locator.press_sequentially(str(value), delay=0, timeout=8000)
@@ -1064,16 +1084,8 @@ class ApplicationBrowser:
                 option.click()
             except Exception as exc:
                 raise BrowserBlocked("Choose the intended location suggestion in the browser, then continue.", code='dom_interaction_failed') from exc
-        elif kind in {"text", "email", "tel", "url", "textarea", "number", "search"} and re.search(r'dateSection(Month|Day|Year)', field.get("dom_id") or field["key"]):
-            # Workday date segments mishandle a set value (Adobe: month "08" became "08/2008");
-            # typed digits work and auto-advance. Verify the segment kept exactly this value.
-            # Focus then type, as a person does. Control+A scattered digits (12/2012), and a
-            # display layer covers the inputs, so a locator click times out.
-            locator.focus()
-            self.page.keyboard.type(str(value), delay=60)
-            self.page.wait_for_timeout(200)
-            if locator.input_value() != str(value):
-                raise BrowserBlocked("The date segment did not keep the typed value. Check it in the browser.", code='value_not_retained')
+        elif kind in {"text", "email", "tel", "url", "textarea", "number", "search"} and date_segment(field):
+            self._type_segment(locator, value)
         elif kind in {"text", "email", "tel", "url", "textarea", "number", "search"}:
             locator.fill(str(value))
             locator.press("Tab")

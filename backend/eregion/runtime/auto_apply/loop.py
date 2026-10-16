@@ -477,6 +477,8 @@ class ApplicationLoop:
                 raise ApplyConflict("The application service is stopping.")
             profile=request.profile.model_dump()
             profile['education']=normalize_records(profile.get('education',[]))
+            from .experience import normalize_records as normalize_experience
+            profile['experience']=normalize_experience(profile.get('experience',[]))
             request=request.model_copy(update={'profile':Candidate.model_validate(profile)})
             state, created = self.repository.create(request,material_refs=material_refs,origin_task_id=origin_task_id)
             if created:
