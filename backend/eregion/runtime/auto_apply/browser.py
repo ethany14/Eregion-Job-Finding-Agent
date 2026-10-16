@@ -793,17 +793,41 @@ class ApplicationBrowser:
             else:
                 self.click_field(key)
         self._option_owner = key
+        before = None
         if query and editable:
+            before = self._option_labels(field)
             locator.fill(str(query))
             self._choice_queries[key] = str(query)
             if enter_search:
                 locator.press("Enter")
         options = self._await_options(field)
+        if before is not None:
+            # The previous list stays on screen until the results replace it (Adobe: a
+            # Field of Study search returned the unfiltered list). Wait for a changed,
+            # settled list, bounded.
+            options = self._settled_options(field, before)
         try:
             options.first.wait_for(state="visible", timeout=1000)
         except Exception:
             return []
         return self._read_options(key, options)
+
+    def _option_labels(self, field):
+        try:
+            return self._option_locator(field).all_inner_texts()
+        except Exception:
+            return []
+
+    def _settled_options(self, field, before, seconds=6):
+        deadline, last, stable = time.monotonic() + seconds, None, 0
+        while time.monotonic() < deadline:
+            labels = self._option_labels(field)
+            stable = stable + 1 if labels == last else 0
+            last = labels
+            if stable >= 2 and (labels != before or not labels):
+                break
+            self.page.wait_for_timeout(200)
+        return self._option_locator(field)
 
     def _await_options(self, field, seconds=8):
         """The menu root is chosen when the locator is built, so build it again until the

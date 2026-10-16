@@ -232,3 +232,21 @@ def test_workday_rerender_keeps_field_keys_and_education_bindings():
         assert after[2]['value']=='University of Wisconsin-Madison' and binding(after[2],state)['education_id']=='uw'
         assert binding(after[0],state) is None  # the first entry is not the bound record
     finally:browser.close()
+
+
+def test_workday_search_returns_the_results_not_the_previous_list():
+    # W1 (Adobe): searching Field of Study returned the unfiltered list still on screen.
+    class SearchBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_search.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=SearchBrowser(URL)
+    try:
+        study=browser.observe()[0]
+        browser.inspect_options(study['key'])
+        results=browser.inspect_options(study['key'],query='Systems')
+        assert [o['label'] for o in results]==['Computer Systems Analysis','Management Information Systems']
+        browser.choose_option(study['key'],'Management Information Systems')
+        assert browser.observe()[0]['value']=='Management Information Systems'
+    finally:browser.close()

@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- Workday searchable prompt (Adobe Field of Study, pilot 2026-10-15), reduced: the full
+     list stays visible until the search results replace it a second after Enter. -->
+<html><body>
+<div data-automation-id="formField-fieldOfStudy">
+  <label for="education-10--fieldOfStudy">Field of Study</label>
+  <div data-automation-id="multiSelectContainer">
+    <input id="education-10--fieldOfStudy" enterkeyhint="search" placeholder="Search" autocomplete="off">
+    <div id="chosen"></div>
+  </div>
+</div>
+<div id="popup" style="display:none"><div data-automation-id="activeListContainer" role="listbox" id="list"></div></div>
+<script>
+const ALL = ['Accounting', 'Actuarial Science', 'Computer Systems Analysis', 'Industrial Engineering', 'Management Information Systems'];
+const input = document.getElementById('education-10--fieldOfStudy'), list = document.getElementById('list');
+function show(items) {
+  list.replaceChildren(...items.map(text => {
+    const row = document.createElement('div');
+    row.setAttribute('role', 'option'); row.textContent = text;
+    row.addEventListener('click', () => {
+      const pill = document.createElement('div');
+      pill.setAttribute('data-automation-id', 'selectedItem'); pill.textContent = text;
+      document.getElementById('chosen').replaceChildren(pill);
+      input.value = ''; document.getElementById('popup').style.display = 'none';
+    });
+    return row;
+  }));
+}
+input.addEventListener('click', () => { document.getElementById('popup').style.display = 'block'; show(ALL); });
+input.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const query = input.value.toLowerCase();
+  setTimeout(() => show(ALL.filter(t => t.toLowerCase().includes(query))), 1000);
+});
+</script>
+</body></html>
