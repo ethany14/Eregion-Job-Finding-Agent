@@ -1052,7 +1052,19 @@ class ApplicationBrowser:
             else:
                 selected = self.scope.locator(f'[data-northstar-field="{option["id"]}"]')
                 if option.get("button"): selected.click()
-                else: selected.check()
+                else:
+                    try:
+                        selected.check(timeout=5000)
+                    except Exception:
+                        # W6 (Adobe "Autofill with Resume" flow): something covered the radio
+                        # input and check() timed out. Click its label, as a person would,
+                        # then verify the choice was taken.
+                        label = self.scope.locator(f'label[for={json.dumps(selected.get_attribute("id") or "")}]')
+                        if not label.count():
+                            raise
+                        label.first.click(timeout=5000)
+                        if not selected.is_checked():
+                            raise BrowserBlocked("The choice was not taken. Check it in the browser.", code='value_not_retained')
         elif kind == "combobox" or field.get("choice_control"):
             options = self.inspect_options(field["key"])
             option = resolve_option(field["label"], value, options)

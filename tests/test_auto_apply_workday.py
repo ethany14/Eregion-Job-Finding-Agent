@@ -253,3 +253,18 @@ def test_workday_search_returns_the_results_not_the_previous_list():
         browser.choose_option(study['key'],'Management Information Systems')
         assert browser.observe()[0]['value']=='Management Information Systems'
     finally:browser.close()
+
+
+def test_covered_workday_radio_is_chosen_through_its_label():
+    # W6 (Adobe): "employed by Adobe" radio check() timed out under a covering element.
+    class RadioBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_radio.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=RadioBrowser(URL)
+    try:
+        radio=browser.observe()[0]
+        browser.fill(radio,'No')
+        assert browser.observe()[0]['value']=='false'
+    finally:browser.close()

@@ -588,3 +588,21 @@ def test_a_category_can_be_explored_after_its_leaves_were_inspected(monkeypatch)
     result=session.execute('explore_option',{'observation_id':obs['observation_id'],'field_key':'source','option_label':'Adobe Source',
         'source_ref':'answer:source','reason':'Adobe.com is under Adobe Source'})
     assert explored==['Adobe Source'] and result['options'][0]['label']=='Adobe.com'
+
+
+def test_autofill_that_only_skipped_unchanged_failures_is_not_a_failed_action(monkeypatch):
+    # W6 (Adobe): skipped-as-unchanged fills counted as failures and tripped the repeat
+    # guard before the model could correct the answer.
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.runner import ApplicationHost
+    from eregion.runtime.core.engine import Turn
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    browser=FakeBrowser('');browser.fields=[field('note',required=False)]
+    session=AgentTools(browser,{'profile':{},'answers':{}},autofill=lambda:{},active=lambda:True)
+    session.observe()
+    host=ApplicationHost(session,object(),active=lambda:True,reserve=lambda _:True,report=lambda *args:None)
+    outcome={'filled':[],'failed':{'note':'value_not_retained'},
+             'failure_details':{'note':{'error':'Not retried','error_code':'unchanged_failure','next':'x','visual_recovery':False}}}
+    host.after_action({'id':'1','name':'host:autofill','args':{}},outcome,Turn('',{},[]))
+    assert host.history[-1]['failed'] is False

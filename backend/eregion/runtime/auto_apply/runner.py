@@ -409,6 +409,12 @@ class ApplicationHost:
     def after_action(self, call, outcome, turn):
         name, args = call['name'], call['args']
         failed = ('error' in outcome or bool(outcome.get('failed')) or outcome.get('verified') is False or bool(outcome.get('unchanged')))
+        details = outcome.get('failure_details') or {}
+        if (name in {'autofill', 'host:autofill'} and 'error' not in outcome and not outcome.get('filled') and details
+                and all(d.get('error_code') == 'unchanged_failure' for d in details.values())):
+            # W6 (Adobe): fills skipped as unchanged were not attempted; counting them as failed
+            # actions tripped the repeat guard before the model could change the answer.
+            failed = False
         if failed and not outcome.get('error_code') and not outcome.get('failure_details'):
             code = 'repeated_action' if outcome.get('unchanged') else 'value_not_retained' if outcome.get('verified') is False else 'invalid_action'
             outcome.update({**action_failure(code, outcome.get('error') or outcome.get('next') or 'Inspect the failed controls before retrying.'), **outcome})
