@@ -70,7 +70,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument('--data', required=True)
     parser.add_argument('--port', type=int, default=8020)
+    # The real-site test plan caps each application at 60 model calls (W6 acceptance).
+    parser.add_argument('--max-model-calls', type=int, default=60)
     args = parser.parse_args()
+    os.environ['APPLY_MAX_MODEL_CALLS'] = str(args.max_model_calls)
     data = Path(args.data).resolve()
     data.mkdir(parents=True, exist_ok=True)
     os.environ['JOB_AGENT_DATABASE_URL'] = 'sqlite:///' + (data / 'eregion-apply-test.sqlite3').as_posix()
