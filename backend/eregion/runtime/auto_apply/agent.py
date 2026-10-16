@@ -854,6 +854,13 @@ class AgentTools:
         # The model can represent the same source in a text control too (for
         # example an explicitly stated date in the site's requested format).
         # Material fields still require applicable confirmed sources above.
+        if field["kind"] == "checkbox":
+            # W6 (Adobe "I currently work here"): the model decided "true" from the resume's
+            # "Present", but the string reached a writer that takes only a boolean.
+            checked = boolean_answer(value)
+            if checked is None:
+                raise BrowserBlocked("A checkbox takes a yes/no value.")
+            value = checked
         self._decision(field, value, mode, sources, reason)
         if choice:
             if not matches(field,value): self.browser.choose_option(field["key"],value)

@@ -606,3 +606,19 @@ def test_autofill_that_only_skipped_unchanged_failures_is_not_a_failed_action(mo
              'failure_details':{'note':{'error':'Not retried','error_code':'unchanged_failure','next':'x','visual_recovery':False}}}
     host.after_action({'id':'1','name':'host:autofill','args':{}},outcome,Turn('',{},[]))
     assert host.history[-1]['failed'] is False
+
+
+def test_resolve_field_writes_a_checkbox_from_a_yes_no_decision(monkeypatch):
+    # W6 (Adobe): "I currently work here" stayed unticked because resolve_field passed the
+    # string "true" to a writer that takes only a boolean; Next then required an end date.
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.experience import normalize_records
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    job=normalize_records([{'title':'Research','company':'Cornell University','start_date':'Aug 2026','current':'Present'}])[0]
+    browser=FakeBrowser('');browser.fields=[{**field('current',kind='checkbox',required=False),'label':'I currently work here','value':False}]
+    session=AgentTools(browser,{'profile':{'experience':[job]},'answers':{}},autofill=lambda:{},active=lambda:True)
+    obs=session.observe()
+    result=session.execute('resolve_field',{'observation_id':obs['observation_id'],'field_key':'current','value':'true','mode':'equivalent',
+        'source_refs':[f"experience:{job['id']}:current"],'reason':'The resume says Present for this job.'})
+    assert browser.fields[0]['value'] is True and result['verified']

@@ -234,3 +234,26 @@ def test_changes_made_while_the_user_controlled_the_browser_become_their_answers
         assert browser.fields[0]['value']=='Alexandra'  # not overwritten
     finally:
         loop.close()
+
+
+def test_application_work_counts_against_its_career_task_budget(database, monkeypatch):
+    # W6: only calls inside the starting tool were in the task ledger (17 of 40), so the
+    # 60-attempt cap missed the worker's own calls. Workers now run in the task's scope.
+    from eregion.runtime.auto_apply.loop import ApplicationLoop
+    from eregion.runtime.auto_apply.repository import ApplyRepository
+    from eregion.runtime.provider_usage import TaskProviderBudgetExceeded, current_scope
+    from test_auto_apply import FakeBrowser, request, wait
+    repo=ApplyRepository(database.session_factory)
+    loop=ApplicationLoop(repo,browser_factory=FakeBrowser)
+    try:
+        run=loop.start(request())['run_id'];state=wait(loop,run)
+        repo.save(state,origin_task_id='task-123')
+        seen=loop._metered(run,lambda:(current_scope().get('task_id'),current_scope().get('run_id'),current_scope().get('ledger') is not None))
+        assert seen==('task-123',run,True)
+        monkeypatch.setattr(loop,'_active',lambda run_id:repo.get(run_id))
+        def spend():raise TaskProviderBudgetExceeded('provider_attempts')
+        loop._metered(run,spend)  # parked, not a crashed worker
+        state=repo.get(run)
+        assert state['status']=='needs_input' and state['agent_reason']=='application_budget'
+    finally:
+        loop.close()

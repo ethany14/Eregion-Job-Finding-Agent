@@ -118,7 +118,29 @@ class ApplicationLoop:
             return self.executor.workers[self.assigned[run_id]]
 
     def _submit(self, run_id, function, *args):
-        return self._worker(run_id).submit(function, *args)
+        return self._worker(run_id).submit(self._metered, run_id, function, *args)
+
+    def _metered(self, run_id, function, *args):
+        """W6: application work started by a career task counts against that task's provider
+        budget. Without this scope only calls made inside the starting tool call were in the
+        ledger, so a 60-attempt task cap missed the worker's own calls (40 vs 17 recorded)."""
+        from eregion.runtime.provider_usage import TaskProviderBudgetExceeded, UsageLedger, usage_scope
+        try:
+            state = self.repository.get(run_id)
+        except Exception:
+            return function(*args)
+        sessions = getattr(self.repository, 'sessions', None)
+        try:
+            with usage_scope(ledger=UsageLedger(sessions) if sessions else None,
+                             task_id=state.get('origin_task_id'), run_id=run_id):
+                return function(*args)
+        except TaskProviderBudgetExceeded as exc:
+            with self.lock:
+                current = self._active(run_id)
+                if current is not None:
+                    self.repository.save(current, status='needs_input', agent_reason='application_budget', retry_at=None,
+                        message='This application reached its provider budget (' + str(exc.reason) + '). Completed fields '
+                                'are saved; allow more to continue, or finish it in the browser.')
 
     def _owned(self, index):
         with self.lock:

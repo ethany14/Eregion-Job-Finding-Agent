@@ -438,7 +438,8 @@ class ApplicationHost:
         self.session.fields = fields
         current = {f['key']: f for f in fields}
         key = args.get('field_key') if isinstance(args.get('field_key'), str) else None
-        tried = [key] if key and name not in NON_FIELD_ACTIONS else []
+        # A refusal by the attempt limit ('abandoned') was not an attempt (W6: count reached 9).
+        tried = [key] if key and name not in NON_FIELD_ACTIONS and not outcome.get('abandoned') else []
         if name in {'autofill', 'host:autofill'}:
             # Batch failures count too, except fills skipped as unchanged (not attempted).
             tried += [k for k, d in (outcome.get('failure_details') or {}).items() if d.get('error_code') != 'unchanged_failure']
