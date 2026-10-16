@@ -530,3 +530,29 @@ def test_autofill_does_not_repeat_an_unchanged_failure_but_retries_after_a_chang
     state['answers']['major']='Biology'  # a new fact
     autofill(browser,state,lambda:b'')
     assert tries[-1]=='Biology'
+
+
+def test_no_model_request_starts_when_the_slice_cannot_fit_it(monkeypatch):
+    # W3: requests started near the end of the 180 s slice were cut off as model timeouts.
+    import time
+    from test_auto_apply import FakeBrowser, field
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.runner import ApplicationHost
+    from eregion.runtime.core.engine import Turn, LoopStop
+    monkeypatch.setenv('TYPESAFE_ENABLED','false')
+    browser=FakeBrowser('');browser.fields=[field('note',required=False)]
+    state={'profile':{},'answers':{},'timings':[{'stage':'model','duration_seconds':d} for d in (20,24,30)]}
+    session=AgentTools(browser,state,autofill=lambda:{},active=lambda:True)
+    session.observe()
+    calls=[]
+    class Model:
+        timeout=60
+        def invoke(self,messages,tools):calls.append(1);return 'ok'
+    host=ApplicationHost(session,Model(),active=lambda:True,reserve=lambda _:True,report=lambda *args:None)
+    assert host.expected_model_seconds()==36  # 1.5 x median of recent successful calls
+    host.deadline=time.monotonic()+20
+    with pytest.raises(LoopStop) as stop:host.invoke([],[],Turn('',{},[]))
+    assert stop.value.result['reason']=='yielded' and not calls
+    host.deadline=time.monotonic()+120
+    host.invoke([],[],Turn('',{},[]))
+    assert calls==[1]

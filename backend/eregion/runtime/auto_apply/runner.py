@@ -239,6 +239,10 @@ class ApplicationHost:
             record = {'page': page_id, 'count': 0}
         if record['count'] >= PAGE_MODEL_CALL_LIMIT:
             raise LoopStop('page_budget')
+        # W3: a request that cannot finish before the slice ends is cut off and reported as a
+        # model timeout. Yield (a normal, saved stop) instead of starting it.
+        if self.deadline - time.monotonic() < self.expected_model_seconds():
+            raise LoopStop('yielded', chat_revision=turn.revision)
         if not self.reserve('model'):
             raise LoopStop('agent_limit')
         record['count'] += 1
@@ -365,6 +369,15 @@ class ApplicationHost:
             self.pending_screen = dict(outcome)
             outcome = {key: value for key, value in outcome.items() if key != 'image'}
         return outcome
+
+    def expected_model_seconds(self):
+        """A typical decision's duration: recent successful calls (1.5x their median), at
+        least 10 s and at most the model's own timeout."""
+        timings = self.pending.get('timings') or self.session.state.get('timings') or []
+        recent = sorted([t['duration_seconds'] for t in timings[-40:]
+                         if t.get('stage') == 'model' and not t.get('failed')][-8:])
+        typical = 1.5 * recent[len(recent) // 2] if recent else 20
+        return min(getattr(self.model, 'timeout', 45), max(10, typical))
 
     def _target(self, field):
         """What a field is being filled towards: the desired answer and its current options.
