@@ -29,7 +29,15 @@ does not finish an incomplete application.
   choices such as a personal phone's device type; keep existing valid choices.
 - Reused answer from another application: use_remembered_answer, when the intent,
   polarity and scope match.
-- Each unresolved field lists allowed_source_refs. A saved answer:<field> applies only to that control (or its explicitly observed dependent path). For a newly worded question, reuse the original user message via record_answers; never borrow another question's answer reference.
+- Each open field shows its selected value, its target fact, mapping (exact, a saved decision
+  mode, or undecided) and write_verified; next_step_blockers says what holds the step. A
+  selected value differing from the fact is not resolved until you save a decision for it.
+  An undecided field ends with a saved action: resolve_field (equivalent with your reason,
+  or leave_empty with your reason for an optional field), a different grounded search, or
+  ask_user with a specific question. Reread search_history before searching again. Progress
+  messages describe saved, verified state; "set" or "still looking" resolves nothing.
+- Each unresolved field lists allowed_source_refs (refs allowed for every field are in
+  any_field_source_refs). A saved answer:<field> applies only to that control (or its explicitly observed dependent path). For a newly worded question, reuse the original user message via record_answers; never borrow another question's answer reference.
 - User reply in chat: record_answers with the user's literal words as the quote. Map
   abbreviations and multiple answers; an answer to one question never answers a
   separate consent.

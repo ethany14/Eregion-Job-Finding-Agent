@@ -211,6 +211,13 @@ class HybridApplicationAgent:
             report=report, refresh=refresh, communicate=communicate, checkpoint=checkpoint)
 
 
+def _without_empty(entry):
+    """Open fields omit empty attributes (help '', errors [], group '' ...); value, required and
+    the status flags are always kept (request size review)."""
+    keep = {'key', 'label', 'kind', 'value', 'required', 'mapping', 'write_verified', 'target'}
+    return {k: v for k, v in entry.items() if k in keep or v not in ('', [], {}, None, False)}
+
+
 class AgentTools:
     def __init__(self, browser, state, *, autofill, active, refresh=None, communicate=None, accept_answer=None, checkpoint=None, bind_answers=None, publish_question=None):
         self.browser, self.state, self.autofill, self.active = browser, state, autofill, active
@@ -285,6 +292,33 @@ class AgentTools:
             page = {**page, 'controls': [{**c, 'section': str(c.get('section', ''))[:80]}
                 for c in page.get('controls', []) if not c.get('disabled') and c.get('kind') not in {'field', 'unavailable'}][:40]}
         current_keys = {f["key"] for f in self.fields}
+        # Refs allowed for every open field are listed once (they were repeated per field:
+        # 16 experience refs x 46 fields ~ 33k characters of the replayed request).
+        allowed = {f["key"]: allowed_sources(f) for f in unresolved}
+        universal = set.intersection(*(set(v) for v in allowed.values())) if len(allowed) > 1 else set()
+        status, blockers = {}, []
+        bound_keys = set(self.state.get('education_bindings', {}))
+        for f in unresolved:
+            target = desired_answer(f, self.state)
+            decision = active_decision(f, self.state)
+            mapping = (decision['mode'] if decision else 'no_target' if target is None
+                       else 'exact' if matches(f, target) else 'undecided')
+            verified = (not f.get('invalid') and (bool(f['value']) if target is not None else True)
+                        and (target is None or matches(f, target)))
+            status[f["key"]] = {'target': target[:300] if isinstance(target, str) else target, 'mapping': mapping,
+                                'write_verified': verified}
+            from .runner import attempt_record
+            count, basis = attempt_record(self.state, f)
+            if basis:
+                status[f["key"]]['attempts'] = {'count': count, 'basis': basis}
+            reason = ('required_empty' if f['required'] and not f['value'] else 'invalid' if f.get('invalid')
+                      else 'bound_value_differs_from_fact' if f["key"] in bound_keys and target is not None and not matches(f, target)
+                      else None)
+            if reason:
+                blockers.append({'key': f["key"], 'label': f["label"][:120], 'reason': reason,
+                                 **({'selected': f['value']} if f.get('value') else {})})
+        blockers += [{'key': k, 'reason': 'unresolved_option_path'} for k in self._unresolved_paths()]
+        search_log = self.state.get('option_search_log', {})
         def origin(ref):
             if not ref.startswith('answer:'):
                 return ref.split(':', 1)[0]
@@ -313,13 +347,20 @@ class AgentTools:
                 for f in self.state.get("review_fields", []) if f.get("value") not in (None, "", False) and f["key"] not in current_keys],
             "last_tool_result": self.state.get("last_tool_result"), "recovery": self.state.get("recovery_note"),
             "chat_revision": self.state.get("chat_revision", 0), "completed_fields": completed_keys,
+            # Point 3: what blocks Next, separately from what is selected on the page.
+            "next_step_blockers": blockers,
+            "any_field_source_refs": sorted(universal),
             "user_messages": [{k: v for k, v in {"id": m["id"], "role": m["role"], "text": m["text"], "field_key": m.get("field_key"),
                 "bound_answers": m.get("bound_answers"), "binding_method": m.get("binding_method"),
                 "question_keys": m.get("question_keys"), 'in_reply_to':m.get('in_reply_to')}.items() if v not in (None, [], {})}
                 for m in self.state.get("messages", [])[-12:]],
             "facts": [{'ref': key, 'value': value[:2000] if isinstance(value, str) else value,
                 'origin': origin(key)} for key, value in sources.items()],
-            "fields": [{"key": f["key"], "label": f["label"][:250], "value": f["value"], "done": True} if f["key"] in completed_keys else {"key": f["key"], "label": f["label"][:250], "kind": f["kind"], "allowed_source_refs":allowed_sources(f),
+            "fields": [{"key": f["key"], "label": f["label"][:250], "value": f["value"], "done": True} if f["key"] in completed_keys else _without_empty({"key": f["key"], "label": f["label"][:250], "kind": f["kind"],
+                "allowed_source_refs":[r for r in allowed[f["key"]] if r not in universal],
+                # selected (value) vs target fact vs saved semantic mapping vs verified write.
+                **status[f["key"]],
+                **({"search_history": search_log[f["key"]]} if f["key"] in search_log else {}),
                 "required": f["required"], "invalid": f.get("invalid", False),
                 "choice_control":f.get("choice_control", False), "group":f.get("group", ""),
                 "search_text":f.get("search_text", ""), "section":f.get("section", ""),
@@ -329,7 +370,7 @@ class AgentTools:
                 "option_count": len(f.get("options", [])),
                 "options_truncated": len(options(f)) < len(f.get("options", [])),
                 "options": [{"label": o["label"][:200], "value": o["value"][:200], **({"expandable":True} if o.get("expandable") else {}),
-                    **({"disabled":True} if o.get("disabled") else {})} for o in options(f)]} for f in self.fields]}
+                    **({"disabled":True} if o.get("disabled") else {})} for o in options(f)]}) for f in self.fields]}
 
     def source(self, field, reference):
         if reference == 'material:cover_letter':
@@ -584,6 +625,7 @@ class AgentTools:
         if name == "inspect_field":
             options = self.browser.inspect_options(key)
             self.observed_options[key] = options
+            self._log_search(key, None, options, args)
             if not options and self.state.get("visual_fallback"):
                 # The menu may render rows the DOM does not expose as options.
                 # Report a DOM failure so the runner attaches a screenshot.
@@ -594,11 +636,20 @@ class AgentTools:
             query = search_text(field["label"], self.source(field, args["source_ref"]))
             options = self.browser.inspect_options(key, query=query)
             self.observed_options[key] = options
+            self._log_search(key, query, options, args)
             current = self.browser.field(key)
             if current.get("value_committed") and matches(current, query):
                 return {"field_key":key, "already_filled":True, "value":current["value"],
                     "next":"The picker committed this value; continue with other fields."}
-            return self._option_page(options, args)
+            page = self._option_page(options, args)
+            if not resolve_option(field["label"], query, options):
+                # Replay: the model searched and said it would "keep looking" without saving a
+                # decision. Name the decisions that resolve the field; the choice stays the model's.
+                page["unresolved"] = ("No candidate here is the fact itself. Resolve the field with a saved decision: "
+                    "resolve_field mode=equivalent if an observed option represents the fact (say why), a different "
+                    "grounded search, ask_user with a specific question, or resolve_field mode=leave_empty with your "
+                    "reason for an optional field.")
+            return page
         if name == "click_field":
             self.browser.click_field(key)
         elif name == "type_from_source":
@@ -642,6 +693,20 @@ class AgentTools:
         end = min(offset + 300, len(options))
         return {"options": options[offset:end], "total_options": len(options),
                 "next_offset": end if end < len(options) else None}
+
+    def _log_search(self, key, query, options, args):
+        """Searched terms, candidates seen and whether more pages remain, per field (shown in the
+        observation so the model sees what has already been tried)."""
+        log = dict(self.state.get("option_search_log", {}))
+        entry = dict(log.get(key) or {"queries": [], "seen": []})
+        label = "(browse)" if query is None else str(query)
+        if label not in entry["queries"]:
+            entry["queries"] = [*entry["queries"], label][-12:]
+        entry["seen"] = list(dict.fromkeys([*entry["seen"], *(o.get("label") for o in options)]))[:80]
+        offset = args.get("offset", 0) if isinstance(args.get("offset"), int) else 0
+        entry["more_pages"] = offset + 300 < len(options)
+        log[key] = entry
+        self._save_decisions(option_search_log=log)
 
     def _bind_education(self,args):
         # W6: the model sent the fact-reference form "education:<id>"; accept it as the id.

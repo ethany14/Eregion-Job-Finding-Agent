@@ -184,3 +184,68 @@ def test_the_default_view_of_a_limit_stop_reports_budget_and_unresolved_optional
     assert view['blocking_fields'] == []
     assert view['unresolved_optional_fields'] == [{'key': study['key'], 'label': 'Field of Study'}]
     assert view['budget']['provider_attempts_left'] == 14 and 'page_budget' in view['next'] and 'application_budget' in view['next']
+
+
+def test_observation_separates_selected_value_mapping_verification_and_blockers(monkeypatch):
+    # Replay review: UW showed a value, the model said "set", yet nothing was decided and Next
+    # stayed blocked. The observation now says which is which, per field.
+    from eregion.runtime.auto_apply.education import normalize_records
+    monkeypatch.setenv('TYPESAFE_ENABLED', 'false')
+    north, south = normalize_records([{'school': 'North University', 'degree': 'M.Eng.', 'field_of_study': 'Systems Engineering'},
+                                      {'school': 'South College', 'degree': 'B.A.', 'field_of_study': 'Computer Science'}])
+    def study(n, value):
+        return {'key': f'text:education--fieldOfStudy:{n}', 'label': 'Field of Study', 'kind': 'text', 'choice_control': True,
+                'required': False, 'value': value, 'group': 'From', 'options': [{'label': 'Accounting', 'value': 'Accounting'}]}
+    one, two = study(1, ''), study(2, 'Computer and Information Science')
+    browser = FakeBrowser(''); browser.fields = [one, two, {'key': 'note', 'label': 'Note', 'kind': 'text', 'required': False, 'value': ''}]
+    bind = lambda f, rec: {'education_id': rec['id'], 'component': 'field_of_study', 'source_ref': f"education:{rec['id']}:field_of_study",
+                           'field': {k: f.get(k) for k in ('key', 'dom_id', 'label', 'group')}}
+    state = {'profile': {'education': [north, south]}, 'answers': {},
+             'education_bindings': {one['key']: bind(one, north), two['key']: bind(two, south)},
+             'option_search_log': {one['key']: {'queries': ['Systems', 'Engineering'], 'seen': ['Computer Systems Analysis'], 'more_pages': False}}}
+    session = AgentTools(browser, state, autofill=lambda: {}, active=lambda: True)
+    snap = session.observe()
+    fields = {f['key']: f for f in snap['fields']}
+    assert {k: fields[two['key']][k] for k in ('value', 'target', 'mapping', 'write_verified')} == {
+        'value': 'Computer and Information Science', 'target': 'Computer Science', 'mapping': 'undecided', 'write_verified': False}
+    assert fields[one['key']]['search_history']['queries'] == ['Systems', 'Engineering']
+    assert {b['key']: b['reason'] for b in snap['next_step_blockers']} == {
+        one['key']: 'bound_value_differs_from_fact', two['key']: 'bound_value_differs_from_fact'}
+    assert 'help' not in fields['note'] and fields['note']['mapping'] == 'no_target'
+    # After a saved equivalence decision UW is resolved and no longer blocks.
+    session.execute('resolve_field', {'observation_id': snap['observation_id'], 'field_key': two['key'],
+        'value': 'Computer and Information Science', 'mode': 'equivalent', 'source_refs': [f"education:{south['id']}:field_of_study"],
+        'reason': 'The listed name for Computer Science.'})
+    snap = session.observe()
+    assert two['key'] not in {b['key'] for b in snap['next_step_blockers']}
+
+
+def test_legacy_attempt_records_migrate_when_they_reproduce_and_otherwise_stay_known_as_unknown():
+    # Replay review: a legacy record (target = answer + options) was silently read as zero.
+    from eregion.runtime.auto_apply.runner import attempt_record, ATTEMPT_TARGET_VERSION
+    from eregion.runtime.telemetry import outcome_fingerprint
+    field = {'key': 'major', 'kind': 'text', 'choice_control': True, 'value': '', 'label': 'Field of Study',
+             'options': [{'label': 'Accounting'}, {'label': 'Biology'}]}
+    state = {'profile': {}, 'answers': {'major': 'Systems Engineering'}}
+    legacy = outcome_fingerprint(['Systems Engineering', ['Accounting', 'Biology']])
+    state['field_attempts'] = {'major': {'target': legacy, 'count': 4}}
+    assert attempt_record(state, field) == (4, 'migrated')
+    state['field_attempts'] = {'major': {'target': 'some-other-hash', 'count': 3}}
+    assert attempt_record(state, field) == (3, 'unknown_target')  # kept, labelled, never zero
+    from eregion.runtime.auto_apply.runner import attempt_target
+    state['field_attempts'] = {'major': {'target': attempt_target(state, field), 'count': 2, 'v': ATTEMPT_TARGET_VERSION}}
+    assert attempt_record(state, field) == (2, 'current')
+    state['answers']['major'] = 'Biology'  # a new fact resets a current-version count
+    assert attempt_record(state, field) == (0, None)
+
+
+def test_the_replay_browser_reports_an_unrecorded_search_as_unsupported_not_as_no_results():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('replay_apply_field', Path(__file__).parents[1] / 'tools/scripts/replay_apply_field.py')
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    from eregion.runtime.auto_apply.browser import BrowserBlocked
+    browser = module.ReplayBrowser([{'key': 'text:education--fieldOfStudy:1', 'kind': 'text', 'label': 'Field of Study', 'value': '', 'options': []}], [])
+    assert [o['label'] for o in browser.inspect_options('text:education--fieldOfStudy:1', 'Systems')] == ['Computer Systems Analysis', 'Management Information Systems']
+    with pytest.raises(BrowserBlocked, match='no recorded website result'):
+        browser.inspect_options('text:education--fieldOfStudy:1', 'Systems Engineering')
+    assert browser.unsupported == [{'action': 'search', 'field_key': 'text:education--fieldOfStudy:1', 'query': 'Systems Engineering'}]

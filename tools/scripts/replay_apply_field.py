@@ -29,6 +29,7 @@ class ReplayBrowser:
 
     def __init__(self, fields, trace):
         self.fields, self.trace, self.ended = copy.deepcopy(fields), trace, False
+        self.unsupported = []
         self.submit_clicked = False
 
     # Observation -------------------------------------------------------------------------
@@ -53,7 +54,14 @@ class ReplayBrowser:
     def inspect_options(self, key, query=None):
         field = self.field(key)
         if query is not None and 'fieldOfStudy' in key:
-            field['options'] = [{'label': o, 'value': o} for o in OBSERVED.get(str(query), [])]
+            if str(query) not in OBSERVED:
+                # Never invent "no results": the replay has no recording for this query.
+                self.unsupported.append({'action': 'search', 'field_key': key, 'query': query})
+                self._log('replay_unsupported', field_key=key, query=query)
+                from eregion.runtime.auto_apply.browser import BrowserBlocked
+                raise BrowserBlocked(f'Replay: no recorded website result for the search "{query}". This replay cannot '
+                                     'answer it; decide from the recorded searches (search_history) or another action.')
+            field['options'] = [{'label': o, 'value': o} for o in OBSERVED[str(query)]]
         self._log('inspect_options', field_key=key, query=query, results=len(field.get('options') or []))
         return field.get('options') or []
 
@@ -92,7 +100,7 @@ def scripted_model():
     """--dry: exercises the harness with no provider call."""
     from langchain_core.messages import AIMessage, HumanMessage
     from uuid import uuid4
-    plan = iter(['leave_empty', 'equivalent', 'next'])
+    plan = iter(['search', 'leave_empty', 'equivalent', 'next'])
     class Model:
         timeout = 30
         def invoke(self, messages, tools):
@@ -117,19 +125,67 @@ def scripted_model():
     return Model
 
 
+class PrecheckStop(Exception):
+    pass
+
+
+def precheck_model(record):
+    """--precheck: build the first real request with the configured model wrapper and compute the
+    reservation the ledger would apply; never send it and never write a ledger row."""
+    from eregion.domain.model import shared_model
+    from eregion.runtime.provider_usage import input_reservation
+    class Probe:
+        timeout = 45
+        def invoke(self, messages, tools):
+            real = shared_model(purpose='agent')
+            bound = real.bind_tools(tools)
+            payload = real._get_request_payload(messages, **getattr(bound, 'kwargs', {}))
+            parts = {}
+            for index, message in enumerate(messages):
+                content = message.content if isinstance(message.content, str) else json.dumps(message.content, default=str)
+                label = f'{index}:{type(message).__name__}'
+                try:
+                    snapshot = json.loads(content)
+                    parts[label] = {key: len(json.dumps(value, ensure_ascii=False, default=str)) for key, value in snapshot.items()}
+                    parts[label]['_total'] = len(content)
+                except (ValueError, TypeError, AttributeError):
+                    parts[label] = {'_total': len(content)}
+            parts['tools'] = {t['function']['name']: len(json.dumps(t, ensure_ascii=False)) for t in tools}
+            parts['tools']['_total'] = len(json.dumps(tools, ensure_ascii=False))
+            record['parts'] = parts
+            snapshot = json.loads(messages[-1].content) if isinstance(messages[-1].content, str) else {}
+            record['education_fields'] = [f for f in snapshot.get('fields', []) if 'fieldOfStudy' in f['key']]
+            record['next_step_blockers'] = snapshot.get('next_step_blockers')
+            record['any_field_source_refs'] = len(snapshot.get('any_field_source_refs', []))
+            record.update(model=getattr(real, 'model_name', None), messages=len(messages), tools=len(tools),
+                          payload_bytes=len(json.dumps(payload, ensure_ascii=False, default=str).encode('utf-8')),
+                          reservation=input_reservation(payload),
+                          budget_sizes=real._budget_sizes(messages, None, getattr(bound, 'kwargs', {})))
+            raise PrecheckStop()
+        def invoke_turn(self, messages, tools, snapshot):
+            return self.invoke(messages, tools)
+    return Probe
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', required=True)
     parser.add_argument('--out', required=True)
     parser.add_argument('--dry', action='store_true')
     parser.add_argument('--max-model-calls', type=int, default=6)
+    parser.add_argument('--precheck', action='store_true')
     args = parser.parse_args()
+    precheck = {}
     out = Path(args.out); out.mkdir(parents=True, exist_ok=True)
     from eregion.runtime.auto_apply.agent import HybridApplicationAgent
     from eregion.runtime.auto_apply.autofill import autofill
     from eregion.runtime.provider_usage import capture_provider_attempts, usage_scope, TaskProviderBudgetExceeded
     state = load_state(args.source)
     state.update(status='running', input_request=None, pending_fields=[], agent_reason=None)
+    # Searches observed on the real Adobe control (manual read-only probe, 2026-10-15).
+    cornell = next(f['key'] for f in state['fields'] if f['key'].endswith('fieldOfStudy:1'))
+    state.setdefault('option_search_log', {})[cornell] = {'queries': list(OBSERVED), 'source': 'observed on Adobe 2026-10-15',
+        'seen': list(dict.fromkeys(o for results in OBSERVED.values() for o in results)), 'more_pages': False}
     (out / 'input-state.json').write_text(json.dumps({k: state.get(k) for k in (
         'fields', 'answers', 'answer_sources', 'field_decisions', 'education_bindings', 'field_attempts',
         'abandoned_fields', 'autofill_failures', 'page_history', 'decision_history', 'messages')}, default=str, indent=1), encoding='utf-8')
@@ -145,7 +201,10 @@ def main():
     def checkpoint(**changes):
         state.update(changes)
         trace.append({'at': time.strftime('%H:%M:%S'), 'checkpoint': sorted(changes)})
-    agent = HybridApplicationAgent(model_factory=scripted_model()) if args.dry else HybridApplicationAgent()
+    if args.precheck:  # FastDecisions() (offline) replaces configured Jev: no nested provider call
+        agent = HybridApplicationAgent(model_factory=precheck_model(precheck))
+    else:
+        agent = HybridApplicationAgent(model_factory=scripted_model()) if args.dry else HybridApplicationAgent()
     started = time.monotonic()
     with capture_provider_attempts() as attempts:
         try:
@@ -160,11 +219,16 @@ def main():
         except TaskProviderBudgetExceeded as exc:
             outcome = {'reason': 'experiment_budget', 'detail': exc.reason}
     result = {'outcome': outcome, 'seconds': round(time.monotonic() - started, 1), 'model_reservations': reservations['model'],
-              'left_page': browser.ended, 'final_decisions': {k: v for k, v in state.get('field_decisions', {}).items() if 'fieldOfStudy' in k},
+              'left_page': browser.ended, 'verification_limited': bool(browser.unsupported), 'unsupported': browser.unsupported,
+              'final_decisions': {k: v for k, v in state.get('field_decisions', {}).items() if 'fieldOfStudy' in k},
               'final_field_of_study': {f['key']: f.get('value') for f in browser.fields if 'fieldOfStudy' in f['key']},
               'decision_history': state.get('decision_history', []), 'input_request': state.get('input_request'),
               'provider_attempts': [{k: a.get(k) for k in ('model', 'purpose', 'status', 'attempt', 'input_tokens', 'output_tokens',
                   'reserved_input_tokens', 'duration_seconds')} for a in attempts]}
+    if args.precheck:
+        (out / 'precheck.json').write_text(json.dumps(precheck, default=str, indent=1), encoding='utf-8')
+        print('precheck', json.dumps({**precheck, 'provider_attempts': len(result['provider_attempts'])}, default=str))
+        return
     (out / 'trace.json').write_text(json.dumps(trace, default=str, indent=1), encoding='utf-8')
     (out / 'result.json').write_text(json.dumps(result, default=str, indent=1), encoding='utf-8')
     print(json.dumps({k: result[k] for k in ('outcome', 'seconds', 'model_reservations', 'left_page', 'final_field_of_study')}, default=str))

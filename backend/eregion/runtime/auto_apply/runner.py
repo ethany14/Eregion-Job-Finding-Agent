@@ -27,6 +27,30 @@ NON_FIELD_ACTIONS = {'observe', 'view_browser', 'say', 'ask_user', 'request_inpu
     'update_plan', 'computer_wait', 'draft_answer'}
 
 logger = logging.getLogger(__name__)
+ATTEMPT_TARGET_VERSION = 2
+
+
+def attempt_target(state, field):
+    """v2: the desired answer, plus options only for fixed lists (select/radio)."""
+    from .autofill import desired_answer
+    fixed = field.get('kind') in {'select', 'radio'} and not field.get('choice_control')
+    return outcome_fingerprint([desired_answer(field, state),
+                                [o.get('label') for o in field.get('options') or []] if fixed else None])
+
+
+def attempt_record(state, field):
+    """(count, basis). A v2 entry counts while its target is unchanged. A legacy entry (no
+    version, target = desired answer + options) carries over when it reproduces with the
+    current options ("migrated"); otherwise its target is unknown and the count is still kept,
+    conservatively, never read as zero (replay review)."""
+    from .autofill import desired_answer
+    entry = (state.get('field_attempts') or {}).get(field['key'])
+    if not isinstance(entry, dict):
+        return 0, None
+    if entry.get('v') == ATTEMPT_TARGET_VERSION:
+        return (entry['count'], 'current') if entry.get('target') == attempt_target(state, field) else (0, None)
+    legacy = outcome_fingerprint([desired_answer(field, state), [o.get('label') for o in field.get('options') or []]])
+    return entry.get('count', 0), 'migrated' if entry.get('target') == legacy else 'unknown_target'
 
 
 class ApplicationHost:
@@ -391,24 +415,15 @@ class ApplicationHost:
         return min(getattr(self.model, 'timeout', 45), max(10, typical))
 
     def _target(self, field):
-        """What a field is being filled towards: the desired answer and its current options.
-        A new fact or new choices starts a fresh count; a plain "continue" does not (W1)."""
-        from .autofill import desired_answer
-        # A fixed list (select/radio) that changes is new information. A searchable picker
-        # shows different options for every query, which reset the count each search
-        # (Adobe re-test: 8 searches + 5 inspections of one optional Field of Study).
-        fixed = field.get('kind') in {'select', 'radio'} and not field.get('choice_control')
-        return outcome_fingerprint([desired_answer(field, self.session.state),
-                                    [o.get('label') for o in field.get('options') or []] if fixed else None])
+        return attempt_target(self.session.state, field)
 
     def attempts(self, field):
-        entry = (self.session.state.get('field_attempts') or {}).get(field['key'])
-        return entry['count'] if isinstance(entry, dict) and entry.get('target') == self._target(field) else 0
+        return attempt_record(self.session.state, field)[0]
 
     def count_attempt(self, field):
         record = self.session.state.setdefault('field_attempts', {})
         count = self.attempts(field) + 1
-        record[field['key']] = {'target': self._target(field), 'count': count}
+        record[field['key']] = {'target': self._target(field), 'count': count, 'v': ATTEMPT_TARGET_VERSION}
         self.pending['field_attempts'] = record
         abandoned = [k for k in self.session.state.get('abandoned_fields', []) if k != field['key']]
         if count >= FIELD_ATTEMPT_LIMIT and not field.get('required'):
