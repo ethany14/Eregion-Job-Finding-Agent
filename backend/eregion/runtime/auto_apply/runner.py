@@ -442,6 +442,11 @@ class ApplicationHost:
                 'so repeating them is blocked. Decide from its observed options: map the fact to an option with resolve_field, '
                 'ask the user, or record resolve_field mode=leave_empty with your reason (shown to the user).'),
                 'abandoned': key}
+        if name == 'click_page_action' and getattr(self, '_turn_failures', (None, []))[0] == id(turn) and self._turn_failures[1]:
+            # A page action closing a batch runs only when the batch's earlier actions all
+            # succeeded and verified; otherwise the model sees the failure before moving on.
+            return action_failure('batch_incomplete', 'Not executed: earlier actions in this turn failed or did not verify ('
+                + ', '.join(self._turn_failures[1][:6]) + '). Read the result, repair, then use the page action.')
         self.text_turns = 0
         session._cached_fields = None
         outcome = session.execute(name, args)
@@ -492,6 +497,10 @@ class ApplicationHost:
             # W6 (Adobe): fills skipped as unchanged were not attempted; counting them as failed
             # actions tripped the repeat guard before the model could change the answer.
             failed = False
+        if getattr(self, '_turn_failures', (None, []))[0] != id(turn):
+            self._turn_failures = (id(turn), [])
+        if 'error' in outcome or outcome.get('failed') or outcome.get('verified') is False:
+            self._turn_failures[1].append(f"{name}:{args.get('field_key') or ','.join(sorted(outcome.get('failed') or {})) or 'action'}")
         if failed and not outcome.get('error_code') and not outcome.get('failure_details'):
             code = 'repeated_action' if outcome.get('unchanged') else 'value_not_retained' if outcome.get('verified') is False else 'invalid_action'
             outcome.update({**action_failure(code, outcome.get('error') or outcome.get('next') or 'Inspect the failed controls before retrying.'), **outcome})

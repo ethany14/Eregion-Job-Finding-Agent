@@ -11,6 +11,7 @@ RECOVERY = {
     'options_changed': ('Inspect this field again and select from its current options. Use visual tools only if the menu cannot be operated through DOM tools.', False),
     'option_mapping_required': ('Inspect the available options and map the confirmed fact with resolve_field or explore_option. Do not repeat an unmatched value.', False),
     'validation_error': ('Read the field errors and constraints, correct the representation or missing choice, and verify it. Rewriting the rejected value is not a repair.', False),
+    'batch_incomplete': ('Repair the failed or unverified actions named in the message, then use the page action again.', False),
     'experience_source_mismatch': ('Cite facts of the work record this field is bound to; rebind only if the row belongs to another record.', False),
     'date_write_failed': ('Use read_field to inspect the date group. Keep the confirmed date; repair the input method, not the candidate fact.', False),
     'date_group_changed': ('A sibling date segment changed. Use read_field, then repair only from confirmed facts; this write is not verified.', False),
