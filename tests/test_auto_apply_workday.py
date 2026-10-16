@@ -225,6 +225,28 @@ def test_a_month_component_does_not_fill_a_full_date_control():
     assert format_date({'key':'text:x--dateSectionMonth-input:1','label':'From*'},'13','month') is None
 
 
+def test_filled_workday_date_segments_are_corrected_without_spilling_into_the_year():
+    # Adobe re-test (2026-10-16): the site prefilled 2/2026; typing "08" over "2" spilled
+    # digits into the year (it read "8202"), and the month's display "8" failed a "08" check.
+    from eregion.runtime.auto_apply.autofill import matches
+    class FilledBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_date_filled.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=FilledBrowser(URL)
+    try:
+        month,year=browser.observe()
+        browser.type_field(month['key'],'08')
+        month,year=browser.observe()
+        assert (month['value'],year['value'])==('8','2026')
+        assert matches(month,'08') and matches(year,'2026')
+        browser.type_field(month['key'],'08')   # already holds it: no keystrokes
+        browser.type_field(year['key'],'2026')
+        assert [f['value'] for f in browser.observe()]==['8','2026']
+    finally:browser.close()
+
+
 def test_filled_workday_picker_can_be_changed_without_inspecting_first():
     # Adobe pilot (2026-10-15): the UW-Madison degree read "Masters" and every choose_option
     # for "Bachelors" failed, because the menu was never opened for it.

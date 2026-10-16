@@ -23,18 +23,19 @@ FIELD_ATTEMPT_LIMIT = 4
 PAGE_MODEL_CALL_LIMIT = 30
 # Refusals by the progress guards: the action was not executed.
 PROTECTIVE = {'repeated_action', 'field_attempt_limit', 'unchanged_failure'}
-NON_FIELD_ACTIONS = {'observe', 'view_browser', 'say', 'ask_user', 'request_input', 'read_context', 'record_answers',
+NON_FIELD_ACTIONS = {'read_field', 'focus_fields', 'observe', 'view_browser', 'say', 'ask_user', 'request_input', 'read_context', 'record_answers',
     'update_plan', 'computer_wait', 'draft_answer'}
 
 logger = logging.getLogger(__name__)
-ATTEMPT_TARGET_VERSION = 2
+ATTEMPT_TARGET_VERSION = 3
 
 
 def attempt_target(state, field):
-    """v2: the desired answer, plus options only for fixed lists (select/radio)."""
+    """The grounded target with date padding normalized; fixed-list options only."""
     from .autofill import desired_answer
     fixed = field.get('kind') in {'select', 'radio'} and not field.get('choice_control')
-    return outcome_fingerprint([desired_answer(field, state),
+    from .browser import canonical_target
+    return outcome_fingerprint([canonical_target(field, desired_answer(field, state)),
                                 [o.get('label') for o in field.get('options') or []] if fixed else None])
 
 
@@ -49,6 +50,16 @@ def attempt_record(state, field):
         return 0, None
     if entry.get('v') == ATTEMPT_TARGET_VERSION:
         return (entry['count'], 'current') if entry.get('target') == attempt_target(state, field) else (0, None)
+    if entry.get('v') == 2:
+        from .browser import canonical_target, date_segment
+        target = desired_answer(field, state)
+        options = [o.get('label') for o in field.get('options') or []] if field.get('kind') in {'select','radio'} and not field.get('choice_control') else None
+        candidates = [target, canonical_target(field, target)]
+        if date_segment(field) and isinstance(target,str) and target.isdigit():
+            candidates.append(str(int(target)).zfill(2))
+        if any(entry.get('target') == outcome_fingerprint([value,options]) for value in candidates):
+            return entry['count'], 'migrated'
+        return 0, None  # A genuinely different target remains eligible.
     legacy = outcome_fingerprint([desired_answer(field, state), [o.get('label') for o in field.get('options') or []]])
     return entry.get('count', 0), 'migrated' if entry.get('target') == legacy else 'unknown_target'
 
@@ -151,14 +162,29 @@ class ApplicationHost:
             snapshot['host_autofill'] = self.host_autofill
         return Turn(SYSTEM, snapshot, tools, snapshot.get('chat_revision', 0), images,
             batchable=frozenset({'type_from_source', 'choose_option', 'resolve_field', 'record_answers',
-                'use_remembered_answer', 'bind_document', 'bind_education', 'draft_answer', 'say',
-                'update_plan', 'search_options', 'inspect_field'}),
+                'use_remembered_answer', 'bind_document', 'bind_education', 'bind_experience', 'draft_answer', 'say',
+                'update_plan', 'search_options', 'inspect_field', 'autofill'}),
             compatibility_tools=[t for t in TOOLS if t['function']['name'] in {'observe', 'use_chat_answer'} | ({'autofill'} if not fill_available else set())])
 
     def validate_batch(self, calls, turn):
-        seen = set()
+        seen, bound = set(), set()
         observed = {f['key'] for f in self.session.fields}
-        for call in calls:
+        binds = {'bind_education', 'bind_experience', 'bind_document'}
+        # Experience-page test: binding a row, saving its checkbox decision and filling it took
+        # separate rounds. A field may be bound and then acted on once in the same turn, and a
+        # scoped autofill may close the batch for fields no other call in it writes.
+        for index, call in enumerate(calls):
+            if call['name'] == 'autofill' and len(calls) == 1:
+                continue  # A lone autofill keeps its own rules (saved or page scope).
+            if call['name'] == 'autofill':
+                keys = call['args'].get('field_keys')
+                if index != len(calls) - 1 or not isinstance(keys, list) or not keys:
+                    raise ToolArgumentsError('autofill in a batch must be the last call and name its field_keys.')
+                if any(key not in observed for key in keys):
+                    raise ToolArgumentsError('Observe a newly revealed field before batching an action for it.')
+                if set(keys) & seen:
+                    raise ToolArgumentsError('Batch rejected: autofill field_keys overlap another write in this turn.')
+                continue
             args = call['args']
             if any(not isinstance(item, dict) for key in ('answers', 'fields') for item in args.get(key) or []):
                 raise ToolArgumentsError(f"{call['name']}: each item in answers/fields must be an object with a field_key.")
@@ -167,12 +193,13 @@ class ApplicationHost:
                 args = {**args, 'fields':combined_bindings(args.get('fields', []))}
             keys = [args['field_key']] if args.get('field_key') else []
             keys += [item.get('field_key') for key in ('answers', 'fields') for item in args.get(key, [])]
+            target = bound if call['name'] in binds else seen
             for key in keys:
                 if key not in observed:
                     raise ToolArgumentsError('Observe a newly revealed field before batching an action for it.')
-                if key in seen:
-                    raise ToolArgumentsError('Batch rejected: use each field only once per turn.')
-                seen.add(key)
+                if key in target or (call['name'] in binds and key in seen):
+                    raise ToolArgumentsError('Batch rejected: bind a field at most once and act on it at most once per turn, binding first.')
+                target.add(key)
 
     def _page_fingerprint(self):
         page = self.session.page_context or {}
@@ -221,8 +248,14 @@ class ApplicationHost:
             if self.first_observation or fingerprint != self.autofill_fingerprint:
                 self.first_observation = False
                 self.autofill_fingerprint = fingerprint
-                result = self._host_action('autofill', {}, snapshot)
-                self.host_autofill = {k: result.get(k, {} if k == 'failed' else []) for k in ('filled', 'failed')}
+                # Page entry may copy literal facts, but semantic option work needs
+                # the model's explicit scope; do not spend Jev calls on unrelated fields.
+                session._host_literal_autofill = True
+                try:
+                    result = self._host_action('autofill', {}, snapshot)
+                finally:
+                    session._host_literal_autofill = False
+                self.host_autofill = {k: result.get(k, {} if k == 'failed' else []) for k in ('filled', 'failed', 'historical_failure_count', 'completion_level', 'scope_note')}
                 snapshot = self._scan()
                 page = session.page_context or {}
             if session.state.get('input_request'):
@@ -368,10 +401,15 @@ class ApplicationHost:
             raise LoopStop('agent_limit')
         self.started = time.monotonic()
         session = self.session
-        self.fingerprint = outcome_fingerprint([name, args,
+        fingerprint_args = dict(args)
+        action_field = next((f for f in session.fields if f['key']==args.get('field_key')), None)
+        if action_field and 'value' in fingerprint_args:
+            from .browser import canonical_target
+            fingerprint_args['value'] = canonical_target(action_field, fingerprint_args['value'])
+        self.fingerprint = outcome_fingerprint([name, fingerprint_args,
             [{k: f.get(k) for k in ('key', 'value', 'options', 'errors', 'invalid')} for f in session.fields],
             session.page_context, turn.revision,
-            {key: session.state.get(key) for key in ('answers', 'answer_sources', 'field_decisions', 'education_bindings',
+            {key: session.state.get(key) for key in ('answers', 'answer_sources', 'field_decisions', 'education_bindings', 'experience_bindings',
                 'education_answer_overrides', 'document_bindings', 'document_refresh')}])
         failures = sum(h.get('fingerprint') == self.fingerprint and h.get('failed', False) for h in self.history)
         if failures >= 5:
@@ -463,7 +501,9 @@ class ApplicationHost:
         self.session.state['decision_history'] = self.history
         self.pending.update(decision_history=self.history, last_tool_result={'tool': name, 'field_key': args.get('field_key'),
                 'result': {k: v for k, v in outcome.items() if k in {'error', 'error_code', 'next', 'failure_details', 'visual_recovery', 'errors',
-                    'verified', 'decision', 'value', 'filled', 'failed', 'field_key', 'action', 'saved', 'options', 'goal', 'screen', 'target'}}})
+                    'verified', 'decision', 'value', 'filled', 'failed', 'field_key', 'action', 'saved', 'options', 'goal', 'screen', 'target',
+                    'scope', 'scope_status', 'scope_note', 'verified_fields', 'unresolved_fields', 'out_of_scope_failure_count',
+                    'historical_failure_count', 'unreviewed_checkboxes', 'completion_level'}}})
         fields = self.browser.observe()
         self.session.fields = fields
         current = {f['key']: f for f in fields}

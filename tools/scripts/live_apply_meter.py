@@ -99,12 +99,29 @@ def settled(task_id):
     return True
 
 
+POLL_GAP = 60  # a poll step longer than this was sleep or downtime, not work or waiting
+
+
+def stop_server():
+    """Active-time cap: stop the test server so no further model call starts, keeping the
+    task and application recoverable (the plan forbids cancelling or discarding on a pause)."""
+    import re
+    import subprocess
+    port = BASE.rsplit(':', 1)[-1].strip('/')
+    out = subprocess.run(['netstat', '-ano', '-p', 'TCP'], capture_output=True, text=True).stdout
+    pids = {m[1] for m in re.finditer(r':' + port + r'\s+\S+\s+LISTENING\s+(\d+)', out)}
+    for pid in pids:
+        subprocess.run(['taskkill', '/PID', pid, '/T', '/F'], capture_output=True)
+    return sorted(pids)
+
+
 def main(task_id):
-    active = human = 0.0
+    active = human = gap = 0.0
     try:
         with open(LOG, encoding='utf-8') as log:
             previous = json.loads(log.readlines()[-1])
         active, human = float(previous['active_s']), float(previous['human_wait_s'])
+        gap = float(previous.get('gap_s', 0))
     except (OSError, IndexError, KeyError, ValueError):
         pass
     last = time.monotonic()
@@ -115,21 +132,22 @@ def main(task_id):
         state = json.load(urllib.request.urlopen(f'{BASE}/api/career/tasks/{task_id}', timeout=30))
         status, app = state['status'], state.get('application_status')
         waiting_user = status == 'needs_input'
-        if waiting_user:
+        # apply-test-06: one ~1 h step (machine asleep) was booked as human wait.
+        if step > POLL_GAP:
+            gap += step
+        elif waiting_user:
             human += step
         else:
             active += step
         collect(task_id, state)
         record = {'t': time.strftime('%H:%M:%S'), 'status': status, 'application': app,
-                  'active_s': round(active), 'human_wait_s': round(human), **ledger(task_id),
+                  'active_s': round(active), 'human_wait_s': round(human), 'gap_s': round(gap), **ledger(task_id),
                   'message': (state.get('message') or '')[:120]}
         with open(LOG, 'a', encoding='utf-8') as log:
             log.write(json.dumps(record) + '\n')
         if active >= ACTIVE_CAP:
-            req = urllib.request.Request(f'{BASE}/api/career/tasks/{task_id}/cancel', data=b'{}',
-                                         headers={'Content-Type': 'application/json'}, method='POST')
-            urllib.request.urlopen(req, timeout=30)
-            print('CAP active time reached; task cancelled', json.dumps(record))
+            stopped = stop_server()
+            print('CAP active time reached; server stopped (state kept)', stopped, json.dumps(record))
             return
         # Re-test gap: the career agent kept working (10 calls) after the application stopped, but
         # the meter had already exited. Stop only after three quiet polls without ledger activity.

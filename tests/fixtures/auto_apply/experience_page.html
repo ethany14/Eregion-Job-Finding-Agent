@@ -1,0 +1,28 @@
+<!doctype html><html><body><h1>My Experience</h1>
+<form id="experience"><section><h2>Work Experience</h2><div id="work"></div><button type="button" id="addWork">Add Another Work Experience</button></section>
+<section><h2>Education</h2><div id="education"></div><button type="button" id="addSchool">Add Another Education</button></section>
+<button type="submit">Next</button></form>
+<script>
+window.nextCount=0;window.submitCount=0;
+let works=0,schools=0;
+function input(id,label,value='',required=true){return `<label for="${id}">${label}</label><input id="${id}" value="${value}" ${required?'required':''}>`;}
+function addWork(){
+ const n=++works,p=`workExperience-${n}--`,row=document.createElement('fieldset');row.id='row'+n;
+ row.innerHTML=`<legend>Work Experience ${n}</legend>`+input(p+'jobTitle','Job Title')+input(p+'companyName','Company')+
+ `<label><input id="${p}current" type="checkbox">I currently work here</label>`+
+ `<div role="group" aria-label="From">`+input(p+'startDate-dateSectionMonth-input','From Month',n===1?'2':'')+input(p+'startDate-dateSectionYear-input','From Year',n===1?'8202':'')+`</div>`+
+ `<div role="group" aria-label="To" class="to">`+input(p+'endDate-dateSectionMonth-input','To Month')+input(p+'endDate-dateSectionYear-input','To Year')+`</div>`;
+ document.querySelector('#work').append(row);
+ row.querySelector('[type=checkbox]').onchange=e=>{const to=row.querySelector('.to');to.hidden=e.target.checked;to.querySelectorAll('input').forEach(i=>i.required=!e.target.checked);};
+ row.querySelectorAll('input[id*=dateSection]').forEach(el=>{
+  let digits=el.value;const month=el.id.includes('Month'),limit=month?2:4;
+  el.onkeydown=e=>{if(e.key==='Tab')return;e.preventDefault();if(e.key==='Backspace')digits=digits.slice(0,-1);else if(/^\d$/.test(e.key)&&digits.length<limit)digits+=e.key;
+   el.value=digits?(month?String(Number(digits)):digits):'';
+   if(month&&digits.length===2)setTimeout(()=>el.nextElementSibling?.nextElementSibling?.focus(),0);
+  };
+ });
+}
+function addSchool(){let n=++schools,p=`education-${n}--`,row=document.createElement('fieldset');row.innerHTML=`<legend>Education ${n}</legend>`+input(p+'schoolName','School')+`<label for="${p}degree">Degree</label><select id="${p}degree" required><option value="">Choose</option><option>Masters</option><option>Bachelors</option></select>`+input(p+'fieldOfStudy','Field of Study','',false);document.querySelector('#education').append(row);}
+addWork();addSchool();document.querySelector('#addWork').onclick=addWork;document.querySelector('#addSchool').onclick=addSchool;
+document.querySelector('form').onsubmit=e=>{e.preventDefault();window.nextCount++;document.body.innerHTML='<h1>Application Questions</h1>';};
+</script></body></html>

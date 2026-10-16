@@ -723,7 +723,7 @@ class ApplicationLoop:
     def _progress_digest(fields,page,state):
         # Navigating, discovering a menu and binding an answer are progress even
         # before an input's value changes. Operational counters are not progress.
-        payload=[form_digest(fields),page,state.get('answers'),state.get('field_decisions'),state.get('education_bindings')]
+        payload=[form_digest(fields),page,state.get('answers'),state.get('field_decisions'),state.get('education_bindings'),state.get('experience_bindings')]
         return hashlib.sha256(json.dumps(payload,sort_keys=True,default=str).encode()).hexdigest()
 
     def _publish_question(self, run_id, text, keys, fields, revision):

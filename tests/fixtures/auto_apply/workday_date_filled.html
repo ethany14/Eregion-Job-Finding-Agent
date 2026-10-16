@@ -1,0 +1,40 @@
+<!doctype html>
+<!-- Workday date segments as seen in the Adobe re-test (2026-10-16), reduced: a filled segment
+     keeps its digits and appends keystrokes; a digit that would make an invalid month spills
+     into the year; the month shows "08" as "8"; a full year ignores further digits. -->
+<html><body>
+<div data-automation-id="formField-startDate">
+  <label id="from">From*</label>
+  <div role="group" aria-labelledby="from" style="position:relative; display:inline-block">
+    <input id="workExperience-4--startDate-dateSectionMonth-input" aria-required="true" value="2" aria-label="Month">
+    <span>/</span>
+    <input id="workExperience-4--startDate-dateSectionYear-input" aria-required="true" value="2026" aria-label="Year">
+    <div style="position:absolute; inset:0; background:rgba(255,255,255,.01)"></div>
+  </div>
+</div>
+<script>
+const month = document.getElementById('workExperience-4--startDate-dateSectionMonth-input');
+const year = document.getElementById('workExperience-4--startDate-dateSectionYear-input');
+let monthDigits = month.value, yearDigits = year.value;
+function showMonth() { month.value = monthDigits ? String(parseInt(monthDigits, 10) || 0) : 'MM'; }
+function digitToYear(key) {
+  year.focus();
+  if (yearDigits.length < 4) yearDigits += key;
+  year.value = yearDigits || 'YYYY';
+}
+month.addEventListener('keydown', e => {
+  e.preventDefault();
+  if (e.key === 'Backspace') { monthDigits = monthDigits.slice(0, -1); showMonth(); return; }
+  if (!/^\d$/.test(e.key)) return;
+  const candidate = monthDigits + e.key;
+  if (candidate.length > 2 || parseInt(candidate, 10) > 12) { digitToYear(e.key); return; }
+  monthDigits = candidate; showMonth();
+  if (candidate.length === 2 || parseInt(candidate, 10) > 1) setTimeout(() => year.focus(), 0);
+});
+year.addEventListener('keydown', e => {
+  e.preventDefault();
+  if (e.key === 'Backspace') { yearDigits = yearDigits.slice(0, -1); year.value = yearDigits || 'YYYY'; return; }
+  if (/^\d$/.test(e.key) && yearDigits.length < 4) { yearDigits += e.key; year.value = yearDigits; }
+});
+</script>
+</body></html>

@@ -322,6 +322,21 @@ def date_segment(field):
     return bool(re.search(r'dateSection(Month|Day|Year)', field.get("dom_id") or field.get("key") or ""))
 
 
+def canonical_target(field, value):
+    # Representation normalization only; never infer the candidate's date.
+    if date_segment(field) and isinstance(value, (str, int)) and str(value).strip().isdigit():
+        return str(int(str(value).strip()))
+    return value
+
+
+def same_segment(shown, wanted):
+    """A date segment's number, ignoring leading zeros; placeholders (MM, YYYY) are not values."""
+    shown, wanted = str(shown or '').strip(), str(wanted or '').strip()
+    if shown.isdigit() and wanted.isdigit():
+        return int(shown) == int(wanted)
+    return shown == wanted
+
+
 class ApplicationBrowser:
     def __init__(self, url, *, headless=None, session_store=None, owner_key=None, purpose='application'):
         try:
@@ -759,7 +774,6 @@ class ApplicationBrowser:
                     raise BrowserBlocked('The previous dropdown is still open. Close it before opening another field.', code='dom_interaction_failed')
 
     def inspect_options(self, key, query=None):
-        self._close_other_menu(key)
         field = self.field(key)
         if field["kind"] in {"select", "radio"}:
             options = field["options"]
@@ -777,6 +791,9 @@ class ApplicationBrowser:
                 for part in ("label", "value"))]
         if field["kind"] not in {"combobox", "location", "text", "search", "tel"}:
             return []
+        if date_segment(field) or not (field.get('choice_control') or field['kind'] in {'combobox', 'location'}):
+            raise BrowserBlocked('This is not an option control. Use read_field for a read-only inspection.', code='invalid_action')
+        self._close_other_menu(key)
         locator = self.locate(field)
         editable = locator.evaluate("e => e.matches('input,textarea') || e.isContentEditable") and locator.is_editable()
         # Some searchable pickers explicitly advertise Enter as the search key.
@@ -914,11 +931,43 @@ class ApplicationBrowser:
         """Workday date segments mishandle a set value (Adobe: month "08" became "08/2008",
         then 12/2012 after a select-all). Focus and type digits as a person does (a display
         layer covers the inputs, so a click times out), then verify the segment kept them."""
+        # Adobe re-tests (2026-10-16): a segment that already holds the value needs no
+        # keystrokes, and Workday shows a typed "08" as "8".
+        # Track the entire date group: a successful month write can corrupt the year.
+        identifier = locator.get_attribute('id') or ''
+        prefix = re.split(r'dateSection(?:Month|Day|Year)', identifier)[0]
+        segments = self.page.locator('input[id*="dateSection"]')
+        def group_values():
+            return {item['id']: item['value'] for item in segments.evaluate_all(
+                "els => els.map(e => ({id:e.id,value:e.value}))")
+                if prefix and item['id'].startswith(prefix)}
+        before = group_values()
+        current = locator.input_value()
+        if same_segment(current, value):
+            return
         locator.focus()
-        self.page.keyboard.type(str(value), delay=60)
-        self.page.wait_for_timeout(200)
-        if locator.input_value() != str(value):
-            raise BrowserBlocked("The date segment did not keep the typed value. Check it in the browser.", code='value_not_retained')
+        if current.strip().isdigit():
+            locator.press('End')
+            for _ in range(len(current.strip())):
+                locator.press('Backspace')
+            cleared = locator.input_value()
+            if cleared.strip().isdigit():
+                raise BrowserBlocked('Date segment could not be cleared; no replacement digits were typed.', code='date_write_failed')
+        # Re-focus before each character: Workday can automatically move focus to another segment.
+        for digit in str(value):
+            locator.focus()
+            self.page.keyboard.type(digit, delay=60)
+        locator.press('Tab')
+        self._settle()
+        after = group_values()
+        changed = [key for key, previous in before.items()
+                   if key != identifier and (key not in after or not same_segment(after[key], previous))]
+        if changed:
+            raise BrowserBlocked('Date write changed a sibling segment: '+', '.join(changed)+
+                                 '. Read the date group before repairing from confirmed facts.', code='date_group_changed')
+        kept = locator.input_value()
+        if not same_segment(kept, value):
+            raise BrowserBlocked(f'Date input failed: requested {value!r}, read {kept!r}. The source fact is unchanged; inspect the control before retrying.', code='date_write_failed')
 
     def fill_plain(self, field, value):
         """Fill one already observed ordinary input; the caller verifies the pass."""

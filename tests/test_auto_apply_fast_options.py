@@ -80,7 +80,7 @@ def test_enabled_fast_options_and_provider_failure(monkeypatch, configured, prov
         ('resolve_field', args('School', mode='equivalent', value='Georgia Institute of Technology',
             source_refs=['profile:school'], reason='The full name of the confirmed school.')),
     ]
-    model = ScriptModel([*repairs, ('ready_for_review', {})])
+    model = ScriptModel([('autofill', {'field_keys':['School']}), *repairs, ('ready_for_review', {})])
     if configured:
         # Keep the production factory identity and configuration wiring, with no
         # live main-model construction or requests in this regression test.
@@ -103,5 +103,5 @@ def test_enabled_fast_options_and_provider_failure(monkeypatch, configured, prov
     assert len(configurations) == int(configured)
     assert browser.queries[0] is not None  # Dynamic-menu query contract is covered.
     assert browser.choices == ['Georgia Institute of Technology']
-    assert model.calls == [name for name, _ in repairs] + ['ready_for_review']
+    assert model.calls == ['autofill'] + [name for name, _ in repairs] + ['ready_for_review']
     assert browser.submissions == 0

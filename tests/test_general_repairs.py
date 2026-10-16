@@ -1232,13 +1232,15 @@ def test_application_affordances_hide_filled_autofill_and_unrelated_answer_refs(
     turn=host.observe()
     assert not turn.snapshot['autofill_available']
     assert 'autofill' not in {t['function']['name'] for t in turn.tools}
+    # Empty per-field lists are omitted and refs every field shares are listed once (82e1ce9).
+    offered=lambda f:set(f.get('allowed_source_refs',[]))|set(turn.snapshot.get('any_field_source_refs',[]))
     unknown=next(f for f in turn.snapshot['fields'] if f['key']=='new-policy')
-    assert 'answer:old-policy' not in unknown['allowed_source_refs']
+    assert 'answer:old-policy' not in offered(unknown)
     state['answers']['new-policy']='Yes'
     turn=host.observe()
     assert turn.snapshot['autofill_available'] and 'autofill' in {t['function']['name'] for t in turn.tools}
     unknown=next(f for f in turn.snapshot['fields'] if f['key']=='new-policy')
-    assert 'answer:new-policy' in unknown['allowed_source_refs']
+    assert 'answer:new-policy' in offered(unknown)
 
 
 def test_parent_tools_follow_live_browser_and_delivery_state(career):

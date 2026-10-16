@@ -390,7 +390,12 @@ class ContextArchive:
         # Runtime feedback (for example the repeated-read notice) is not part of the
         # source data. Hashing it into the archive ref would mint a new "unread" ref
         # for identical content each time the notice appears or disappears.
-        stable = {k: v for k, v in result.items() if k != 'progress_feedback'} if isinstance(result, dict) else result
+        volatile = {'progress_feedback'}
+        # Fresh observation handles authorize actions, but are not new page evidence.
+        # Keep the latest handle in the outer summary; archive identical page data once.
+        if isinstance(result, dict) and result.get('page_evidence_hash'):
+            volatile.add('observation_id')
+        stable = {k: v for k, v in result.items() if k not in volatile} if isinstance(result, dict) else result
         summary = {**self.reference(stable), 'available_keys': list(stable) if isinstance(stable, dict) else []}
         if not isinstance(result, dict):
             return summary
@@ -419,6 +424,8 @@ class ContextArchive:
                     'waiting_for_user', 'outcome', 'needs_review', 'verification', 'match_overview',
                     'message', 'input_request', 'delivered_user_message_ids', 'pending_fields', 'observed_answers', 'material_refs', 'material_overview', 'material_choices', 'detail_hint',
                     # Decision fields of scored/workflow results stay visible after archiving (closeout C1.2).
+                    'scope', 'scope_status', 'scope_note', 'verified_fields', 'unresolved_fields', 'out_of_scope_failure_count',
+                    'historical_failure_count', 'unreviewed_checkboxes', 'completion_level',
                     'completed_steps', 'failed_step', 'fallback', 'opening_level', 'qualification_evidence',
                     'seniority_warning', 'score_range', 'analysis_status', 'decision', 'decision_brief', 'pending', 'rejection_code'):
             if key in result:

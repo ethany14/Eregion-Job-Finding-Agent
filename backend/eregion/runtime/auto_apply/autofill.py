@@ -12,13 +12,17 @@ from .decisions import active_decision
 
 def desired_answer(field, state):
     from .education import format_date
-    return format_date(field, _desired_answer(field, state))
+    from .experience import binding as experience_binding
+    saved = experience_binding(field, state)
+    part = saved['component'].rsplit('_', 1)[-1] if saved else None
+    return format_date(field, _desired_answer(field, state), part)
 
 
 def _desired_answer(field, state):
     from .education import binding, bound_value
     decision = active_decision(field, state)
-    bound = binding(field, state)
+    from .experience import binding as experience_binding
+    bound = binding(field, state) or experience_binding(field, state)
     # A field tied to one education record keeps that record's facts. Adobe: the second
     # school's Degree kept a decision sourced from the profile's latest degree (M.Eng. ->
     # "Masters") although it was bound to the B.A. record.
@@ -29,6 +33,9 @@ def _desired_answer(field, state):
     if field['key'] in state['answers']:return state['answers'][field['key']]
     if field['kind'] != 'file' and 'cover letter' in field['label'].casefold() and state.get('cover_letter'):
         return state['cover_letter']
+    from .experience import binding as experience_binding, bound_value as experience_value
+    if experience_binding(field, state):
+        return experience_value(field, state)
     education=bound_value(field,state)
     if education is not None:return education
     answer = candidate_answer(field, state["profile"], state["answers"])
@@ -36,6 +43,10 @@ def _desired_answer(field, state):
 
 
 def matches(field, value):
+    from .browser import date_segment, same_segment
+    if date_segment(field) and str(value or '').strip():
+        # Workday shows a typed month "08" as "8" (Adobe re-test 2026-10-16).
+        return same_segment(field['value'], value) and not field.get('invalid')
     if field['kind'] == 'location':
         # The browser exposes a value only after this picker commits a place.
         return bool(field['value']) and city_equivalent(value, field['value']) and not field.get('invalid')
@@ -109,8 +120,9 @@ def failure_signature(field, value):
     """What must change before a failed fill is worth trying again: the target answer, the
     control's value/options or its error state (W1, Adobe: 164 of 272 host autofills failed,
     mostly re-attempting the same unchanged Field of Study)."""
-    target = 'document' if isinstance(value, (bytes, bytearray)) else value
-    payload = [target, field.get('value'), [o.get('label') for o in field.get('options') or []],
+    from .browser import canonical_target
+    target = 'document' if isinstance(value, (bytes, bytearray)) else canonical_target(field, value)
+    payload = [target, canonical_target(field, field.get('value')), [o.get('label') for o in field.get('options') or []],
                bool(field.get('invalid')), field.get('errors') or []]
     return hashlib.sha256(json.dumps(payload, default=str, sort_keys=True).encode()).hexdigest()[:16]
 
@@ -129,6 +141,8 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
         # Upload first: ATS resume parsers may populate contact fields afterwards.
         for field in sorted(fields, key=lambda item: item["kind"] != "file"):
             key = field["key"]
+            if state.get('autofill_scope') is not None and key not in state['autofill_scope']:
+                continue
             if attempts.get(key, 0) >= (1 if state.get("automation_mode") == "hybrid" else 2):
                 continue
             # Optional fields set aside after repeated failures (runner FIELD_ATTEMPT_LIMIT).
@@ -197,7 +211,8 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
             except Exception as exc:
                 details[key] = failure_detail(exc)
                 failed[key] = details[key]['error_code']
-                memory[key] = {'signature': failure_signature(field, value), 'code': failed[key]}
+                latest = next((f for f in browser.observe() if f['key'] == key), field)
+                memory[key] = {'signature': failure_signature(latest, value), 'code': failed[key]}
         observed = browser.observe()
         current_fields = {f['key']: f for f in observed}
         for field, value in attempted:
@@ -212,6 +227,6 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
             else:
                 failed[key] = 'value_not_retained'
                 details[key] = failure('value_not_retained', 'The control did not retain the supplied value.')
-                memory[key] = {'signature': failure_signature(field, value), 'code': failed[key]}
+                memory[key] = {'signature': failure_signature(current or field, value), 'code': failed[key]}
         progress(observed, 'autofill', None, 'needs_agent' if failed else 'verified')
     return {"filled": list(dict.fromkeys(completed)), "failed": failed, "failure_details": details}

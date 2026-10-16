@@ -64,12 +64,14 @@ def date_parts(text, *, confirmed_quote=""):
 
 
 def date_format(field):
+    # Workday splits dates into segment inputs named only by their ids (Adobe: "From* MM").
+    # The id decides: an empty segment's help reads "current value is MM/YYYY" for the whole
+    # date (Adobe re-test 2026-10-16), which is not this input's format.
+    segment=re.search(r'dateSection(Month|Day|Year)',str(field.get('key') or '')+' '+str(field.get('dom_id') or ''))
+    if segment:return {'Month':'MM','Day':'DD','Year':'YYYY'}[segment[1]]
     hint=' '.join(str(field.get(k) or '') for k in ('label','placeholder','help')).upper()
     template=re.search(r'(?<![A-Z])(?:YYYY[-/]MM(?:[-/]DD)?|MM[-/]YYYY|DD[-/]MM[-/]YYYY|MM[-/]DD[-/]YYYY)(?![A-Z])',hint)
     if template:return template[0]
-    # Workday splits dates into segment inputs named only by their ids (Adobe: "From* MM").
-    segment=re.search(r'dateSection(Month|Day|Year)',str(field.get('key') or '')+' '+str(field.get('dom_id') or ''))
-    if segment:return {'Month':'MM','Day':'DD','Year':'YYYY'}[segment[1]]
     native=field.get('type') or field.get('kind')
     return {'month':'YYYY-MM','date':'YYYY-MM-DD'}.get(native)
 
@@ -149,11 +151,16 @@ def new_browser_bindings(state):
         previous = record.get(binding['component'], {})
         if messages.get(previous.get('source', {}).get('message_id'), -1) > messages.get(source.get('message_id'), -1):continue
         record[binding['component']] = {'value':state['answers'][key], 'source':source}
-    stale = set(bindings)
+    work_overrides = {key: dict(value) for key, value in state.get('experience_answer_overrides', {}).items()}
+    for key, item in state.get('experience_bindings', {}).items():
+        if key in state.get('answers', {}):
+            work_overrides.setdefault(item['experience_id'], {})[item['component']] = {
+                'value': state['answers'][key], 'source': state.get('answer_sources', {}).get(key, {})}
+    stale = set(bindings) | set(state.get('experience_bindings', {}))
     stale.update(key for key in state.get('answers', {}) if re.search(r':education-\d+--', key))
     changes = {name:{key:value for key,value in state.get(name, {}).items() if key not in stale}
         for name in ('answers','answer_sources','field_decisions','option_paths')}
-    return {**changes, 'education_bindings':{}, 'education_answer_overrides':overrides,
+    return {**changes, 'education_bindings':{}, 'experience_bindings':{}, 'autofill_scope':None, 'autofill_scope_page':None, 'observation_scope':None, 'observation_scope_page':None, 'experience_answer_overrides':work_overrides, 'education_answer_overrides':overrides,
         'review_fields':[], 'review_digest':None}
 
 

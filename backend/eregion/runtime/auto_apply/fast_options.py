@@ -55,7 +55,7 @@ def option_question(field, answer, options):
         'criteria': {**candidates, 'unknown': 'No supported final answer or useful category to explore; leave to the main agent.'}}
 
 
-def fill_options(session):
+def fill_options(session, *, field_keys=None):
     if session.fast_choices is None:
         return []
     filled, start, inspections = [], time.monotonic(), 0
@@ -70,6 +70,8 @@ def fill_options(session):
         revision = session.state.get('chat_revision', 0)
         requests, direct_filled = {}, False
         for field in session.fields:
+            if field_keys is not None and field['key'] not in field_keys:
+                continue
             if time.monotonic() - start > 12 or not session.active():
                 break
             source = source_for(session, field)

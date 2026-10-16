@@ -17,7 +17,7 @@ def source_value(state, reference):
         return facts(state['profile'], state.get('education_answer_overrides')).get(reference)
     if reference.startswith('experience:'):
         from .experience import facts
-        return facts(state['profile']).get(reference)
+        return facts(state['profile'], state.get('experience_answer_overrides')).get(reference)
     kind, _, key = reference.partition(":")
     return state.get({"profile":"profile", "answer":"answers"}.get(kind, "__missing"), {}).get(key)
 
