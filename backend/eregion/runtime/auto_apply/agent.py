@@ -275,41 +275,52 @@ class AgentTools:
         if page:
             page = {**page, 'controls': [{**c, 'section': str(c.get('section', ''))[:80]}
                 for c in page.get('controls', []) if not c.get('disabled') and c.get('kind') not in {'field', 'unavailable'}][:40]}
+        current_keys = {f["key"] for f in self.fields}
+        def origin(ref):
+            if not ref.startswith('answer:'):
+                return ref.split(':', 1)[0]
+            source = self.state.get('answer_sources', {}).get(ref.removeprefix('answer:'), {})
+            return {k: source[k] for k in ('type', 'interpretation', 'message_id') if source.get(k)}
         return {"observation_id": self.observation_id, "autofill_called": self.autofill_called,
             'pending_document_uploads':pending_documents(self.state,self.fields),
             'document_bindings':self.state.get('document_bindings',{}),
             "visual_fallback":bool(self.state.get("visual_fallback")),
             "screen":self.visual.screen if self.visual else None,
             "page": page,
-            'education_bindings':self.state.get('education_bindings',{}),
+            # W3: bindings/decisions only for fields on this page (others stay in saved state).
+            'education_bindings':{k:b.get('source_ref') for k,b in self.state.get('education_bindings',{}).items() if k in current_keys},
             'education_gaps':education_gaps(self.state,self.fields,self.page_context),
             'remembered_answers':memories if self.state.get('reuse_answers',True) else [],
             'resume_context':resume,
             'answer_drafts':visible_drafts(self.state, self.fields),
-            "field_decisions":self.state.get("field_decisions", {}), "option_paths":self.state.get("option_paths", {}),
+            "field_decisions":{k:{'value':d.get('value'),'mode':d.get('mode'),'sources':list(d.get('sources') or {})}
+                for k,d in self.state.get("field_decisions", {}).items() if k in current_keys}, "option_paths":self.state.get("option_paths", {}),
             "task": {"url": self.state.get("url"), "goal": "Complete this application using confirmed candidate facts, then return for review."},
             "task_plan": self.state.get("task_plan", []), "approach": self.state.get("approach", ""),
             'decision_history':application_history(self.state.get('decision_history',[])),
             'input_request':self.state.get('input_request'), 'budget_remaining':self.state.get('budget_remaining'),
-            "page_history":self.state.get("page_history", []),
-            "previous_page_answers":[{"label":f["label"], "value":f["value"]} for f in self.state.get("review_fields", [])],
+            "page_history":[h.get('heading') for h in self.state.get("page_history", [])][-6:],
+            "previous_page_answers":[{"label":f["label"][:160], "value":f["value"][:300] if isinstance(f["value"],str) else f["value"]}
+                for f in self.state.get("review_fields", []) if f.get("value") not in (None, "", False) and f["key"] not in current_keys],
             "last_tool_result": self.state.get("last_tool_result"), "recovery": self.state.get("recovery_note"),
             "chat_revision": self.state.get("chat_revision", 0), "completed_fields": completed_keys,
-            "user_messages": [{"id": m["id"], "role": m["role"], "text": m["text"], "field_key": m.get("field_key"),
+            "user_messages": [{k: v for k, v in {"id": m["id"], "role": m["role"], "text": m["text"], "field_key": m.get("field_key"),
                 "bound_answers": m.get("bound_answers"), "binding_method": m.get("binding_method"),
-                "question_keys": m.get("question_keys"), 'in_reply_to':m.get('in_reply_to')} for m in self.state.get("messages", [])[-20:]],
+                "question_keys": m.get("question_keys"), 'in_reply_to':m.get('in_reply_to')}.items() if v not in (None, [], {})}
+                for m in self.state.get("messages", [])[-12:]],
             "facts": [{'ref': key, 'value': value[:2000] if isinstance(value, str) else value,
-                'origin': self.state.get('answer_sources', {}).get(key.removeprefix('answer:'), {})
-                    if key.startswith('answer:') else key.split(':', 1)[0]} for key, value in sources.items()],
+                'origin': origin(key)} for key, value in sources.items()],
             "fields": [{"key": f["key"], "label": f["label"][:250], "value": f["value"], "done": True} if f["key"] in completed_keys else {"key": f["key"], "label": f["label"][:250], "kind": f["kind"], "allowed_source_refs":allowed_sources(f),
                 "required": f["required"], "invalid": f.get("invalid", False),
                 "choice_control":f.get("choice_control", False), "group":f.get("group", ""),
                 "search_text":f.get("search_text", ""), "section":f.get("section", ""),
-                "help":f.get("help", ""), "errors":f.get("errors", []), "constraints":f.get("constraints", {}),
+                "help":f.get("help", ""), "errors":f.get("errors", []),
+                "constraints":{k:v for k,v in (f.get("constraints") or {}).items() if v not in (None, "", False)},
                 "value": f["value"][:2000] if isinstance(f["value"], str) else f["value"],
                 "option_count": len(f.get("options", [])),
                 "options_truncated": len(options(f)) < len(f.get("options", [])),
-                "options": [{"label": o["label"][:200], "value": o["value"][:200], "expandable":o.get("expandable",False), "disabled":o.get("disabled",False)} for o in options(f)]} for f in self.fields]}
+                "options": [{"label": o["label"][:200], "value": o["value"][:200], **({"expandable":True} if o.get("expandable") else {}),
+                    **({"disabled":True} if o.get("disabled") else {})} for o in options(f)]} for f in self.fields]}
 
     def source(self, field, reference):
         if reference == 'material:cover_letter':
