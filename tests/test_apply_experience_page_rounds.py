@@ -185,3 +185,24 @@ def test_record_status_uses_the_page_value_against_the_saved_decision():
     tools.observe()
     work = next(r for r in record_status(tools.fields, tools.state) if r['record'] == 'work:one')
     assert 'current' in work['verified']
+
+
+# --- Adobe re-test 08: page budget per Workday step; no host auto-advance on record pages ---
+from eregion.runtime.auto_apply.runner import step_marker, record_page
+
+
+def test_workday_steps_sharing_url_and_heading_are_different_budget_pages():
+    experience = {'url': 'u', 'heading': ' / Job', 'text': 'completed step 2 of 7 My Information current step 3 of 7 My Experience'}
+    questions = {'url': 'u', 'heading': ' / Job', 'text': 'completed step 3 of 7 current step 4 of 7 Application Questions 1 of 2'}
+    assert step_marker(experience) == '3/7' and step_marker(questions) == '4/7'
+    assert step_marker({'url': 'u', 'heading': 'h', 'text': 'no steps here'}) is None
+
+
+def test_record_rows_stop_the_host_from_advancing_but_plain_pages_do_not():
+    state = {'profile': {'experience': [], 'education': []}, 'answers': {}}
+    row = {**field('text:jobTitle:1'), 'dom_id': 'workExperience-4--jobTitle'}
+    assert record_page([row], state, {'controls': []})
+    assert record_page([field('x')], state, {'controls': [{'kind': 'add_entry', 'label': 'Add Another'}]})
+    assert not record_page([field('legal-age')], state, {'controls': [{'kind': 'next', 'label': 'Next'}]})
+    browser, tools = session(); bind(tools)
+    assert record_page(tools.fields, tools.state, {'controls': []})      # model-bound work field, no DOM id

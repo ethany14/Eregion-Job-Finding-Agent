@@ -30,6 +30,25 @@ logger = logging.getLogger(__name__)
 ATTEMPT_TARGET_VERSION = 3
 
 
+def step_marker(page):
+    """The step a multi-step form reports ("current step 3 of 7"). Adobe re-test 08: every Workday
+    step shares one url and heading, so the page budget counted several steps as one page."""
+    import re
+    match = re.search(r'current step (\d+) of (\d+)', str((page or {}).get('text') or ''), re.I)
+    return f'{match[1]}/{match[2]}' if match else None
+
+
+def record_page(fields, state, page):
+    """A page holding work/education record rows (model bindings, Workday record ids, or an
+    add-entry control). Structure only: it never judges whether the records are complete."""
+    from .education import binding as education_binding, repeatable
+    from .experience import binding as experience_binding
+    from .observation import record_identity
+    if repeatable(page) or any(c.get('kind') == 'add_entry' for c in (page or {}).get('controls', [])):
+        return True
+    return any(experience_binding(f, state) or education_binding(f, state) or record_identity(f) for f in fields)
+
+
 def attempt_target(state, field):
     """The grounded target with date padding normalized; fixed-list options only."""
     from .autofill import desired_answer
@@ -284,6 +303,11 @@ class ApplicationHost:
                 except BrowserBlocked:
                     return snapshot
                 raise LoopStop('ready', chat_revision=snapshot.get('chat_revision', 0))
+            if record_page(session.fields, session.state, page):
+                # Adobe re-test 08: the host advanced My Experience with one of two jobs and one of
+                # two schools; empty required fields were its only completeness test. Whether a
+                # record section is complete is the model's call (record_status shows it).
+                return snapshot
             controls = [c for c in page.get('controls', []) if c['kind'] == 'next' and not c.get('disabled')]
             if len(controls) != 1 or fingerprint in self.advanced_pages:
                 return snapshot
@@ -301,7 +325,7 @@ class ApplicationHost:
 
     def invoke(self, messages, tools, turn):
         page = self.session.page_context or {}
-        page_id = [page.get('url'), page.get('heading'), turn.revision]
+        page_id = [page.get('url'), page.get('heading'), step_marker(page), turn.revision]
         record = self.session.state.get('page_calls') or {}
         if record.get('page') != page_id:
             record = {'page': page_id, 'count': 0}
