@@ -464,7 +464,7 @@ def test_only_the_models_leave_empty_decision_releases_an_optional_education_fie
     field={'key':'study','label':'Field of Study','kind':'text','value':'','required':False,'group':'','section':''}
     binding={'education_id':'e1','component':'field_of_study','source_ref':'education:e1:field_of_study','field':{k:field.get(k) for k in ('key','dom_id','label','group')}}
     state={'profile':{'education':[record]},'answers':{},'education_bindings':{'study':binding},'abandoned_fields':['study']}
-    assert gaps(state,[field],None)==['Field of Study']  # set aside by the count: still a gap
+    assert gaps(state,[field],None)==['Field of Study (study)']  # set aside by the count: still a gap
     state['field_decisions']={'study':{'field':signature(field),'value':None,'mode':'leave_empty','sources':{},'original_answer':None,'reason':'No such option'}}
     assert gaps(state,[field],None)==[]
 

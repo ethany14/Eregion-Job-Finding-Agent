@@ -198,7 +198,8 @@ def gaps(state,fields,page,*,final=False):
             continue
         if matches(field,value):
             if item['component']=='school':represented.add(item['education_id'])
-        else:pending.append(field['label'])
+        # Repeated rows share labels ("Field of Study" twice); the key says which one (replay).
+        else:pending.append(f"{field['label']} ({field['key']})")
     if multiple:
         pending.extend(f"Add/complete education: {r.get('school') or r['id']} ({r.get('degree','')})"
             for r in records if r['id'] not in represented)

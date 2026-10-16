@@ -852,6 +852,10 @@ class AgentTools:
             self._require_confirmed_sources(field,sources)
         options = self.observed_options.get(field["key"]) or field.get("options", [])
         choice = field["kind"] in {"select","radio","combobox","location"} or field.get("choice_control") or bool(options)
+        if choice and isinstance(field.get("value"), str) and field["value"].strip() and not field.get("invalid"):
+            # The control's committed selection is an observed option too (replay: Workday committed
+            # "Computer and Information Science", outside the visible page of a long list).
+            options = [*options, {"label": field["value"], "value": field["value"]}]
         if choice:
             option = resolve_option(field["label"], value, options)
             if option is None: raise BrowserBlocked("Inspect this control and select one unambiguous observed option.")

@@ -130,3 +130,27 @@ def test_the_saved_page_budget_stop_gives_the_career_agent_reason_blockers_and_b
     assert 'remaining budget' in stopped['next'] and 'reply_application' not in stopped['next']
     view = harness.application(STOP['application']['run_id'])  # the default view stays small
     assert 'fields' not in view and len(json.dumps(view)) < 1500
+
+
+def test_a_committed_equivalent_outside_the_visible_options_can_be_accepted(monkeypatch):
+    # Replay dry run: Workday committed "Computer and Information Science" for a "Computer
+    # Science" fact; the value was outside the visible page of the long list, so resolve_field
+    # refused it and the education check held the page with an unnamed "Field of Study".
+    from eregion.runtime.auto_apply.education import gaps, normalize_records
+    monkeypatch.setenv('TYPESAFE_ENABLED', 'false')
+    record = normalize_records([{'school': 'University of Wisconsin-Madison', 'degree': 'B.A.', 'field_of_study': 'Computer Science'}])[0]
+    field = {'key': 'text:education--fieldOfStudy:2', 'label': 'Field of Study', 'kind': 'text', 'choice_control': True,
+             'required': False, 'value': 'Computer and Information Science', 'group': 'From', 'section': '',
+             'options': [{'label': 'Accounting', 'value': 'Accounting'}]}
+    browser = FakeBrowser(''); browser.fields = [field]
+    binding = {'education_id': record['id'], 'component': 'field_of_study', 'source_ref': f"education:{record['id']}:field_of_study",
+               'field': {k: field.get(k) for k in ('key', 'dom_id', 'label', 'group')}}
+    state = {'profile': {'education': [record]}, 'answers': {}, 'education_bindings': {field['key']: binding}}
+    session = AgentTools(browser, state, autofill=lambda: {}, active=lambda: True)
+    assert gaps(state, session.observe() and session.fields, None) == ['Field of Study (text:education--fieldOfStudy:2)']
+    obs = session.observe()
+    session.execute('resolve_field', {'observation_id': obs['observation_id'], 'field_key': field['key'],
+        'value': 'Computer and Information Science', 'mode': 'equivalent', 'source_refs': [binding['source_ref']],
+        'reason': 'Workday lists Computer Science as Computer and Information Science.'})
+    session.observe()
+    assert gaps(state, session.fields, None) == []
