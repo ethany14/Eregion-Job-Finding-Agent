@@ -180,6 +180,8 @@ class ContinueApplication(StrictModel):
     expected_version: int = Field(ge=1)
     answers: dict[str, str | bool] = Field(default_factory=dict, max_length=100)
     confirm_submit: bool = False
+    # An explicit user grant of more model calls for this whole application (W4).
+    extend_budget: bool = False
     automation_mode: Literal["autofill", "hybrid"] | None = None
     visual_fallback: bool | None = None
     consent_policy: Literal["ask", "required_only"] | None = None

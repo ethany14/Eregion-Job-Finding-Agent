@@ -42,6 +42,11 @@ RETRY_POLICY = {"model_rate_limited": (5, 15, 45, 120), "model_timeout": (2, 10,
 MAX_RETRY_DELAY = 300
 # internal_error is a defect in this program; retrying the same code cannot fix it.
 DEFAULT_WORKERS = 3
+# W4: the per-step budget resets on every continue/answer, so without a whole-application
+# allowance a run could spend without bound (Adobe Workday: 589 reserved calls). Extensions
+# are explicit user grants (ContinueApplication.extend_budget), recorded in budget_extensions.
+APPLICATION_MODEL_CALLS = int(os.getenv('APPLY_MAX_MODEL_CALLS', '300'))
+BUDGET_EXTENSION = 100
 
 
 def configured_workers():
@@ -387,6 +392,7 @@ class ApplicationLoop:
             if state is None or state.get("pause_requested") or state["status"] == "submitting": return False
             if state.get("automation_mode") != "hybrid": return False
             if state.get("agent_calls", 0) - state.get("budget_model_base", 0) >= self.max_model_calls: return False
+            if state.get("agent_calls", 0) >= self._allowance(state): return False
             if state.get('agent_tools',0)-state.get('budget_tool_base',0)>=self.max_tool_calls:return False
             attempts = state.get("recovery_attempts", 0)
             if reason == "yielded":
@@ -499,6 +505,11 @@ class ApplicationLoop:
             if not set(request.answers).issubset(allowed_keys):
                 raise ApplyConflict("The form changed. Only answer questions from the latest observation.")
             approval = state["review_digest"] if request.confirm_submit and not request.answers else None
+            if request.extend_budget:
+                allowance = max(self._allowance(state), state.get('agent_calls', 0)) + BUDGET_EXTENSION
+                state = self.repository.save(state, model_call_allowance=allowance,
+                    budget_extensions=[*state.get('budget_extensions', []), {'at': now(), 'added': BUDGET_EXTENSION,
+                        'allowance': allowance, 'used': state.get('agent_calls', 0)}][-20:])
             sources = {**state.get("answer_sources", {}), **{key: {"type": "user"} for key in request.answers}}
             # Confirming the review approves the interpreted answers it showed.
             # Checked ones are remembered for later applications (approve once).
@@ -658,17 +669,24 @@ class ApplicationLoop:
             key, limit = ("agent_calls", self.max_model_calls) if kind == "model" else ("agent_tools", self.max_tool_calls)
             pending = self.buffered.setdefault(run_id, {})
             used = pending.get(key, state.get(key, 0))
+            if kind == "model" and used >= self._allowance(state):
+                return False
             base = state.get("budget_model_base" if kind == "model" else "budget_tool_base", 0)
             if used - base >= limit:
                 return False
             pending[key] = used + 1
             return True
 
+    @staticmethod
+    def _allowance(state):
+        return state.get('model_call_allowance') or APPLICATION_MODEL_CALLS
+
     def _agent_context(self,run_id):
         state=self.repository.agent_context(run_id)
         state={**state, **self.buffered.get(run_id, {})}
         return {**state,'budget_remaining':{
-            'model_calls':max(0,self.max_model_calls-state.get('agent_calls',0)+state.get('budget_model_base',0)),
+            'model_calls':max(0,min(self.max_model_calls-state.get('agent_calls',0)+state.get('budget_model_base',0),
+                self._allowance(state)-state.get('agent_calls',0))),
             'tool_calls':max(0,self.max_tool_calls-state.get('agent_tools',0)+state.get('budget_tool_base',0))}}
 
     @staticmethod
@@ -925,6 +943,8 @@ class ApplicationLoop:
                 return
             if reason == 'yielded':
                 reason = 'agent_limit'
+            if reason == 'agent_limit' and state.get('agent_calls', 0) >= self._allowance(state):
+                reason = 'application_budget'
             if state.get('input_request') and reason != 'ready':
                 pending = state['input_request']
                 self._pause_for_question(run_id,pending['text'],pending['field_keys'],fields,
@@ -944,6 +964,7 @@ class ApplicationLoop:
                     "invalid_model_response": "The configured model did not return a valid tool call. Use a model supporting tool calls.",
                     "model_timeout": "The model response timed out. Completed fields are saved; continue to retry.",
                     "agent_limit": "The agent reached its bounded call limit. Completed fields are saved.",
+                    "application_budget": "This application used its whole model-call allowance. Completed fields are saved. Allow more calls to continue, or finish it in the browser.",
                     "page_budget": "This page used its model-call budget without finishing. Completed fields are saved; check the highlighted fields, answer or fix them, then continue.",
                     "no_progress": "The agent stopped repeating an unsuccessful action. Check the highlighted control."}
                 messages["navigation_required"] = "This application has another step. Enable Agent + autofill, or continue in the browser and then send continue here."
@@ -956,7 +977,7 @@ class ApplicationLoop:
                         self._submit(run_id, self._drive, run_id, None)
                         return
                     chat_messages = state.get("messages", [])
-                    if missing and reason not in {'no_progress','agent_limit','page_budget','model_payment_required'}:
+                    if missing and reason not in {'no_progress','agent_limit','page_budget','application_budget','model_payment_required'}:
                         unknown = [f for f in missing if desired_answer(f, state) is None]
                         failed = [f for f in missing if desired_answer(f, state) is not None]
                         text, question_keys = input_prompt(unknown, failed, {f["key"]: desired_answer(f, state) for f in failed})

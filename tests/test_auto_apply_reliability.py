@@ -157,3 +157,30 @@ def test_offscreen_window_is_shown_without_reloading(monkeypatch):
         assert browser.headless and bounds()["left"] < -10000
     finally:
         browser.close()
+
+
+def test_application_allowance_survives_continue_and_grows_only_on_explicit_grant(database, monkeypatch):
+    # W4: the per-step budget resets on every continue, so the Adobe run reserved 589 calls.
+    import eregion.runtime.auto_apply.loop as loop_module
+    from eregion.runtime.auto_apply.contracts import ContinueApplication
+    from eregion.runtime.auto_apply.loop import ApplicationLoop
+    from eregion.runtime.auto_apply.repository import ApplyRepository
+    from test_auto_apply import FakeBrowser, request, wait
+    monkeypatch.setattr(loop_module,'APPLICATION_MODEL_CALLS',5)
+    repo=ApplyRepository(database.session_factory)
+    loop=ApplicationLoop(repo,browser_factory=FakeBrowser)
+    try:
+        run=loop.start(request())['run_id'];state=wait(loop,run)
+        monkeypatch.setattr(loop,'_can_act',lambda run_id:True)  # as if the worker were running
+        state=repo.save(state,agent_calls=4,budget_model_base=4)  # a continue reset the step budget
+        assert loop._reserve(run,'model') is True   # call 5 of 5
+        loop._checkpoint(run)
+        assert loop._reserve(run,'model') is False  # the application allowance still holds
+        assert repo.get(run)['agent_calls']==5
+        state=repo.get(run)
+        loop.continue_run(run,ContinueApplication(expected_version=state['version'],extend_budget=True))
+        state=repo.get(run)
+        assert state['model_call_allowance']==5+loop_module.BUDGET_EXTENSION
+        assert state['budget_extensions'][-1]['added']==loop_module.BUDGET_EXTENSION
+    finally:
+        loop.close()

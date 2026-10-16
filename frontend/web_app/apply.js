@@ -496,6 +496,12 @@ function decisions(){
     box.append(actions);container.append(box);return;
   }
   if(item.pause_requested){const box=el('div','','decision');box.append(el('p','Paused. Use Control browser in Agent activity if you need to interact with the page, then resume when ready.'),button('Resume',()=>send('continue')));container.append(box);return;}
+  if(item.status==='needs_input'&&item.agent_reason==='application_budget'){
+    // A grant of more model calls is always an explicit user action (W4).
+    const box=el('div','','decision');box.append(el('p',item.message));
+    const more=button('Allow 100 more model calls',()=>act('continue',{extend_budget:true},id),'primary-button');more.disabled=chatBusy||actionBusy;
+    box.append(more);container.append(box);return;
+  }
   if(item.status==='needs_input'){
     if(item.account_request){const box=el('div','','decision');box.append(el('p',item.account_request.origin,'eyebrow'),el('p',item.message));const actions=el('div','','actions');actions.append(button(item.account_request.mode==='register'?'Create candidate account':'Sign in securely',()=>openAccount(item),'primary-button'));const other=item.account_request.mode==='register'?'login':'register';actions.append(button(other==='register'?'Create an account instead':'Use an existing account',()=>act('account-mode',{origin:item.account_request.origin,mode:other},id)));box.append(actions);container.append(box);return;}
     const last=[...(item.messages||[])].reverse().find(m=>m.role==='assistant'&&Array.isArray(m.question_keys));const keys=(last?.question_keys||[]).filter(key=>item.pending_fields?.includes(key)??true);
