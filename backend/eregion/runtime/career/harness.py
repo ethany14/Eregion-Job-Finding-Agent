@@ -653,6 +653,20 @@ class CareerHarness:
             result['blocking_fields']=[{k:f.get(k) for k in ('key','label','kind','invalid','error') if f.get(k) not in (None,'',False)}
                 for f in controls if (f.get('required') and f.get('value') in (None,'',False)) or f.get('invalid')][:20]
             result['field_count']=len(controls)
+            if state['status']=='needs_input':
+                # Model replay: the woken career agent read this view, not the stop notice. No
+                # blocking (required) field does not mean every optional field is settled.
+                from eregion.runtime.auto_apply.autofill import desired_answer, matches
+                answers_state={'answers':{},'profile':{},**state}
+                result['unresolved_optional_fields']=[{'key':f['key'],'label':f.get('label')} for f in controls
+                    if f.get('kind') and not f.get('required') and f.get('kind')!='file'
+                    and (wanted:=desired_answer(f,answers_state)) is not None and not matches(f,wanted)][:20]
+                result['budget']=self.task_budget(state.get('origin_task_id'))
+                if state.get('agent_reason') in {'page_budget','application_budget','agent_limit','no_progress'}:
+                    result['next']=("Stopped on a limit: page_budget is this page's allowance, application_budget the whole "
+                        "application's; budget is the task's remaining provider allowance. Tell the user the reason, the "
+                        "blocking and unresolved fields and the remaining budget, then ask how to proceed. Do not re-read all "
+                        "fields, search jobs or say the application is continuing.")
         if field_key:
             field = next((f for f in controls if f.get('key')==field_key),None)
             if field is None:raise ValueError('Unknown field_key. Use a key from the current application observation.')

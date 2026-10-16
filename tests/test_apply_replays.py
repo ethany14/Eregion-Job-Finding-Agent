@@ -154,3 +154,33 @@ def test_a_committed_equivalent_outside_the_visible_options_can_be_accepted(monk
         'reason': 'Workday lists Computer Science as Computer and Information Science.'})
     session.observe()
     assert gaps(state, session.fields, None) == []
+
+
+def test_the_default_view_of_a_limit_stop_reports_budget_and_unresolved_optional_fields(database, monkeypatch):
+    # Model replay (career): the woken agent read inspect_application, never the stop notice,
+    # and reported neither the remaining task budget nor the undecided Cornell Field of Study.
+    from types import SimpleNamespace
+    from eregion.runtime.career.harness import CareerHarness
+    from eregion.runtime.auto_apply.education import normalize_records
+    from eregion.runtime.provider_usage import UsageLedger, provider_call, usage_scope
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS', '60')
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_INPUT_TOKENS', '1000000')
+    with usage_scope(ledger=UsageLedger(database.session_factory), task_id='task-X'):
+        for _ in range(46):
+            with provider_call('fixture', input_token_reservation=100) as details:
+                details.update(input_tokens=100, output_tokens=1)
+    cornell = normalize_records([{'school': 'Cornell University', 'degree': 'M.Eng.', 'field_of_study': 'Systems Engineering'}])[0]
+    study = {'key': 'text:education--fieldOfStudy:1', 'label': 'Field of Study', 'kind': 'text', 'required': False, 'value': '', 'group': 'From'}
+    title = {'key': 'text:jobTitle:1', 'label': 'Job Title*', 'kind': 'text', 'required': True, 'value': 'Research', 'group': ''}
+    child = {'run_id': 'r1', 'status': 'needs_input', 'version': 9, 'messages': [], 'agent_reason': 'page_budget',
+             'origin_task_id': 'task-X', 'message': 'This page used its model-call budget without finishing.',
+             'fields': [title, study], 'answers': {}, 'profile': {'education': [cornell]},
+             'education_bindings': {study['key']: {'education_id': cornell['id'], 'component': 'field_of_study',
+                 'source_ref': f"education:{cornell['id']}:field_of_study", 'field': {k: study.get(k) for k in ('key', 'dom_id', 'label', 'group')}}}}
+    harness = CareerHarness.__new__(CareerHarness)
+    harness.applications = SimpleNamespace(repository=SimpleNamespace(get=lambda run_id: child))
+    harness.repository = SimpleNamespace(sessions=database.session_factory)
+    view = harness.application('r1')
+    assert view['blocking_fields'] == []
+    assert view['unresolved_optional_fields'] == [{'key': study['key'], 'label': 'Field of Study'}]
+    assert view['budget']['provider_attempts_left'] == 14 and 'page_budget' in view['next'] and 'application_budget' in view['next']

@@ -57,7 +57,9 @@ class ProviderCompatibleChatOpenAI(ChatOpenAI):
         return options, {'effective_reasoning': higher, 'reasoning_escalation': higher != level}
 
     def _budget_sizes(self, messages, stop, options):
-        if not os.getenv('JOB_AGENT_TASK_MAX_INPUT_TOKENS', '').strip():
+        # An experiment budget also reserves before sending; without this the replay's first
+        # request was refused as unknown_input_size because only the task cap triggered it.
+        if not (os.getenv('JOB_AGENT_TASK_MAX_INPUT_TOKENS', '').strip() or os.getenv('JOB_AGENT_EXPERIMENT_ID', '').strip()):
             return {}
         from eregion.runtime.provider_usage import input_reservation
         return {'input_token_reservation': input_reservation(self._get_request_payload(messages, stop=stop, **options))}

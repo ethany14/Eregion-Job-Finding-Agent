@@ -86,3 +86,17 @@ def test_unknown_usage_is_charged_its_reservation_and_the_input_cap_refuses_befo
         with pytest.raises(TaskProviderBudgetExceeded):
             attempt(sent, reservation=None)        # an unmeasurable request is refused too
     assert len(sent) == 1
+
+
+def test_an_experiment_budget_alone_still_reserves_every_requests_input(monkeypatch):
+    # Model replay: with only JOB_AGENT_EXPERIMENT_* set, no reservation was computed and the
+    # experiment ledger refused the first request as unknown_input_size.
+    from langchain_core.messages import HumanMessage
+    from eregion.domain.model import ProviderCompatibleChatOpenAI
+    monkeypatch.delenv('JOB_AGENT_TASK_MAX_INPUT_TOKENS', raising=False)
+    model = ProviderCompatibleChatOpenAI(model='fixture', api_key='fixture-key')
+    monkeypatch.delenv('JOB_AGENT_EXPERIMENT_ID', raising=False)
+    assert model._budget_sizes([HumanMessage('hello')], None, {}) == {}
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_ID', 'replay')
+    sizes = model._budget_sizes([HumanMessage('hello')], None, {})
+    assert sizes['input_token_reservation'] > len('hello')
