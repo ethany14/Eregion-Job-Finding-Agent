@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC
 from typing import Protocol
 
@@ -16,6 +17,9 @@ from eregion.runtime.memory.scoring import MemoryScoreBreakdown, score_memory
 from eregion.runtime.memory.types import MemoryItem, MemoryScope, MemorySensitivity, MemoryStatus
 from eregion.runtime.sessions.clock import Clock, SystemClock
 from eregion.runtime.types import RuntimeModel
+
+
+RETRIEVAL_STRATEGY_VERSION = "stage3a-batched-semantic-v1"
 
 
 class ConfirmedMemoryReader(Protocol):
@@ -34,9 +38,30 @@ class MemoryRetrievalResult(RuntimeModel):
     items: list[RetrievedMemory]
     omitted_memory_ids: list[str] = Field(default_factory=list)
     estimated_tokens: int = Field(ge=0)
+    # Stage 3a: in-scope candidates the semantic ranker never saw (beyond its batch limit), and
+    # whether any ranker batch failed. Nothing is silently treated as irrelevant.
+    semantic_unranked_ids: list[str] = Field(default_factory=list)
+    semantic_failed: bool = False
+    strategy_version: str = RETRIEVAL_STRATEGY_VERSION
 
 
 _SCOPE_RANK = {MemoryScope.USER: 1, MemoryScope.PROJECT: 2, MemoryScope.SESSION: 4}
+# The semantic ranker sees every in-scope candidate, in batches bounded by text size (the old
+# top-40 lexical cut hid synonym/cross-language matches behind lexically similar records).
+SEMANTIC_BATCH_CHARS = 12_000
+SEMANTIC_MAX_BATCHES = 3
+
+
+def _semantic_batches(items: list[MemoryItem]) -> list[list[MemoryItem]]:
+    batches, current, size = [], [], 0
+    for item in items:
+        cost = len(item.memory_key) + len(item.display_text) + len(json.dumps(item.content, ensure_ascii=False, default=str)) + 40
+        if current and size + cost > SEMANTIC_BATCH_CHARS:
+            batches.append(current); current, size = [], 0
+        current.append(item); size += cost
+    if current:
+        batches.append(current)
+    return batches
 
 
 def _rank(item: MemoryItem) -> int:
@@ -75,16 +100,20 @@ class MemoryRetriever:
             (item, score_memory(item, query.text, query.required_memory_keys))
             for item in resolved
         ]
-        relevant_ids = set()
+        relevant_ids: set[str] = set()
+        unranked: list[str] = []
+        semantic_failed = False
         if self._semantic_ranker and scored:
-            # Apply ownership, sensitivity, expiry and scope BEFORE sharing any
-            # candidate with the model. Bound cost even for a large memory store.
-            bounded = sorted(scored, key=lambda pair: (-pair[1].total, pair[0].memory_id))[:40]
-            try:
-                relevant_ids = set(self._semantic_ranker(query.text, [m for m, _ in bounded]))
-                relevant_ids &= {m.memory_id for m, _ in bounded}
-            except Exception:
-                relevant_ids = set()  # lexical fallback stays useful during outages
+            # Ownership, sensitivity, expiry and scope are applied BEFORE sharing any candidate
+            # with the model. Every candidate gets a chance (stage 3a), bounded by batch size.
+            ordered = [m for m, _ in sorted(scored, key=lambda pair: (-pair[1].total, pair[0].memory_id))]
+            batches = _semantic_batches(ordered)
+            unranked = [m.memory_id for batch in batches[SEMANTIC_MAX_BATCHES:] for m in batch]
+            for batch in batches[:SEMANTIC_MAX_BATCHES]:
+                try:
+                    relevant_ids |= set(self._semantic_ranker(query.text, batch)) & {m.memory_id for m in batch}
+                except Exception:
+                    semantic_failed = True  # lexical fallback stays useful during outages
         scored = [(item, score.model_copy(update={"total": score.total + 8.0})
                    if item.memory_id in relevant_ids else score) for item, score in scored]
         # Confidence alone does not make a Memory relevant. Required keys bypass
@@ -117,7 +146,8 @@ class MemoryRetriever:
             selected.append(RetrievedMemory(memory=item, score=score, rendered_block=block))
             used += cost
         return MemoryRetrievalResult(items=selected, omitted_memory_ids=omitted,
-                                     estimated_tokens=used)
+                                     estimated_tokens=used, semantic_unranked_ids=unranked,
+                                     semantic_failed=semantic_failed)
 
     def _allowed(self, item: MemoryItem, query: MemoryQuery) -> bool:
         now = self._clock.now()
