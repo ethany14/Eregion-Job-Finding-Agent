@@ -13,6 +13,12 @@ class MemoryQuery(RuntimeModel):
     text: str = Field(default="", max_length=20_000)
     session_id: str | None = Field(default=None, max_length=128)
     project_id: str | None = Field(default=None, max_length=128)
+    # The application this request concerns; its exceptions (legacy PROJECT "application:<id>")
+    # apply only here.
+    application_id: str | None = Field(default=None, max_length=128)
+    # Accepted USER scope IDs (owner ID plus legacy aliases). Empty keeps the older behaviour:
+    # any USER scope ID of this owner.
+    user_scope_ids: frozenset[str] = Field(default_factory=frozenset)
     memory_types: frozenset[MemoryType] = Field(default_factory=frozenset)
     required_memory_keys: frozenset[str] = Field(default_factory=frozenset)
     allow_personal: bool = False
@@ -21,7 +27,7 @@ class MemoryQuery(RuntimeModel):
     limit: int = Field(default=10, ge=1, le=100)
     token_budget: int = Field(default=1_000, ge=1, le=100_000)
 
-    @field_validator("owner_id", "text", "session_id", "project_id", mode="before")
+    @field_validator("owner_id", "text", "session_id", "project_id", "application_id", mode="before")
     @classmethod
     def clean_text(cls, value: str | None) -> str | None:
         return None if value is None else value.strip()

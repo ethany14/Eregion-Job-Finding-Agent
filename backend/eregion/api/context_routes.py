@@ -79,7 +79,9 @@ def _skill_registry(runtime: SessionRuntime) -> SkillRegistry:
 def _scope_id(runtime: SessionRuntime, scope: MemoryScope, session_id: str | None) -> str:
     profile = _owner(runtime)
     if scope == MemoryScope.USER:
-        return profile.profile_id
+        # Stage 1: USER memory is scoped to the owner ID; the profile ID ("default") written by
+        # earlier versions stays readable as an alias of the same owner.
+        return profile.owner_id
     if scope == MemoryScope.PROJECT:
         return runtime.project_id
     state = runtime.sessions.require(session_id or "")
@@ -140,7 +142,9 @@ def list_memories(
     runtime: SessionRuntime = Depends(get_session_runtime),
 ) -> MemoryListResponse:
     owner = _owner(runtime)
-    scope_id = _scope_id(runtime, scope, session_id) if scope is not None else None
+    # USER listing covers the owner ID and its legacy profile alias (owner_id is the boundary).
+    scope_id = (_scope_id(runtime, scope, session_id)
+                if scope is not None and scope != MemoryScope.USER else None)
     statuses = set(MemoryStatus)
     if not include_deleted:
         statuses.remove(MemoryStatus.DELETED)

@@ -480,7 +480,7 @@ def test_resume_revision_loop_and_idempotent_generation(setup):
     preference = {"memory_id": "pref-1", "version": 1,
                   "memory_key": "resume.summary.max_sentences",
                   "display_text": "Use no more than two sentences."}
-    workflow._preferences = lambda: [preference]
+    workflow._preferences = lambda application_id=None: [preference]
     class OneBadDraft(FakePackModel):
         seen_preferences = []
         def resume(self, state, preferences):
@@ -689,7 +689,7 @@ def test_confirmed_writing_preference_reaches_pack_writer(setup):
         "memory_key": "resume.summary.max_sentences",
         "display_text": "No more than two sentences.",
         "content": {"max_sentences": 2}}
-    workflow._preferences = lambda: [preference]
+    workflow._preferences = lambda application_id=None: [preference]
     class CapturingFake(FakePackModel):
         seen = None
         def resume(self, state, preferences):

@@ -81,7 +81,8 @@ def test_memory_owner_scope_governance_and_public_contract(context_client):
         payload["memory_id"], owner_id=runtime.owner_resolver.resolve().owner_id
     )
     assert stored.provenance[0].source_type == "explicit_user"
-    assert stored.scope_id == runtime.owner_resolver.resolve().profile_id
+    # Memory upgrade stage 1: USER memory is scoped to the owner ID (profile ID is a legacy alias).
+    assert stored.scope_id == runtime.owner_resolver.resolve().owner_id
 
     session = client.post(
         "/sessions", json={"capability_profile": "job_assistant_readonly"}

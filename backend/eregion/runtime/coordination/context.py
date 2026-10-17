@@ -10,7 +10,6 @@ from eregion.runtime.security import canonical_json
 from eregion.runtime.sessions.repository import SessionRepository
 from eregion.runtime.sessions.state import SessionMessageVisibility
 from eregion.runtime.memory.repository import MemoryRepository
-from eregion.runtime.memory.types import MemoryScope, MemorySensitivity, MemoryStatus
 from eregion.runtime.evidence.repository import CareerEvidenceRepository
 from eregion.runtime.evidence.types import EvidenceSourceType, EvidenceStatus
 from eregion.runtime.skills.repository import SkillRepository
@@ -26,7 +25,7 @@ class AgentContextPolicy:
                  skills: SkillRepository | None = None,
                  memories: MemoryRepository | None = None,
                  evidence: CareerEvidenceRepository | None = None,
-                 project_id: str = "jobhunteragent") -> None:
+                 project_id: str = "jobhunteragent", memory_access=None) -> None:
         self.tasks, self.sessions = tasks, sessions
         self.registered_tools, self.task_type_tools = registered_tools, task_type_tools
         self.parent_allowed_tools, self.available_mcp_tools = parent_allowed_tools, available_mcp_tools
@@ -34,6 +33,8 @@ class AgentContextPolicy:
         self.skills = skills
         self.memories, self.evidence = memories, evidence
         self.project_id = project_id
+        from eregion.runtime.memory.access import MemoryAccessResolver
+        self.memory_access = memory_access or MemoryAccessResolver(project_id=project_id)
 
     def prepare(self, task: AgentTask, *, attempt_id: str, child_session_id: str,
                 budget: MultiAgentBudget) -> tuple[ExecutionContext, dict]:
@@ -84,17 +85,23 @@ class AgentContextPolicy:
                 and msg.message.role in {"user", "assistant"}][-limit:]
         memory_refs = []
         memory_items = []
+        # Stage 1: explicitly handed memory IDs pass the same server-side access check as chat
+        # and material generation (owner, status, expiry, scope, sensitivity).
+        from eregion.runtime.memory.access import MemoryPurpose
+        access = self.memory_access.context(MemoryPurpose.SUBTASK, session_owner=parent.user_id,
+                                            session_id=parent.session_id,
+                                            application_id=task.application_id)
         for memory_id in spec.get("memory_ids", []):
             if self.memories is None:
                 raise TaskConflictError("Memory scope is unavailable.")
-            memory = self.memories.get(memory_id, owner_id=parent.user_id or "local-user")
-            if memory is None or memory.status != MemoryStatus.CONFIRMED or memory.sensitivity == MemorySensitivity.SENSITIVE or (
-                memory.expires_at is not None and memory.expires_at <= self.tasks.clock.now()):
+            memory = None if access is None else self.memories.get(memory_id, owner_id=access.owner_id)
+            if memory is None:
                 raise TaskConflictError("Scoped Memory is unavailable.")
-            if not ((memory.scope == MemoryScope.USER and memory.scope_id == (parent.user_id or "local-user"))
-                    or (memory.scope == MemoryScope.PROJECT and memory.scope_id == self.project_id)
-                    or (memory.scope == MemoryScope.SESSION and memory.scope_id == parent.session_id)):
+            usable, reason = access.usable(memory, now=self.tasks.clock.now())
+            if reason == "out_of_scope":
                 raise TaskConflictError("Memory belongs to another scope.")
+            if not usable:
+                raise TaskConflictError("Scoped Memory is unavailable.")
             memory_refs.append({"memory_id": memory_id, "version": memory.version})
             memory_items.append({"memory_id": memory_id, "memory_key": memory.memory_key,
                 "display_text": memory.display_text, "content": memory.content})

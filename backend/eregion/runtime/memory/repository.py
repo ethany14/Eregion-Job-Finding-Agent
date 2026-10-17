@@ -44,10 +44,14 @@ class MemoryRepository:
         *,
         clock: Clock | None = None,
         policy: MemoryPolicy | None = None,
+        canonical_scope_id=None,
     ) -> None:
         self._session_factory = session_factory
         self._clock = clock or SystemClock()
         self._policy = policy or MemoryPolicy()
+        # (scope, scope_id) -> canonical scope_id. Stage 1: the legacy USER profile ID
+        # ("default") and the owner ID are one scope for duplicate and supersession checks.
+        self._canonical = canonical_scope_id or (lambda scope, scope_id: scope_id)
 
     def create_candidate(
         self,
@@ -179,16 +183,16 @@ class MemoryRepository:
                 raise InvalidMemoryTransitionError(
                     "Memory no longer satisfies confirmation policy."
                 )
-            existing = session.scalar(
+            canonical = self._canonical(current.scope, current.scope_id)
+            existing = next((row_ for row_ in session.scalars(
                 select(MemoryItemRow).where(
                     MemoryItemRow.owner_id == owner_id,
                     MemoryItemRow.scope_type == current.scope.value,
-                    MemoryItemRow.scope_id == current.scope_id,
                     MemoryItemRow.memory_key == current.memory_key,
                     MemoryItemRow.status == MemoryStatus.CONFIRMED.value,
                     MemoryItemRow.memory_id != memory_id,
                 )
-            )
+            ).all() if self._canonical(current.scope, row_.scope_id) == canonical), None)
             if existing is not None:
                 raise MemoryAlreadyExistsError(
                     "A confirmed Memory already exists for this scope and key; "
@@ -272,8 +276,8 @@ class MemoryRepository:
                 raise InvalidMemoryTransitionError(
                     "Supersession requires a confirmed value and a candidate replacement."
                 )
-            if (current.scope, current.scope_id, current.memory_key) != (
-                replacement.scope, replacement.scope_id, replacement.memory_key
+            if (current.scope, self._canonical(current.scope, current.scope_id), current.memory_key) != (
+                replacement.scope, self._canonical(replacement.scope, replacement.scope_id), replacement.memory_key
             ):
                 raise InvalidMemoryTransitionError("Supersession values must share owner, scope, and memory key.")
             old_next = self._transition_item(current, status=MemoryStatus.SUPERSEDED, now=now,

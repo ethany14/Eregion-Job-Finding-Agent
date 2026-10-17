@@ -21,6 +21,8 @@ class MemoryEventType(StrEnum):
     SUPERSESSION_LINKED = "supersession_linked"
     DELETED = "deleted"
     EXPIRED = "expired"
+    # Stage 1 migration: legacy owner/profile IDs normalised; payload keeps the old IDs.
+    SCOPE_MIGRATED = "scope_migrated"
 
 
 class MemoryEvent(RuntimeModel):

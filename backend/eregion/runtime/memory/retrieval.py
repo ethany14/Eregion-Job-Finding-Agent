@@ -9,6 +9,7 @@ from pydantic import Field
 
 from eregion.runtime.context.budget import estimate_tokens
 from eregion.runtime.context.types import ContextBlock
+from eregion.runtime.memory.access import application_scope_id, legacy_application_id
 from eregion.runtime.memory.query import MemoryQuery
 from eregion.runtime.memory.rendering import render_memory_item
 from eregion.runtime.memory.scoring import MemoryScoreBreakdown, score_memory
@@ -35,7 +36,13 @@ class MemoryRetrievalResult(RuntimeModel):
     estimated_tokens: int = Field(ge=0)
 
 
-_SCOPE_RANK = {MemoryScope.USER: 1, MemoryScope.PROJECT: 2, MemoryScope.SESSION: 3}
+_SCOPE_RANK = {MemoryScope.USER: 1, MemoryScope.PROJECT: 2, MemoryScope.SESSION: 4}
+
+
+def _rank(item: MemoryItem) -> int:
+    # An application exception (legacy PROJECT "application:<id>") overrides user and project
+    # values for its own application only; a session value stays the most specific.
+    return 3 if legacy_application_id(item) is not None else _SCOPE_RANK[item.scope]
 
 
 class MemoryRetriever:
@@ -56,6 +63,11 @@ class MemoryRetriever:
         if query.session_id:
             candidates.extend(self._reader.list_confirmed(
                 owner_id=query.owner_id, scope=MemoryScope.SESSION, scope_id=query.session_id
+            ))
+        if query.application_id:
+            candidates.extend(self._reader.list_confirmed(
+                owner_id=query.owner_id, scope=MemoryScope.PROJECT,
+                scope_id=application_scope_id(query.application_id),
             ))
         filtered = [item for item in candidates if self._allowed(item, query)]
         resolved = self._resolve_keys(filtered)
@@ -85,7 +97,7 @@ class MemoryRetriever:
         scored.sort(key=lambda pair: (
             -pair[1].required_key_priority,
             -pair[1].total,
-            -_SCOPE_RANK[pair[0].scope],
+            -_rank(pair[0]),
             -pair[0].updated_at.timestamp(),
             pair[0].memory_key,
             pair[0].memory_id,
@@ -113,9 +125,12 @@ class MemoryRetriever:
         expires = item.expires_at
         if expires is not None:
             expires = expires.replace(tzinfo=UTC) if expires.tzinfo is None else expires.astimezone(UTC)
+        application = legacy_application_id(item)
         allowed_scope = (
-            item.scope == MemoryScope.USER
-            or (item.scope == MemoryScope.PROJECT and item.scope_id == query.project_id)
+            (item.scope == MemoryScope.USER
+             and (not query.user_scope_ids or item.scope_id in query.user_scope_ids))
+            or (item.scope == MemoryScope.PROJECT and application is None and item.scope_id == query.project_id)
+            or (application is not None and application == query.application_id)
             or (item.scope == MemoryScope.SESSION and item.scope_id == query.session_id)
         )
         if item.status != MemoryStatus.CONFIRMED or item.owner_id != query.owner_id or not allowed_scope:
@@ -136,7 +151,7 @@ class MemoryRetriever:
     def _resolve_keys(items: list[MemoryItem]) -> list[MemoryItem]:
         by_key: dict[str, MemoryItem] = {}
         for item in sorted(items, key=lambda value: (
-            -_SCOPE_RANK[value.scope], -value.updated_at.timestamp(), value.memory_id
+            -_rank(value), -value.updated_at.timestamp(), value.memory_id
         )):
             by_key.setdefault(item.memory_key, item)
         return list(by_key.values())

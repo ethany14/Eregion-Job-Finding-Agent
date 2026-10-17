@@ -95,6 +95,8 @@ class MemoryItem(RuntimeModel):
             raise ValueError("A memory cannot supersede itself.")
         if self.status == MemoryStatus.SUPERSEDED and not self.superseded_by_memory_id:
             raise ValueError("A superseded memory requires its replacement ID.")
-        if self.status != MemoryStatus.SUPERSEDED and self.superseded_by_memory_id:
-            raise ValueError("Only superseded memory may identify a replacement.")
+        # A deleted record keeps its replacement link so the supersession history stays
+        # traceable (memory upgrade stage 1); every reader excludes deleted records.
+        if self.status not in {MemoryStatus.SUPERSEDED, MemoryStatus.DELETED} and self.superseded_by_memory_id:
+            raise ValueError("Only superseded or deleted memory may identify a replacement.")
         return self

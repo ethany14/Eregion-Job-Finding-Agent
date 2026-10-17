@@ -47,6 +47,7 @@ from eregion.runtime.job_workflow.workers import (
     SourceProvisionWorker,
 )
 from eregion.runtime.memory.policy import LocalOwnerResolver, MemoryPolicy
+from eregion.runtime.memory.access import MemoryAccessResolver
 from eregion.runtime.mcp.client import McpClient
 from eregion.runtime.mcp.config import (
     McpRuntimeConfig,
@@ -109,6 +110,7 @@ class SessionRuntime:
     memory_policy: MemoryPolicy | None = None
     owner_resolver: LocalOwnerResolver | None = None
     project_id: str = LOCAL_PROJECT_ID
+    memory_access: MemoryAccessResolver | None = None
     mcp_manager: McpToolManager | None = None
     workspace: JobWorkspaceRepository | None = None
     evidence: CareerEvidenceRepository | None = None
@@ -209,7 +211,11 @@ def create_session_runtime(
     memory_policy = MemoryPolicy()
     owner_resolver = LocalOwnerResolver()
     project_id = os.getenv("JOB_AGENT_PROJECT_ID", LOCAL_PROJECT_ID).strip() or LOCAL_PROJECT_ID
-    memories = MemoryRepository(database.session_factory, policy=memory_policy)
+    # Stage 1: one server-side memory access resolver for every reader and the repository's
+    # duplicate/supersession checks (legacy USER profile ID = owner ID).
+    memory_access = MemoryAccessResolver(owner_resolver, project_id=project_id)
+    memories = MemoryRepository(database.session_factory, policy=memory_policy,
+                                canonical_scope_id=memory_access.canonical_scope_id)
     skills = SkillRepository(database.session_factory)
     workspace = JobWorkspaceRepository(database.session_factory)
     resumes = ResumeDocumentRepository(database.session_factory)
@@ -253,6 +259,7 @@ def create_session_runtime(
         skills=skills,
         skill_router=skill_router,
         available_tool_names=lambda: registry.names(),
+        memory_access=memory_access,
         available_test_skill_versions=lambda mode: skill_evolution.test_versions(
             owner_id=owner_resolver.resolve().owner_id, mode=ActivationMode(mode)),
         source_resolver=lambda state: workspace.workspace_context_for_session(
@@ -279,7 +286,8 @@ def create_session_runtime(
     packs = PackRepository(database.session_factory)
     pack_workflow = ApplicationPackWorkflow(
         packs=packs, workspace=workspace, evidence=evidence, memories=memories,
-        resumes=resumes, owner_id=owner_resolver.resolve().owner_id)
+        resumes=resumes, owner_id=owner_resolver.resolve().owner_id,
+        memory_access=memory_access, project_id=project_id)
     mock_interviewer = MockInterviewController(
         interviews=MockInterviewRepository(database.session_factory),
         sessions=sessions, workspace=workspace, packs=packs, evidence=evidence,
@@ -310,7 +318,8 @@ def create_session_runtime(
         task_type_tools={name: frozenset() for name in agent_workers.names()},
         parent_allowed_tools=registry.names(),
         available_mcp_tools=mcp_manager.public_tool_names,
-        memories=memories, evidence=evidence, skills=skills, project_id=project_id)
+        memories=memories, evidence=evidence, skills=skills, project_id=project_id,
+        memory_access=memory_access)
     execution = ExecutionService()
     agent_scheduler = AgentTaskScheduler(tasks=agent_tasks, sessions=sessions,
         workers=agent_workers, contexts=agent_context, execution=execution)
@@ -330,6 +339,7 @@ def create_session_runtime(
         memory_policy=memory_policy,
         owner_resolver=owner_resolver,
         project_id=project_id,
+        memory_access=memory_access,
         mcp_manager=mcp_manager,
         workspace=workspace,
         evidence=evidence,

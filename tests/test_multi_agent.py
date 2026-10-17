@@ -648,7 +648,7 @@ def test_context_rejects_cross_session_memory_and_unlinked_interview_evidence(se
         "evidence_ids": ["interview-other-job"]}
     root = tasks.create_plan(plan, validate(plan))
     claimed = tasks.claim(root.task_id, expected_version=root.version, worker_id="test")
-    memory = SimpleNamespace(memory_id="other-session-memory", version=1,
+    memory = SimpleNamespace(memory_id="other-session-memory", version=1, owner_id="local-user",
         status=MemoryStatus.CONFIRMED, sensitivity=MemorySensitivity.NORMAL,
         scope=MemoryScope.SESSION, scope_id="sibling", memory_key="preference.test",
         display_text="Private sibling data", content={}, expires_at=None)

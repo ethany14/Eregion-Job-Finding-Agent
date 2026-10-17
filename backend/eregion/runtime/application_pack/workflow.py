@@ -22,7 +22,6 @@ from eregion.runtime.application_pack.verifier import ArtifactVerifier
 from eregion.runtime.evidence.repository import CareerEvidenceRepository
 from eregion.runtime.evidence.types import EvidenceLinkType, EvidenceSourceType
 from eregion.runtime.memory.repository import MemoryRepository
-from eregion.runtime.memory.types import MemoryScope, MemorySensitivity, MemoryType
 from eregion.runtime.resumes.repository import ResumeDocumentRepository
 from eregion.runtime.workspace.repository import JobWorkspaceRepository
 from eregion.runtime.workspace.types import ArtifactType
@@ -288,9 +287,16 @@ class ApplicationPackWorkflow:
                  resumes: ResumeDocumentRepository | None = None,
                  owner_id: str = "local-user",
                  model: PackModelClient | None = None,
-                 verifier: ArtifactVerifier | None = None) -> None:
+                 verifier: ArtifactVerifier | None = None,
+                 memory_access=None, project_id: str = "jobhunteragent") -> None:
         self._packs, self._workspace, self._evidence, self._memories = packs, workspace, evidence, memories
         self._resumes, self._owner_id = resumes, owner_id
+        # Stage 1: preferences come from the shared memory entry, not a hardcoded owner/scope filter.
+        from eregion.runtime.memory.access import MemoryAccessResolver
+        from eregion.runtime.memory.policy import LocalOwnerResolver
+        from eregion.runtime.memory.service import MemoryService
+        self._memory_access = memory_access or MemoryAccessResolver(LocalOwnerResolver(owner_id=owner_id), project_id=project_id)
+        self._memory_service = MemoryService(memories)
         self._model = model or SharedPackModel()
         self._verifier = verifier or ArtifactVerifier(getattr(self._model, "verify_claims", None))
         self._selection = EvidenceSelectionPolicy()
@@ -329,16 +335,10 @@ class ApplicationPackWorkflow:
             raise PackConflictError("Job snapshot changed.")
         return JobAnalysis.model_validate(job.content), SkillMatch.model_validate(match.content)
 
-    def _preferences(self) -> list[dict]:
-        all_items = self._memories.list_confirmed(owner_id="local-user")
-        selected = [item for item in all_items if item.memory_type == MemoryType.PREFERENCE
-                    and item.sensitivity != MemorySensitivity.SENSITIVE
-                    and item.memory_key.startswith(("resume.", "cover_letter.", "application.", "writing."))
-                    and ((item.scope == MemoryScope.USER and item.scope_id == "local-user")
-                         or (item.scope == MemoryScope.PROJECT and item.scope_id == "jobhunteragent"))]
-        return [{"memory_id": item.memory_id, "version": item.version,
-                 "memory_key": item.memory_key, "display_text": item.display_text,
-                 "content": item.content} for item in sorted(selected, key=lambda i: i.memory_key)]
+    def _preferences(self, application_id: str | None = None) -> list[dict]:
+        from eregion.runtime.memory.access import MemoryPurpose
+        context = self._memory_access.context(MemoryPurpose.APPLICATION_MATERIALS, application_id=application_id)
+        return self._memory_service.effective_preferences(context, "application_materials").as_payload()
 
     @staticmethod
     def _model_configuration() -> dict[str, str | int | float | None]:
@@ -360,7 +360,7 @@ class ApplicationPackWorkflow:
             token_budget=4_000, resume_text=self._resume_source_text(application_id))
         if not selected:
             raise PackValidationError("Confirm relevant resume or Career Evidence before generating a Pack.")
-        preferences = self._preferences()
+        preferences = self._preferences(application_id)
         model_configuration = self._model_configuration()
         resume_header_lines = self._resume_header_lines(application_id)
         digest = evidence_set_hash(selected, job_snapshot_id=app.current_snapshot_id,

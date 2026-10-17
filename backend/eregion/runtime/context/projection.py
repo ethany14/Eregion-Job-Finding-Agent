@@ -77,6 +77,7 @@ class SessionContextProjector:
         source_resolver: Callable[[SessionState], list[tuple[str, str]]] | None = None,
         available_tool_names: Callable[[], frozenset[str]] | None = None,
         available_test_skill_versions: Callable[[str], frozenset[str]] | None = None,
+        memory_access=None,
     ) -> None:
         self._sessions = sessions
         self._snapshots = snapshots
@@ -94,6 +95,9 @@ class SessionContextProjector:
         self._source_resolver = source_resolver
         self._available_tool_names = available_tool_names
         self._available_test_skill_versions = available_test_skill_versions
+        # MemoryAccessResolver (stage 1): server-owned owner, project and application scope for
+        # chat memory; personal preferences are usable in the owner's own job-search chat.
+        self._memory_access = memory_access
 
     @staticmethod
     def _test_skill_matches(name: str, description: str, task: str) -> bool:
@@ -218,13 +222,26 @@ class SessionContextProjector:
             ))
         memory_candidates: list[tuple[ContextBlock, MemorySnapshotRef]] = []
         if self._memory_retriever:
-            result = self._memory_retriever.retrieve(MemoryQuery(
-                owner_id=state.user_id or "local-user",
-                text=retrieval_task,
-                session_id=state.session_id,
-                token_budget=self._memory_token_budget,
-            ))
-            for selected in result.items:
+            if self._memory_access is not None:
+                from eregion.runtime.memory.access import MemoryPurpose
+                access = self._memory_access.context(
+                    MemoryPurpose.CONVERSATION, session_owner=state.user_id, session_id=state.session_id,
+                    application_id=(self._application_for_session(state.session_id)
+                                    if self._application_for_session else None))
+                query = None if access is None else MemoryQuery(
+                    owner_id=access.owner_id, text=retrieval_task, session_id=access.session_id,
+                    project_id=access.project_id, application_id=access.application_id,
+                    user_scope_ids=access.user_scope_ids, allow_personal=access.allow_personal,
+                    token_budget=self._memory_token_budget)
+            else:
+                query = MemoryQuery(
+                    owner_id=state.user_id or "local-user",
+                    text=retrieval_task,
+                    session_id=state.session_id,
+                    token_budget=self._memory_token_budget,
+                )
+            result = self._memory_retriever.retrieve(query) if query is not None else None
+            for selected in (result.items if result is not None else []):
                 memory_block = ContextBlock.model_validate({
                     **selected.rendered_block.model_dump(mode="python"),
                     "trust_level": ContextTrustLevel.UNTRUSTED_DATA,
