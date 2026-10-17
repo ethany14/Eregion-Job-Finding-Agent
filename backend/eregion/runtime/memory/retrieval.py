@@ -10,7 +10,7 @@ from pydantic import Field
 
 from eregion.runtime.context.budget import estimate_tokens
 from eregion.runtime.context.types import ContextBlock
-from eregion.runtime.memory.access import application_scope_id, legacy_application_id
+from eregion.runtime.memory.access import application_scope_id, legacy_application_id, validity_reason
 from eregion.runtime.memory.query import MemoryQuery
 from eregion.runtime.memory.rendering import render_memory_item
 from eregion.runtime.memory.scoring import MemoryScoreBreakdown, score_memory
@@ -67,7 +67,9 @@ def _semantic_batches(items: list[MemoryItem]) -> list[list[MemoryItem]]:
 def _rank(item: MemoryItem) -> int:
     # An application exception (legacy PROJECT "application:<id>") overrides user and project
     # values for its own application only; a session value stays the most specific.
-    return 3 if legacy_application_id(item) is not None else _SCOPE_RANK[item.scope]
+    if item.scope == MemoryScope.APPLICATION or legacy_application_id(item) is not None:
+        return 3
+    return _SCOPE_RANK[item.scope]
 
 
 class MemoryRetriever:
@@ -93,6 +95,9 @@ class MemoryRetriever:
             candidates.extend(self._reader.list_confirmed(
                 owner_id=query.owner_id, scope=MemoryScope.PROJECT,
                 scope_id=application_scope_id(query.application_id),
+            ))
+            candidates.extend(self._reader.list_confirmed(
+                owner_id=query.owner_id, scope=MemoryScope.APPLICATION, scope_id=query.application_id,
             ))
         filtered = [item for item in candidates if self._allowed(item, query)]
         resolved = self._resolve_keys(filtered)
@@ -161,11 +166,15 @@ class MemoryRetriever:
              and (not query.user_scope_ids or item.scope_id in query.user_scope_ids))
             or (item.scope == MemoryScope.PROJECT and application is None and item.scope_id == query.project_id)
             or (application is not None and application == query.application_id)
+            or (item.scope == MemoryScope.APPLICATION and query.application_id is not None
+                and item.scope_id == query.application_id)
             or (item.scope == MemoryScope.SESSION and item.scope_id == query.session_id)
         )
         if item.status != MemoryStatus.CONFIRMED or item.owner_id != query.owner_id or not allowed_scope:
             return False
         if expires is not None and expires <= now:
+            return False
+        if validity_reason(item, now):
             return False
         if item.confidence < query.minimum_confidence:
             return False

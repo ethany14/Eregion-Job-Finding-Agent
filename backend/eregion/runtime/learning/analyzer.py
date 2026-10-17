@@ -17,6 +17,17 @@ mode only when the user clearly corrects the assistant. A procedural success req
 explicit positive outcome, acceptance, or clear confirmation; assistant self-assessment is
 not success evidence. Use none when there is no durable signal.
 
+Emit one signal per independent fact or preference; when one message states several, split
+them and give each its own evidence_quote. attribution is quoted_other when the words describe
+someone else or quote a job description, posting, recruiter or document (for example "the JD
+requires five years of experience" is not the user's experience). scope_hint is application
+only when the user limits it to the job being discussed ("this time for Stripe"), session when
+it is only for this conversation, otherwise user. durability is temporary for "today", "this
+time", "for now". valid_from/valid_to are ISO dates (YYYY-MM-DD) resolved against MESSAGE DATE
+when the user states when something starts or stops ("from next month I can relocate"); leave
+them null when no time is stated. Use the same canonical_key for the same concept in any
+language (for example remote/hybrid/onsite preferences use job.location_mode).
+
 canonical_key must be a short stable lowercase concept key. Mark a procedural signal reusable
 only when it describes a general method rather than this user's private data. Never propose a
 rule that weakens safety, permissions, factual evidence, verification, approval, cancellation,
@@ -35,10 +46,12 @@ class StructuredConversationLearningAnalyzer:
         self._model = model
 
     def analyze(
-        self, *, user_message: AgentMessage, assistant_message: AgentMessage
+        self, *, user_message: AgentMessage, assistant_message: AgentMessage,
+        message_date: str | None = None,
     ) -> LearningObservation:
         content = (
-            "USER MESSAGE:\n" + user_message.content + "\n\n"
+            ("MESSAGE DATE: " + message_date + "\n\n" if message_date else "")
+            + "USER MESSAGE:\n" + user_message.content + "\n\n"
             "ASSISTANT RESPONSE:\n" + assistant_message.content
         )
         return invoke_structured(

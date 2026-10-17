@@ -1,7 +1,6 @@
 """Observe completed turns and route grounded learning into governed stores."""
 from __future__ import annotations
 
-import re
 from uuid import NAMESPACE_URL, uuid5
 
 from eregion.runtime.feedback.service import FeedbackService
@@ -82,7 +81,7 @@ class ConversationLearningService:
                 self._apply_observation_safely(existing)
             return existing
         try:
-            raw = self._analyzer.analyze(user_message=user, assistant_message=assistant)
+            raw = self._analyze(user, assistant, getattr(messages[assistant_index], "created_at", None))
             observation = self._validate_observation(raw, user.content)
         except Exception:
             experience, _ = self.repository.record(
@@ -108,6 +107,17 @@ class ConversationLearningService:
         self._apply_observation_safely(experience)
         return experience
 
+    def _analyze(self, user, assistant, created_at):
+        import inspect
+        try:
+            accepts_date = "message_date" in inspect.signature(self._analyzer.analyze).parameters
+        except (TypeError, ValueError):
+            accepts_date = False
+        if accepts_date:
+            return self._analyzer.analyze(user_message=user, assistant_message=assistant,
+                                          message_date=created_at.date().isoformat() if created_at else None)
+        return self._analyzer.analyze(user_message=user, assistant_message=assistant)
+
     def _apply_observation_safely(self, experience: ConversationExperience) -> None:
         try:
             self._apply_observation(experience)
@@ -123,10 +133,11 @@ class ConversationLearningService:
         if observation is None:
             return
         for index, signal in enumerate(observation.signals):
-            if signal.signal_type in {
-                ExperienceSignalType.PREFERENCE,
-                ExperienceSignalType.CAREER_FACT,
-            }:
+            if signal.signal_type == ExperienceSignalType.CAREER_FACT:
+                # Stage 2: career facts become career-evidence candidates; ordinary memory never
+                # turns itself into resume evidence.
+                self._create_evidence_candidate(experience, signal, index)
+            elif signal.signal_type == ExperienceSignalType.PREFERENCE:
                 self._create_memory_candidate(experience, signal, index)
             elif signal.reusable_across_sessions and signal.confidence >= 0.7:
                 pattern = self.repository.aggregate_procedural_signal(experience, signal)
@@ -172,31 +183,46 @@ class ConversationLearningService:
                 continue
             if not signal.canonical_key or not signal.summary.strip():
                 continue
+            # Stage 2: words the user quoted from a posting, recruiter or document describe
+            # someone else; they are never learned as the user's own fact or preference.
+            if signal.attribution != "user_self" and signal.signal_type in {
+                    ExperienceSignalType.PREFERENCE, ExperienceSignalType.CAREER_FACT}:
+                continue
             accepted.append(signal)
         return LearningObservation(signals=accepted, turn_outcome=observation.turn_outcome)
+
+    def _scope_for(self, experience: ConversationExperience, signal: ExperienceSignal) -> tuple[MemoryScope, str]:
+        """The extractor proposes; the server decides what the conversation can support."""
+        if signal.scope_hint == "application" and experience.application_id:
+            return MemoryScope.APPLICATION, experience.application_id
+        if signal.scope_hint in {"application", "session"} or signal.durability == "temporary":
+            # An application-only or temporary statement never becomes a long-term preference;
+            # without a known application it stays with this conversation.
+            return MemoryScope.SESSION, experience.session_id
+        return MemoryScope.USER, self._owner_id
 
     def _create_memory_candidate(
         self, experience: ConversationExperience, signal: ExperienceSignal, index: int
     ) -> None:
-        key = re.sub(r"[^a-z0-9._:-]+", ".", signal.canonical_key.casefold()).strip(".")
+        from eregion.runtime.memory.consolidation import write_statement
+        from eregion.runtime.memory.normalization import normalize_key, parse_validity_date
+        key = normalize_key(signal.canonical_key)
         if not key:
             return
+        scope, scope_id = self._scope_for(experience, signal)
+        valid_from, valid_to = parse_validity_date(signal.valid_from), parse_validity_date(signal.valid_to)
+        if valid_from and valid_to and valid_to <= valid_from:
+            valid_from = valid_to = None   # contradictory dates are unknown, not guessed
         memory_id = str(uuid5(
             NAMESPACE_URL, f"conversation:{experience.experience_id}:{index}:memory"
         ))
         try:
-            self._memories.create_candidate(
-                memory_id=memory_id,
-                owner_id=self._owner_id,
-                scope=MemoryScope.USER,
-                scope_id=self._owner_id,
-                memory_key=key[:160],
-                memory_type=(MemoryType.PREFERENCE
-                             if signal.signal_type == ExperienceSignalType.PREFERENCE
-                             else MemoryType.SEMANTIC),
-                display_text=signal.summary,
-                content={"value": signal.normalized_value, "source_quote": signal.evidence_quote},
-                provenance=[MemoryProvenance(
+            write_statement(
+                self._memories, owner_id=self._owner_id, scope=scope, scope_id=scope_id, key=key,
+                value=signal.normalized_value, display_text=signal.summary,
+                memory_type=MemoryType.PREFERENCE, memory_id=memory_id,
+                extra_content={"source_quote": signal.evidence_quote},
+                provenance=MemoryProvenance(
                     source_type="conversation_observation",
                     source_id=experience.experience_id,
                     actor_type="user",
@@ -204,11 +230,33 @@ class ConversationLearningService:
                     metadata={
                         "session_id": experience.session_id,
                         "user_message_id": experience.user_message_id,
+                        "source_quote": signal.evidence_quote,
                     },
-                )],
+                ),
                 sensitivity=(MemorySensitivity.SENSITIVE if signal.sensitive
                              else MemorySensitivity.PERSONAL),
-                confidence=signal.confidence,
+                confidence=signal.confidence, valid_from=valid_from, valid_to=valid_to,
+                applies_to=dict(signal.applies_to),
+                canonical_scope_id=getattr(self._memories, "_canonical", None),
             )
         except MemoryAlreadyExistsError:
             return
+
+    def _create_evidence_candidate(
+        self, experience: ConversationExperience, signal: ExperienceSignal, index: int
+    ) -> None:
+        evidence = getattr(self._feedback, "evidence", None)
+        quote = (signal.evidence_quote or "").strip()
+        if evidence is None or not quote:
+            return
+        evidence_id = str(uuid5(NAMESPACE_URL, f"conversation:{experience.experience_id}:{index}:evidence"))
+        from eregion.runtime.evidence.errors import EvidenceNotFoundError
+        try:
+            evidence.get(evidence_id)
+            return
+        except EvidenceNotFoundError:
+            pass
+        evidence.create_candidate(category="experience", claim_text=quote, source_type="user_attested",
+            exact_quote=quote, created_by=self._owner_id,
+            source_reference=f"conversation:{experience.experience_id}",
+            tags=["extraction:conversation-v2"], evidence_id=evidence_id)

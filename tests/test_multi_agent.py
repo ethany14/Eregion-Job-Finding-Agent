@@ -651,7 +651,7 @@ def test_context_rejects_cross_session_memory_and_unlinked_interview_evidence(se
     memory = SimpleNamespace(memory_id="other-session-memory", version=1, owner_id="local-user",
         status=MemoryStatus.CONFIRMED, sensitivity=MemorySensitivity.NORMAL,
         scope=MemoryScope.SESSION, scope_id="sibling", memory_key="preference.test",
-        display_text="Private sibling data", content={}, expires_at=None)
+        display_text="Private sibling data", content={}, expires_at=None, valid_from=None, valid_to=None)
     evidence = SimpleNamespace(status=EvidenceStatus.CONFIRMED,
         current=SimpleNamespace(source_type=EvidenceSourceType.INTERVIEW,
             evidence_version_id="v1", content_hash="x" * 64, claim_text="Private"))

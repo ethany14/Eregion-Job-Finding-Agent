@@ -24,6 +24,7 @@ TASK_PREFIXES = {
     "application_materials": ("resume.", "cover_letter.", "application.", "writing."),
     "resume": ("resume.", "writing."),
     "cover_letter": ("cover_letter.", "writing."),
+    "job_search": ("job.",),   # stage 2: work mode, relocation and other search conditions
 }
 
 

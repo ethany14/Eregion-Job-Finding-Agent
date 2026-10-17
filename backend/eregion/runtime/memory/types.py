@@ -22,6 +22,9 @@ class MemoryScope(StrEnum):
     USER = "user"
     PROJECT = "project"
     SESSION = "session"
+    # Stage 2: one application (scope_id = application ID); replaces PROJECT + "application:<id>",
+    # which stays readable for records written before.
+    APPLICATION = "application"
 
 
 class MemoryStatus(StrEnum):
@@ -67,6 +70,12 @@ class MemoryItem(RuntimeModel):
     supersedes_memory_id: str | None = Field(default=None, max_length=128)
     superseded_by_memory_id: str | None = Field(default=None, max_length=128)
     expires_at: datetime | None = None
+    # Stage 2: when the stated fact holds (None = unknown/open). Separate from expires_at (record
+    # retention) and created_at (when it was recorded).
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+    # Structured applicability, e.g. {"employer": "Stripe", "artifact_type": "cover_letter"}.
+    applies_to: dict[str, str] = Field(default_factory=dict)
     version: int = Field(default=0, ge=0)
     event_sequence: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -91,6 +100,8 @@ class MemoryItem(RuntimeModel):
 
     @model_validator(mode="after")
     def validate_links(self) -> "MemoryItem":
+        if self.valid_from and self.valid_to and self.valid_to <= self.valid_from:
+            raise ValueError("valid_to must be after valid_from.")
         if self.memory_id in {self.supersedes_memory_id, self.superseded_by_memory_id}:
             raise ValueError("A memory cannot supersede itself.")
         if self.status == MemoryStatus.SUPERSEDED and not self.superseded_by_memory_id:

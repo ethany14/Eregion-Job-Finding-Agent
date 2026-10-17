@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import uuid4
 
+from typing import Literal
+
 from pydantic import Field, field_validator
 
 from eregion.runtime.types import RuntimeModel
@@ -38,6 +40,18 @@ class ExperienceSignal(RuntimeModel):
     reusable_across_sessions: bool = False
     sensitive: bool = False
     rationale: str = Field(default="", max_length=500)
+    # Stage 2 (proposed by the extractor, validated by the server before any write):
+    # who the statement is about; facts quoted from a job description or another person are
+    # "quoted_other" and are never learned as the user's own facts or preferences.
+    attribution: Literal["user_self", "quoted_other"] = "user_self"
+    # Where it applies: everywhere, only the application this conversation is about, or only
+    # this conversation. Temporary statements ("today", "this time") never become long-term.
+    scope_hint: Literal["user", "application", "session"] = "user"
+    durability: Literal["durable", "temporary"] = "durable"
+    # When the stated fact holds, as ISO dates resolved against the message date; null = unknown.
+    valid_from: str | None = Field(default=None, max_length=40)
+    valid_to: str | None = Field(default=None, max_length=40)
+    applies_to: dict[str, str] = Field(default_factory=dict)
 
     @field_validator("canonical_key")
     @classmethod

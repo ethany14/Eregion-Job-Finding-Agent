@@ -36,6 +36,20 @@ _PERSONAL_ALLOWED = frozenset({MemoryPurpose.CONVERSATION, MemoryPurpose.APPLICA
                                MemoryPurpose.SUBTASK, MemoryPurpose.MANAGEMENT})
 
 
+def _utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def validity_reason(item: MemoryItem, now: datetime) -> str | None:
+    """None when the stated fact holds now; unknown bounds (None) never exclude."""
+    current = _utc(now)
+    if item.valid_from is not None and _utc(item.valid_from) > current:
+        return "not_yet_valid"
+    if item.valid_to is not None and _utc(item.valid_to) <= current:
+        return "no_longer_valid"
+    return None
+
+
 def application_scope_id(application_id: str) -> str:
     return APPLICATION_SCOPE_PREFIX + application_id
 
@@ -70,13 +84,15 @@ class MemoryAccessContext:
             return self.project_id is not None and item.scope_id == self.project_id
         if item.scope == MemoryScope.SESSION:
             return self.session_id is not None and item.scope_id == self.session_id
+        if item.scope == MemoryScope.APPLICATION:
+            return self.application_id is not None and item.scope_id == self.application_id
         return False
 
     def specificity(self, item: MemoryItem) -> int:
         """More specific values override broader ones for the same key."""
         if item.scope == MemoryScope.SESSION:
             return 4
-        if legacy_application_id(item) is not None:
+        if item.scope == MemoryScope.APPLICATION or legacy_application_id(item) is not None:
             return 3
         return 2 if item.scope == MemoryScope.PROJECT else 1
 
@@ -92,6 +108,9 @@ class MemoryAccessContext:
             current = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
             if expires <= current:
                 return False, "expired"
+        validity = validity_reason(item, now)
+        if validity:
+            return False, validity
         if not self.in_scope(item):
             return False, "out_of_scope"
         if item.sensitivity == MemorySensitivity.SENSITIVE:

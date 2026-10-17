@@ -1,0 +1,27 @@
+{
+  "description": "Memory stage 2 labelled extraction cases (zh/en). Expected labels are the human reading of each message; the real-model evaluation compares the extractor's signals against them. Fixed-output tests do not use this file.",
+  "message_date": "2026-10-17",
+  "cases": [
+    {"id": "remote-only-zh", "user": "只找远程的工作。",
+     "expect": [{"type": "preference", "key": "job.location_mode", "value": "remote", "scope_hint": "user", "durability": "durable"}]},
+    {"id": "stripe-hybrid-zh", "user": "这次 Stripe 可以 hybrid。", "application": "Stripe",
+     "expect": [{"type": "preference", "key": "job.location_mode", "value": "hybrid", "scope_hint": "application"}]},
+    {"id": "relocate-next-month-zh", "user": "下个月开始可以搬到纽约。",
+     "expect": [{"type": "preference", "key": "job.relocation", "value": "New York", "valid_from": "2026-11-01"}]},
+    {"id": "remote-only-en", "user": "I only want fully remote roles.",
+     "expect": [{"type": "preference", "key": "job.location_mode", "value": "remote", "scope_hint": "user"}]},
+    {"id": "jd-requirement-en", "user": "The JD says it requires five years of experience. Should I still apply?",
+     "expect": []},
+    {"id": "jd-plus-own-fact-en", "user": "The posting requires 5 years of Java; I have 3 years of Java.",
+     "expect": [{"type": "career_fact", "quote_contains": "I have 3 years of Java", "attribution": "user_self"}]},
+    {"id": "two-preferences-en", "user": "Keep my resume summary to two sentences, and make cover letters formal.",
+     "expect": [{"type": "preference", "key": "resume.summary.max_sentences", "value": 2},
+                {"type": "preference", "key": "cover_letter.tone", "value": "formal"}]},
+    {"id": "today-only-en", "user": "Just for today, write in a casual tone.",
+     "expect": [{"type": "preference", "key": "writing.style", "value": "casual", "durability": "temporary"}]},
+    {"id": "summary-zh", "user": "简历摘要最多两句话。",
+     "expect": [{"type": "preference", "key": "resume.summary.max_sentences", "value": 2}]},
+    {"id": "question-only-en", "user": "What does a hybrid role usually mean?",
+     "expect": []}
+  ]
+}

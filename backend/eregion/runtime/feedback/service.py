@@ -101,22 +101,30 @@ class FeedbackService:
                 value = proposal.value if proposal else candidate.proposed_content
                 display_text = (f"{candidate.proposed_key_or_name} = {value}"
                                 if proposal else candidate.proposed_content[:2000])
-                scope = MemoryScope.USER if candidate.scope.value == "user" else MemoryScope.PROJECT
-                scope_id = owner_id if scope == MemoryScope.USER else f"application:{candidate.scope_id}"
-                memory = self.memories.create_candidate(owner_id=owner_id, scope=scope,
-                    scope_id=scope_id, memory_id=memory_id,
-                    memory_key=candidate.proposed_key_or_name,
-                    memory_type=MemoryType.PREFERENCE,
-                    display_text=display_text,
-                    content={"value": value},
-                    provenance=[MemoryProvenance(source_type="explicit_user_feedback",
-                        source_id=candidate_id, actor_type="user", user_confirmed=True)],
-                    sensitivity=MemorySensitivity.PERSONAL,
-                    confidence=candidate.confidence)
+                # Stage 2: application feedback uses the APPLICATION scope (no longer
+                # PROJECT + "application:<id>") and the shared consolidation write path.
+                scope = MemoryScope.USER if candidate.scope.value == "user" else MemoryScope.APPLICATION
+                scope_id = owner_id if scope == MemoryScope.USER else candidate.scope_id
+                from eregion.runtime.memory.consolidation import write_statement
+                memory, _ = write_statement(self.memories, owner_id=owner_id, scope=scope, scope_id=scope_id,
+                    key=candidate.proposed_key_or_name, value=value, display_text=display_text,
+                    memory_type=MemoryType.PREFERENCE, memory_id=memory_id,
+                    provenance=MemoryProvenance(source_type="explicit_user_feedback",
+                        source_id=candidate_id, actor_type="user", user_confirmed=True),
+                    sensitivity=MemorySensitivity.PERSONAL, confidence=candidate.confidence,
+                    canonical_scope_id=getattr(self.memories, "_canonical", None))
             if memory.status.value == "candidate":
-                self.memories.confirm(memory_id, owner_id=owner_id,
-                    expected_version=memory.version, confirmed_by_user=True)
-            linked = {"linked_memory_id": memory_id}
+                replaces = memory.content.get("replaces_memory_id")
+                if replaces:
+                    # The user explicitly confirmed a value that differs from the confirmed one:
+                    # replace it; the old value stays in the history as superseded.
+                    old = self.memories.require(replaces, owner_id=owner_id)
+                    self.memories.supersede(replaces, replacement_memory_id=memory.memory_id, owner_id=owner_id,
+                        expected_version=old.version, replacement_expected_version=memory.version)
+                else:
+                    self.memories.confirm(memory.memory_id, owner_id=owner_id,
+                        expected_version=memory.version, confirmed_by_user=True)
+            linked = {"linked_memory_id": memory.memory_id}
         elif candidate.candidate_type == CandidateType.CAREER_EVIDENCE:
             if self.evidence is None:
                 raise FeedbackValidationError("Evidence repository is unavailable.")

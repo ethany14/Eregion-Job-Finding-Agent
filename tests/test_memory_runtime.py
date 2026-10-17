@@ -60,7 +60,7 @@ def candidate(repository: MemoryRepository, *, owner="owner-a", key="job.prefere
 
 def test_schema_enums_and_invariants():
     assert {item.value for item in MemoryType} == {"semantic", "preference", "episodic"}
-    assert {item.value for item in MemoryScope} == {"user", "project", "session"}
+    assert {item.value for item in MemoryScope} == {"user", "project", "session", "application"}  # stage 2
     with pytest.raises(ValidationError):
         MemoryItem(
             owner_id="owner", scope="user", scope_id="owner", memory_key="Bad Key",

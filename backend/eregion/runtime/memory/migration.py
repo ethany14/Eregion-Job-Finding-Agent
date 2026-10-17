@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from eregion.runtime.memory.events import MemoryEvent, MemoryEventType
 from eregion.runtime.memory.models import MemoryItemRow
 from eregion.runtime.memory.repository import MemoryRepository
+from eregion.runtime.memory.access import legacy_application_id
 from eregion.runtime.memory.types import MemoryItem, MemoryScope, MemoryStatus
 
 
@@ -29,6 +30,8 @@ class PlannedChange:
     from_scope_id: str
     to_owner_id: str
     to_scope_id: str
+    from_scope: str = "user"
+    to_scope: str = "user"
 
 
 @dataclass
@@ -51,16 +54,20 @@ def preview(session_factory: sessionmaker[Session], *, owner_id: str = "local-us
     with session_factory() as session:
         rows = session.scalars(select(MemoryItemRow).where(MemoryItemRow.owner_id.in_(sorted(aliases)))).all()
         items = [MemoryRepository._item(row) for row in rows]
-    def target(item: MemoryItem) -> tuple[str, str]:
+    def target(item: MemoryItem) -> tuple[str, str, str]:
         to_owner = owner_id if item.owner_id in aliases else item.owner_id
+        application = legacy_application_id(item)
+        if application is not None:   # stage 2: PROJECT "application:<id>" -> APPLICATION <id>
+            return to_owner, MemoryScope.APPLICATION.value, application
         to_scope = owner_id if item.scope == MemoryScope.USER and item.scope_id in aliases else item.scope_id
-        return to_owner, to_scope
+        return to_owner, item.scope.value, to_scope
 
     # Confirmed values per (scope, scope ID, key) after normalisation; the database allows one.
     confirmed: dict[tuple, list[MemoryItem]] = {}
     for item in items:
         if item.status == MemoryStatus.CONFIRMED:
-            confirmed.setdefault((item.scope.value, *target(item), item.memory_key), []).append(item)
+            to_owner, to_scope, to_scope_id = target(item)
+            confirmed.setdefault((to_scope, to_owner, to_scope_id, item.memory_key), []).append(item)
     conflicted = set()
     for (scope, _, scope_id, key), values in confirmed.items():
         if len(values) > 1:
@@ -69,14 +76,15 @@ def preview(session_factory: sessionmaker[Session], *, owner_id: str = "local-us
                 {"memory_id": v.memory_id, "owner_id": v.owner_id, "scope_id": v.scope_id,
                  "display_text": v.display_text, "updated_at": v.updated_at.isoformat()} for v in values]})
     for item in items:
-        to_owner, to_scope = target(item)
-        if (to_owner, to_scope) == (item.owner_id, item.scope_id):
+        to_owner, to_scope, to_scope_id = target(item)
+        if (to_owner, to_scope, to_scope_id) == (item.owner_id, item.scope.value, item.scope_id):
             plan.unchanged += 1
             continue
         if item.memory_id in conflicted:
             continue
         plan.changes.append(PlannedChange(item.memory_id, item.memory_key, item.status.value,
-                                          item.owner_id, item.scope_id, to_owner, to_scope))
+                                          item.owner_id, item.scope_id, to_owner, to_scope_id,
+                                          from_scope=item.scope.value, to_scope=to_scope))
     return plan
 
 
@@ -87,11 +95,12 @@ def apply(session_factory: sessionmaker[Session], plan: MigrationPlan) -> int:
     with session_factory.begin() as session:
         for change in plan.changes:
             row = session.get(MemoryItemRow, change.memory_id)
-            if row is None or (row.owner_id, row.scope_id) != (change.from_owner_id, change.from_scope_id):
+            if row is None or (row.owner_id, row.scope_type, row.scope_id) != (
+                    change.from_owner_id, change.from_scope, change.from_scope_id):
                 raise RuntimeError(f"Memory {change.memory_id} changed after the preview; rerun the preview.")
             current = MemoryRepository._item(row)
             moved = MemoryItem.model_validate({**current.model_dump(mode="python"), "owner_id": change.to_owner_id,
-                "scope_id": change.to_scope_id, "version": current.version + 1,
+                "scope": change.to_scope, "scope_id": change.to_scope_id, "version": current.version + 1,
                 "event_sequence": current.event_sequence + 1, "updated_at": now})
             result = session.execute(update(MemoryItemRow).where(
                 MemoryItemRow.memory_id == change.memory_id, MemoryItemRow.version == current.version
@@ -101,7 +110,8 @@ def apply(session_factory: sessionmaker[Session], plan: MigrationPlan) -> int:
             session.add(MemoryRepository._event_row(MemoryEvent(
                 memory_id=moved.memory_id, sequence=moved.event_sequence, event_type=MemoryEventType.SCOPE_MIGRATED,
                 from_status=current.status, to_status=moved.status, actor_type="system", occurred_at=now,
-                payload={"from_owner_id": change.from_owner_id, "from_scope_id": change.from_scope_id,
-                         "to_owner_id": change.to_owner_id, "to_scope_id": change.to_scope_id})))
+                payload={"from_owner_id": change.from_owner_id, "from_scope": change.from_scope,
+                         "from_scope_id": change.from_scope_id, "to_owner_id": change.to_owner_id,
+                         "to_scope": change.to_scope, "to_scope_id": change.to_scope_id})))
             applied += 1
     return applied

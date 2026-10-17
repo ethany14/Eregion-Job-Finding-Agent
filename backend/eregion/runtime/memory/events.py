@@ -23,6 +23,8 @@ class MemoryEventType(StrEnum):
     EXPIRED = "expired"
     # Stage 1 migration: legacy owner/profile IDs normalised; payload keeps the old IDs.
     SCOPE_MIGRATED = "scope_migrated"
+    # Stage 2: the same statement seen again; its source is added, no new record is made.
+    PROVENANCE_MERGED = "provenance_merged"
 
 
 class MemoryEvent(RuntimeModel):

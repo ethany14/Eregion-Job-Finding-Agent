@@ -68,6 +68,9 @@ class MemoryRepository:
         confidence: float = 1.0,
         expires_at: datetime | None = None,
         memory_id: str | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
+        applies_to: dict[str, str] | None = None,
     ) -> MemoryItem:
         now = ensure_utc(self._clock.now())
         decision = self._policy.assess_candidate(
@@ -94,6 +97,9 @@ class MemoryRepository:
             "sensitivity": sensitivity,
             "confidence": confidence,
             "expires_at": expires_at,
+            "valid_from": valid_from,
+            "valid_to": valid_to,
+            "applies_to": applies_to or {},
             "event_sequence": 1,
             "created_at": now,
             "updated_at": now,
@@ -305,6 +311,25 @@ class MemoryRepository:
             session.flush()
         return old_next
 
+    def add_provenance(self, memory_id: str, *, owner_id: str, expected_version: int,
+                       provenance: MemoryProvenance) -> MemoryItem:
+        """Stage 2: record another source for the same statement (idempotent per source)."""
+        now = ensure_utc(self._clock.now())
+        with self._session_factory.begin() as session:
+            row, current = self._locked_current(session, memory_id, owner_id, expected_version)
+            if current.status not in {MemoryStatus.CANDIDATE, MemoryStatus.CONFIRMED}:
+                raise InvalidMemoryTransitionError("Only candidate or confirmed memory can gain a source.")
+            known = {(p.source_type, p.source_id) for p in current.provenance}
+            if (provenance.source_type, provenance.source_id) in known:
+                return current
+            merged = self._transition_item(current, status=current.status, now=now,
+                                           updates={"provenance": [*current.provenance, provenance]})
+            self._persist_transition(session, row, merged, expected_version, MemoryEventType.PROVENANCE_MERGED,
+                                     from_status=current.status, actor_type="system",
+                                     payload={"source_type": provenance.source_type, "source_id": provenance.source_id})
+            session.flush()
+        return merged
+
     def expire_due(self, *, owner_id: str | None = None) -> list[MemoryItem]:
         now = ensure_utc(self._clock.now())
         with self._session_factory.begin() as session:
@@ -437,7 +462,8 @@ class MemoryRepository:
             "sensitivity": item.sensitivity.value, "confidence": item.confidence,
             "supersedes_memory_id": item.supersedes_memory_id,
             "superseded_by_memory_id": item.superseded_by_memory_id,
-            "expires_at": item.expires_at, "version": item.version,
+            "expires_at": item.expires_at, "valid_from": item.valid_from, "valid_to": item.valid_to,
+            "version": item.version,
             "event_sequence": item.event_sequence, "item_json": item.model_dump_json(),
             "created_at": item.created_at, "updated_at": item.updated_at,
             "last_used_at": item.last_used_at,
