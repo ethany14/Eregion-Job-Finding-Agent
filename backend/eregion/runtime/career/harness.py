@@ -49,7 +49,9 @@ TOOLS = [
          'caveats':TEXT,'conditions_reviewed':{'type':'boolean','description':'For priority only: true after checking that the resume or the user states every posting condition on the candidate (enrollment, graduation date or cohort, availability or start date, authorization).'}},
         ['application_id','tier','reason','evidence','gaps','to_confirm','next_steps']),
     function('search_jobs','API-first discovery through configured LinkedIn MCP and public company boards. Returns observed posting cards; process candidate_queue.next_unread with verify_and_score_jobs. Search again for new boards only after actionable candidates are processed. Optional boards contain platform and company board token.',
-        {**FILTER_SCHEMA,'query':TEXT,'location':TEXT,'use_directory':{'type':'boolean','description':'Select fresh verified boards by role and location; prefer after blocked requested sources.'},'boards':{'type':'array','maxItems':5,'items':{'type':'object',
+        {**FILTER_SCHEMA,'query':TEXT,'location':TEXT,'use_directory':{'type':'boolean','description':'Select fresh verified boards by role and location; prefer after blocked requested sources.'},
+         'extra_sources':{'type':'array','items':{'type':'string','enum':['indeed','linkedin']},'maxItems':2,
+             'description':'Optional JobSpy sites, only those listed in job_sources.jobspy.sites. Cards are candidates; read before qualifying.'},'boards':{'type':'array','maxItems':5,'items':{'type':'object',
             'properties':{'platform':{'type':'string','enum':['greenhouse','lever','ashby','workday']},'company':TEXT,'host':TEXT,'site':TEXT},
             'required':['platform','company'],'additionalProperties':False}},'limit':{'type':'integer','minimum':1,'maximum':20},
             'pages':{'type':'integer','minimum':1,'maximum':8,'description':'LinkedIn result pages for this query (about 10 cards and 9 s each). '
@@ -169,6 +171,37 @@ class CareerHarness:
             from .treg_client import TregClient
             self._treg_client=TregClient(cfg,ExternalToolLedger(self.repository.sessions))
         return self._treg_client
+
+    def _jobspy_search(self,task_id,state,args,filters,cancelled):
+        """Optional JobSpy sites chosen by the model. Disabled sends nothing; one site's failure
+        keeps the others; requests count against the task's JobSpy request budget."""
+        from .jobspy_source import JobSpyConfig, search
+        from eregion.runtime.provider_usage import record_tool_action
+        config=JobSpyConfig.from_env()
+        if not config.enabled:
+            return {'jobs':[],'status':'disabled','note':'JobSpy is not configured; no request was sent.'}
+        used=(state.get('jobspy_usage') or {}).get('requests',0)
+        found=search(config,str(args['query']),args.get('location') or None,sites=args['extra_sources'],
+                     filters=filters,requests_used=used,cancelled=cancelled)
+        jobs,local=filter_cards(found['jobs'],state)
+        record_tool_action({'tool':'jobspy_search','network_requests':found['requests'],
+                            'sites':{k:v.get('status') for k,v in found['sources'].items()}})
+        texts={}
+        for card in jobs:
+            text=found['descriptions'].get(card['url'])
+            if text:
+                texts[job_key(card['url'])]={'text':text[:20000],'hash':card['description_hash'],'source':card['source'],
+                    'title':card['title'],'company':card['company'],'location':card['location']}
+        def remember(s):
+            kept={**(s.get('jobspy_descriptions') or {}),**texts}
+            return {'jobspy_descriptions':dict(list(kept.items())[-20:]),
+                    'jobspy_usage':{'requests':(s.get('jobspy_usage') or {}).get('requests',0)+found['requests']}}
+        self.repository.change(task_id,remember)
+        return {'jobs':jobs,'status':found['status'],'sources':found['sources'],'network_requests':found['requests'],
+                'requests_used_in_task':used+found['requests'],'request_budget':config.max_requests_per_task,
+                'local_filter':local,'note':'JobSpy cards are candidates only. A stored full description is reused when '
+                'the posting is read; it does not prove the job is open or that the user qualifies. Library-inferred '
+                'fields (remote, some salaries) are not evidence.'}
 
     def _treg_search(self,task_id,state,args):
         from .treg_jobs import SEARCH_ENDPOINTS, normalize_search, search_body
@@ -358,8 +391,12 @@ class CareerHarness:
         from .candidate_queue import enabled as candidate_batches, view as candidate_view
         search_view=recovery(state,saved_urls=[self.runtime.workspace.application_job(a).canonical_url for a in state['jobs']])
         task_memory = getattr(self.runtime, 'task_memory', None)
+        from .jobspy_source import JobSpyConfig
+        jobspy = JobSpyConfig.from_env()
         return {**(task_memory.context(state, runs=self.applications.repository.get, budget=self.task_budget)
                    if task_memory else {}),
+            **({'job_sources': {'jobspy': {**jobspy.describe(),
+                'requests_used_in_task': (state.get('jobspy_usage') or {}).get('requests', 0)}}} if jobspy.enabled else {}),
             'candidate':saved.get('profile',{}),'resume_text':text[:40000],
             'search_recovery':search_view,
             # Coverage, yield and remaining budget sit beside the queue: they are what a
@@ -932,7 +969,7 @@ class CareerHarness:
             filters=effective_filters(state,args)
             # pages is a LinkedIn depth choice; board APIs never receive it
             # (acceptance tiered-v3-01: a TypeError here ended the search).
-            search_args={k:v for k,v in args.items() if k not in FILTER_FIELDS and k!='pages'}
+            search_args={k:v for k,v in args.items() if k not in FILTER_FIELDS and k not in {'pages','extra_sources'}}
             if blocked_hosts:search_args['excluded_hosts']=blocked_hosts
             use_directory = search_args.pop('use_directory', False)
             if use_directory and args.get('boards'): raise ValueError('Choose directory selection or explicit boards.')
@@ -969,7 +1006,9 @@ class CareerHarness:
                 'query':str(args['query']).strip().casefold(),
                 'location':str(args.get('location','')).strip().casefold(),
                 'boards':args.get('boards'), 'use_directory':use_directory, 'excluded_hosts':blocked_hosts,
-                'excluded_sources':sorted(exhausted),'directory_searched':searched,'filters':filters},sort_keys=True).encode()).hexdigest()
+                'excluded_sources':sorted(exhausted),'directory_searched':searched,'filters':filters,
+                # A different JobSpy site selection is a different search, not a repeat.
+                'extra_sources':sorted(args.get('extra_sources') or [])},sort_keys=True).encode()).hexdigest()
             attempts=state.get('search_request_cache',{})
             attempts=dict(attempts.get('requests',{})) if attempts.get('user_turn_id')==turn else {}
             previous=attempts.get(request_key)
@@ -1019,6 +1058,9 @@ class CareerHarness:
                 if supplement.get('jobs'):
                     result['jobs']=[*(result.get('jobs') or []),*supplement['jobs']]
                 result['treg_supplement']={k:v for k,v in supplement.items() if k!='jobs'}
+            if args.get('extra_sources'):
+                result['jobspy']=self._jobspy_search(task_id,state,args,filters,cancelled)
+                result['jobs']=[*(result.get('jobs') or []),*result['jobspy'].pop('jobs',[])]
             # One malformed posting URL from a board must not fail the whole search.
             valid=[]
             for job in result.get('jobs') or []:
@@ -1133,9 +1175,15 @@ class CareerHarness:
                 job=None
                 from .linkedin_runtime import available as linkedin_available, invoke as linkedin_invoke
                 identity=job_key(url)
-                if api_first and identity.startswith('linkedin:') and (state.get('linkedin_mcp_state') or {}).get('stopped'):
+                stored=(state.get('jobspy_descriptions') or {}).get(identity)
+                if stored and stored.get('text'):
+                    job={'url':url,'title':stored.get('title') or '','company':stored.get('company') or '',
+                         'location':stored.get('location') or '','description':stored['text'],
+                         'source':stored.get('source') or 'jobspy','content_hash':stored.get('hash'),
+                         'discovery_card':{k:stored.get(k) for k in ('title','company','location')}}
+                elif api_first and identity.startswith('linkedin:') and (state.get('linkedin_mcp_state') or {}).get('stopped'):
                     raise ValueError('LinkedIn MCP source is stopped; resolve its session before another source retry.')
-                if api_first and identity.startswith('linkedin:') and linkedin_available(self):
+                if job is None and api_first and identity.startswith('linkedin:') and linkedin_available(self):
                     detail=linkedin_invoke(self,task_id,state,'details',{'job_id':identity.split(':',1)[1]})
                     if detail['status']!='complete_jd':
                         raise ValueError('LinkedIn MCP posting is '+detail['status']+'; no automatic paid or browser retry.')

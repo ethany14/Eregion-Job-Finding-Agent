@@ -141,6 +141,7 @@ final submit are always yours.**
 | **Company boards** (Greenhouse, Lever, Ashby, Workday) | None | A directory of 118 boards, each verified through its public API. |
 | **LinkedIn**, through a local MCP server | One-time sign-in in a separate browser profile | On by default once configured. Calls are budgeted, and the source stops on sign-in or rate-limit problems. See [default sources](docs/configuration.md#default-job-sources). |
 | **Treg** (optional) | Your own Treg key; you pay Treg directly | LinkedIn search and page extraction, with spend capped per call ($0.01), per task ($0.10) and per day ($0.50). Off by default. See [configuration](docs/configuration.md#optional-treg-job-sources). |
+| **JobSpy** (optional) | A separate Python with `python-jobspy` installed, set as `JOB_AGENT_JOBSPY_PYTHON` | Indeed (one request per search, full descriptions) and LinkedIn cards. Off by default; requests per task are capped. |
 | **A posting you paste or open** | None | Share a link or job text in chat, or use the **Eregion Lens** Chrome extension on any job page. |
 
 Indeed's MCP server only accepts allow-listed clients, so Eregion does not use it.
