@@ -324,7 +324,12 @@ class BrowserSession:
 
     def back(self):
         self.frame,self.screen = None,None
-        self.browser.page.go_back(wait_until='domcontentloaded',timeout=15000)
+        # A page restored from the back/forward cache fires no new DOMContentLoaded (Patchright
+        # waited the full timeout): wait for the navigation to commit, then briefly for loading.
+        self.browser.page.go_back(wait_until='commit',timeout=15000)
+        try:self.browser.page.wait_for_load_state('domcontentloaded',timeout=5000)
+        except Exception as exc:
+            if 'Timeout' not in type(exc).__name__:raise
         return self.read()
 
     def tabs(self, action='list', tab_id=None):

@@ -35,7 +35,8 @@ def failure_detail(error):
     code = getattr(error, 'code', None)
     if type(error).__name__ == 'TargetClosedError':code = 'browser_session_lost'
     if code not in RECOVERY:
-        code = 'dom_interaction_failed' if type(error).__module__.startswith('playwright.') else 'invalid_action'
+        from .driver import is_driver_error
+        code = 'dom_interaction_failed' if is_driver_error(error) else 'invalid_action'
     hint, visual = RECOVERY[code]
     return {'error': str(error) if isinstance(error, BrowserBlocked) else type(error).__name__,
             'error_code': code, 'next': hint, 'visual_recovery': visual}

@@ -93,3 +93,29 @@ def pytest_runtest_logreport(report):
                  or report.longreprtext.strip().splitlines()[-1:] or '')
     message = (report.nodeid + ' :: ' + detail).replace('%', '%25').replace('\r', '').replace('\n', '%0A')[:900]
     print(f'\n::error file={path},line={line}::{message}', flush=True)
+
+
+def _patchright_test_evaluations_read_the_page_world():
+    """Patchright evaluates in an isolated world by default, so page-script globals such as
+    window.calls read as undefined. Test assertions (only calls made from files under tests/)
+    read the page's main world; production code keeps Patchright's isolated default."""
+    if (os.getenv('JOB_AGENT_BROWSER_DRIVER') or '').strip().casefold() != 'patchright':
+        return
+    import sys
+    from functools import wraps
+    from patchright.sync_api import Frame, Locator, Page
+    tests = str(Path(__file__).resolve().parent)
+    def main_world_for_tests(method):
+        @wraps(method)
+        def evaluate(self, *args, **kwargs):
+            if 'isolated_context' not in kwargs and str(Path(sys._getframe(1).f_code.co_filename).resolve()).startswith(tests):
+                kwargs['isolated_context'] = False
+            return method(self, *args, **kwargs)
+        return evaluate
+    for owner in (Page, Frame, Locator):
+        for name in ('evaluate', 'evaluate_handle', 'evaluate_all'):
+            if hasattr(owner, name):
+                setattr(owner, name, main_world_for_tests(getattr(owner, name)))
+
+
+_patchright_test_evaluations_read_the_page_world()

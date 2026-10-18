@@ -327,22 +327,27 @@ def context_options():
     return {"locale": locale, "extra_http_headers": {"Accept-Language": f"{locale},{language};q=0.9"}}
 
 
-def _acquire_playwright(start):
-    # Several task browsers share a worker thread. Playwright's sync dispatcher
-    # must be started once on that thread, even with separate Chrome processes.
-    if getattr(_playwright_runtime, 'instance', None) is None:
-        _playwright_runtime.instance = start()
-        _playwright_runtime.users = 0
-    _playwright_runtime.users += 1
-    return _playwright_runtime.instance
+def _acquire_playwright(start, driver='playwright'):
+    # Several task browsers share a worker thread. A driver's sync dispatcher must be
+    # started once on that thread, even with separate Chrome processes; each driver
+    # (Playwright or Patchright) keeps its own dispatcher.
+    instances = _playwright_runtime.__dict__.setdefault('instances', {})
+    users = _playwright_runtime.__dict__.setdefault('users', {})
+    if instances.get(driver) is None:
+        instances[driver] = start()
+        users[driver] = 0
+    users[driver] += 1
+    return instances[driver]
 
 
 def _release_playwright(instance):
-    if getattr(_playwright_runtime, 'instance', None) is not instance:
+    instances = getattr(_playwright_runtime, 'instances', {})
+    driver = next((name for name, value in instances.items() if value is instance), None)
+    if driver is None:
         return
-    _playwright_runtime.users -= 1
-    if _playwright_runtime.users == 0 and not getattr(_playwright_runtime, 'pooled', False):
-        _playwright_runtime.instance = None
+    _playwright_runtime.users[driver] -= 1
+    if _playwright_runtime.users[driver] == 0 and not getattr(_playwright_runtime, 'pooled', False):
+        instances.pop(driver, None)
         instance.stop()
 
 
@@ -368,17 +373,23 @@ def same_segment(shown, wanted):
 
 class ApplicationBrowser:
     def __init__(self, url, *, headless=None, session_store=None, owner_key=None, purpose='application'):
+        from .driver import driver_name, sync_api
         try:
-            from playwright.sync_api import sync_playwright
+            self.driver = driver_name()
+        except ValueError as exc:
+            raise BrowserBlocked(str(exc)) from None
+        try:
+            api = sync_api(self.driver)
         except ImportError as exc:
             # Installing Chrome does not install the Python automation package.
             # Retrying cannot repair a missing dependency in the server's venv.
             raise BrowserBlocked(
-                "Browser automation dependencies are missing or incomplete. "
+                f"Browser automation dependencies are missing or incomplete ({self.driver}). "
                 "Run python -m pip install -r requirements.txt in the same Python "
                 "environment used to start the local server, restart the server, "
-                "then try again."
+                "then try again. Set JOB_AGENT_BROWSER_DRIVER=playwright to use the default driver."
             ) from exc
+        self._driver_api = api
         self.purpose = purpose
         self.headless = True if headless is None else headless
         if purpose == 'browse':
@@ -387,7 +398,7 @@ class ApplicationBrowser:
             self.platform, self.identity = 'generic', self.url
         else:
             self.platform, self.identity, self.url = posting(url)
-        self.playwright = _acquire_playwright(lambda: sync_playwright().start())
+        self.playwright = _acquire_playwright(lambda: api.sync_playwright().start(), self.driver)
         self._closed = False
         self.browser = None
         self.option_cache = {}
@@ -425,7 +436,7 @@ class ApplicationBrowser:
             self.scope = self.page
             # ATS analytics/images can keep `load` pending after the application
             # is usable. Wait for form controls, not every third-party resource.
-            from playwright.sync_api import TimeoutError as PlaywrightTimeout
+            PlaywrightTimeout = self._driver_api.TimeoutError
             try:
                 self.page.locator('input:not([type="hidden"]), textarea, select, [role="combobox"], button, a[href]').first.wait_for(state="attached", timeout=15_000)
             except PlaywrightTimeout:
@@ -443,7 +454,7 @@ class ApplicationBrowser:
         channel = os.getenv('JOB_AGENT_BROWSER_CHANNEL','chrome')
         self._offscreen = bool(headless and hidden_mode() == 'offscreen')
         actual_headless = headless and not self._offscreen
-        key = (channel, actual_headless, self._offscreen)
+        key = (self.driver, channel, actual_headless, self._offscreen)
         pool = getattr(_playwright_runtime, 'browsers', None)
         if pool is not None and key in pool and pool[key].is_connected():
             return pool[key]
@@ -1415,8 +1426,10 @@ def stop_worker_browsers():
         except Exception:
             pass
     _playwright_runtime.browsers = {}
-    instance = getattr(_playwright_runtime, 'instance', None)
-    if instance:
-        instance.stop()
-    _playwright_runtime.instance, _playwright_runtime.users = None, 0
+    for instance in getattr(_playwright_runtime, 'instances', {}).values():
+        try:
+            instance.stop()
+        except Exception:
+            pass
+    _playwright_runtime.instances, _playwright_runtime.users = {}, {}
     _playwright_runtime.pooled = False
