@@ -31,3 +31,14 @@ def test_settled_requires_no_running_queued_or_scheduled_work(tmp_path, monkeypa
                       ({'status': 'needs_input'}, {'status': 'needs_input', 'host_inflight': {'tool': 'autofill'}})]:
         put(task, app)
         assert not meter.settled('t'), (task, app)
+
+
+def test_application_pause_does_not_hide_career_tail_and_budget_stop_is_not_human_wait(tmp_path,monkeypatch):
+    m=load_meter(tmp_path,monkeypatch)
+    state={'status':'needs_input','application_status':'needs_input','agent_reason':'page_budget','task_status':'running'}
+    assert m.time_phase(state)=='active'
+    state['task_status']='needs_input'
+    assert m.time_phase(state)=='idle'
+    assert m.time_phase(state,pending=1)=='active'
+    state['agent_reason']='needs_input'
+    assert m.time_phase(state)=='human'

@@ -35,13 +35,25 @@ def active_decision(field, state):
     if any(ref.startswith('education:') for ref in decision['sources']):
         from .education import binding
         bound=binding(field,state)
-        if not bound or bound['source_ref'] not in decision['sources']:return None
+        if decision.get('source_context') == 'question':
+            from .observation import record_identity
+            if bound or record_identity(field):return None
+        elif not bound or bound['source_ref'] not in decision['sources']:return None
     if candidate_answer(field, state["profile"], state["answers"]) != decision["original_answer"]: return None
     if any(source_value(state, ref) != value for ref, value in decision["sources"].items()): return None
     if decision["mode"] == "default" and field["value"] and not field.get("invalid"):
         from .autofill import matches
         if not matches(field, decision["value"]): return None # Preserve a later manual choice.
     return decision
+
+
+def verified_empty_decision(field, state):
+    """An explicit valid omission is complete only while the observed field is empty."""
+    decision = active_decision(field, state)
+    return bool(decision and decision.get('mode') == 'leave_empty'
+                and not field.get('required') and not field.get('invalid')
+                and field.get('kind') not in {'checkbox', 'radio', 'file', 'password'}
+                and field.get('value') in ('', None))
 
 
 def unresolved_paths(fields, state):

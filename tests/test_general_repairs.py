@@ -70,7 +70,7 @@ def test_failed_boolean_does_not_discard_other_supported_answers():
     state={'profile':{},'answers':{},'messages':[{'id':'u','role':'user','text':text}]}
     session=AgentTools(None,state,autofill=None,active=lambda:True)
     session.fields,session.observation_id=fields,'o'
-    session.verify_answers=lambda rows:[True,False]
+    session.verify_answers=lambda rows, **kwargs:[True,False]
     result=session._record_answers({'observation_id':'o','answers':[
         {'field_key':k,'message_id':'u','quote':q,'value':'Yes'} for k,q in
         [('english','I speak fluent English.'),('partners','Use my data for this application only.')]]})
@@ -79,7 +79,7 @@ def test_failed_boolean_does_not_discard_other_supported_answers():
 
 
 def test_verifier_timeout_is_provider_failure_not_bad_answer():
-    def fail(_):raise TimeoutError('private provider payload')
+    def fail(_, **kwargs):raise TimeoutError('private provider payload')
     session=SimpleNamespace(state={},browser=object(),autofill_called=False,failed_fields=set())
     host=ApplicationHost(session,SimpleNamespace(verify_answers=fail),active=lambda:True,
         reserve=lambda _:True,report=lambda *_:None,decisions=SimpleNamespace(enabled=False))

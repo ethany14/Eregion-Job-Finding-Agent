@@ -62,7 +62,7 @@ export function renderAnswerBatch({container,id,fields,drafts,suggestions={},bus
       const multiline=!options.length&&(f.kind==='textarea'||Boolean(suggestion));
       const input=el(options.length?'select':multiline?'textarea':'input');input.disabled=busy;input.id=`batch-${id}-${fields.indexOf(f)}`;label.htmlFor=input.id;
       if(options.length){const placeholder=el('option','Choose an answer');placeholder.value='';input.append(placeholder);for(const o of options){const n=el('option',o.label);n.value=o.label;input.append(n);}}
-      else{if(multiline)input.rows=6;else input.type='text';input.maxLength=Math.min(10000,Number(f.constraints?.max_length)>0?Number(f.constraints.max_length):10000);input.placeholder='Your answer';}
+      else{if(multiline)input.rows=6;else input.type=f.kind==='date'?'date':'text';input.maxLength=Math.min(10000,Number(f.constraints?.max_length)>0?Number(f.constraints.max_length):10000);input.placeholder='Your answer';}
       input.value=value??'';input.addEventListener(options.length?'change':'input',()=>{drafts.set(id,f.key,input.value);update();});row.append(input);
     }
     if(suggestion?.evidence?.length){
@@ -80,13 +80,33 @@ export function renderAnswerBatch({container,id,fields,drafts,suggestions={},bus
   container.append(form);
 }
 
+// Workday splits one date into MM / DD / YYYY boxes with the same label (Intel-34: the user typed
+// the date three times). Ask once with a date input and send its ISO date to every segment.
+export function groupDateSegments(fields){
+  const out=[],groups=new Map();
+  for(const f of fields){
+    const match=f.kind==='text'&&/^(.*)dateSection(?:Month|Day|Year)\b/i.exec(f.key);
+    if(!match){out.push(f);continue;}
+    let group=groups.get(match[1]);
+    if(!group){group={key:`date:${match[1]}`,label:f.label,kind:'date',group:f.group,segments:[]};groups.set(match[1],group);out.push(group);}
+    group.segments.push(f.key);
+  }
+  return out.map(f=>f.segments?.length===1?fields.find(x=>x.key===f.segments[0]):f);
+}
+
+function expandDateSegments(fields,answers){
+  const expanded={...answers};
+  for(const f of fields)if(f.segments&&f.key in expanded){const value=expanded[f.key];delete expanded[f.key];for(const key of f.segments)expanded[key]=value;}
+  return expanded;
+}
+
 // A question remains answerable while independent browser work continues. Its
 // request ID and frozen fields isolate drafts from later pages and polling.
 export function renderPendingQuestion({item,container,drafts,busy,reply,el,button,renderText=text=>el('p',text)}){
   const question=item.input_request;
   if(!question||item.pause_requested||item.status==='submitting')return false;
-  const fields=question.field_keys.map(key=>question.fields?.find(f=>f.key===key)||item.fields?.find(f=>f.key===key)).filter(Boolean);
-  if(fields.some(f=>!['file','password'].includes(f.kind)))renderAnswerBatch({container,id:`${item.run_id}:${question.id}`,fields,drafts,suggestions:item.answer_drafts,busy,submit:answers=>reply({request_id:question.id,answers}),el,button});
+  const fields=groupDateSegments(question.field_keys.map(key=>question.fields?.find(f=>f.key===key)||item.fields?.find(f=>f.key===key)).filter(Boolean));
+  if(fields.some(f=>!['file','password'].includes(f.kind)))renderAnswerBatch({container,id:`${item.run_id}:${question.id}`,fields,drafts,suggestions:item.answer_drafts,busy,submit:answers=>reply({request_id:question.id,answers:expandDateSegments(fields,answers)}),el,button});
   else {
     const inConversation=item.messages?.some(m=>m.role==='assistant'&&(m.id===question.id||m.text===question.text));
     if(item.career&&question.text&&!inConversation)container.append(renderText(question.text));

@@ -93,6 +93,8 @@ def test_a_leave_empty_decision_is_saved_at_once_and_lets_the_page_advance(monke
     obs = session.observe()
     with pytest.raises(BrowserBlocked, match='Field of Study'):  # undecided: the step is held
         session.execute('click_page_action', {'observation_id': obs['observation_id'], 'control_id': 'next'})
+    # Next re-observes before validating; use its fresh observation even when refused.
+    obs = session.observe()
     session.execute('resolve_field', {'observation_id': obs['observation_id'], 'field_key': key, 'value': '',
         'mode': 'leave_empty', 'source_refs': [], 'reason': 'No listed field of study represents Systems Engineering.'})
     saved = session.state['field_decisions'][key]

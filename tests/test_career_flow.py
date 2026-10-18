@@ -522,3 +522,32 @@ def test_job_card_summary_counts_requirements_and_lists_unique_gaps():
     assert summary=={'requirement_counts':{'matched':2,'partial':1,'missing':1,'needs_confirmation':1,'unknown':0,'confirmed_condition':0},
         'gaps':['Kubernetes','Go','Rust']}
     assert CareerHarness.requirement_summary({'overall_score':40})=={'requirement_counts':None,'gaps':[]}
+
+
+def test_rereading_a_waiting_application_in_one_turn_is_marked_unchanged(career,monkeypatch):
+    # Intel-31: while sign-in waited on the user, one turn polled inspect/say three times.
+    c=career
+    monkeypatch.setattr(c.harness,'application',lambda run_id,**kwargs:{'run_id':run_id,'status':'needs_input','version':7})
+    c.repository.change(c.state['task_id'],lambda s:{'application_runs':[*s['application_runs'],'run-1']})
+    assert 'unchanged_since_last_inspection' not in execute(c,'inspect_application',run_id='run-1')
+    again=execute(c,'inspect_application',run_id='run-1')
+    assert again['unchanged_since_last_inspection'] and 'Do not inspect again' in again['next']
+    c.repository.change(c.state['task_id'],lambda s:{'chat_revision':s['chat_revision']+1})
+    assert 'unchanged_since_last_inspection' not in execute(c,'inspect_application',run_id='run-1')
+
+
+def test_application_owned_questions_hold_the_parent_and_form_replies_route_back(career,monkeypatch):
+    c=career
+    child={'status':'needs_input','input_request':{'id':'q1','text':'1) Are you 18 or older?'},'agent_reason':'ask_user'}
+    monkeypatch.setattr(c.applications.repository,'get',lambda run_id:child)
+    waiting={'wait':{'kind':'application','id':'run-1'}}
+    assert c.harness.hold_wait(waiting)
+    child['agent_reason']='application_budget';assert not c.harness.hold_wait(waiting)  # a limit needs the parent
+    child.update(agent_reason='ask_user',paused_for_control=True);assert not c.harness.hold_wait(waiting)
+    child.update(paused_for_control=False,input_request=None,account_request={'origin':'https://x'});assert c.harness.hold_wait(waiting)
+    child['status']='running';assert not c.harness.hold_wait(waiting)
+    child['status']='queued';linked={'application_runs':['run-1']}
+    routed=c.harness.route_application_reply(linked,{'text':'1 Yes','context':{'delivered_to_application':'run-1'}})
+    assert routed['wait']=={'kind':'application','id':'run-1'} and routed['result']['direct']
+    assert c.harness.route_application_reply(linked,{'text':'1 Yes'}) is None
+    assert c.harness.route_application_reply({'application_runs':[]},{'text':'1 Yes','context':{'delivered_to_application':'run-1'}}) is None

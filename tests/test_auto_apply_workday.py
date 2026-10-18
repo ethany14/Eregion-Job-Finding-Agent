@@ -348,3 +348,170 @@ def test_resolve_field_ticks_a_workday_checkbox_and_the_end_date_is_no_longer_re
         assert next(f for f in fields if f['key']==box['key'])['value'] is checked and result['verified']
         assert any(f['required'] and 'To' in f['label'] for f in fields) is (not checked)
     finally:browser.close()
+
+
+@pytest.mark.parametrize('path', ['fill', 'fill_plain', 'type_field'])
+def test_year_repadding_and_composite_end_key_do_not_clear_the_month(path):
+    # A reduced mechanical failure mode, not a claimed capture of Workday internals:
+    # End switches the widget's active segment; partial deletion re-pads the year.
+    html = """<label for="w--dateSectionMonth-input">Month</label>
+    <input id="w--dateSectionMonth-input" value="8">
+    <label for="w--dateSectionYear-input">Year</label>
+    <input id="w--dateSectionYear-input" value="2008"><script>
+    const m=document.querySelector('[id*=Month]'),y=document.querySelector('[id*=Year]');
+    y.addEventListener('keydown',e=>{
+      if(e.key==='End'){e.preventDefault();m.focus();}
+      if(e.key==='Backspace'){
+        e.preventDefault();
+        if(y.selectionStart===0 && y.selectionEnd===y.value.length)y.value='';
+        else y.value=y.value.slice(0,-1).padStart(4,'0');
+      }
+    });</script>"""
+    class DateBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():route.fulfill(content_type='text/html',body=html)
+            else:route.abort()
+    browser=DateBrowser(URL)
+    try:
+        month,year=browser.observe()
+        if path=='type_field':browser.type_field(year['key'],'2026')
+        else:getattr(browser,path)(year,'2026')
+        assert [f['value'] for f in browser.observe()]==['8','2026']
+    finally:browser.close()
+
+
+def test_date_clear_detects_sibling_change_before_typing_replacement():
+    html = """<label for="w--dateSectionMonth-input">Month</label>
+    <input id="w--dateSectionMonth-input" value="8">
+    <label for="w--dateSectionYear-input">Year</label>
+    <input id="w--dateSectionYear-input" value="2008"><script>
+    const m=document.querySelector('[id*=Month]'),y=document.querySelector('[id*=Year]');
+    window.digits=0;
+    y.addEventListener('keydown',e=>{
+      if(e.key==='Backspace'){e.preventDefault();m.value='';}
+      if(/^\d$/.test(e.key))window.digits++;
+    });</script>"""
+    class DateBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():route.fulfill(content_type='text/html',body=html)
+            else:route.abort()
+    browser=DateBrowser(URL)
+    try:
+        year=browser.observe()[1]
+        with pytest.raises(BrowserBlocked,match='sibling segment'):
+            browser.type_field(year['key'],'2026')
+        assert browser.page.evaluate('window.digits')==0
+        assert browser.observe()[1]['value']=='2008'
+    finally:browser.close()
+
+
+@pytest.mark.parametrize('path', ['fill', 'fill_plain', 'type_field'])
+@pytest.mark.parametrize('initial_year', ['', '2008'])
+def test_roving_date_segment_uses_widget_navigation_not_dom_focus(path,initial_year):
+    # Adobe-18 evidence: Year tabindex=-1, Month is tab stop; typing into
+    # DOM-focused Year changed Month. This fixture models that observed contract.
+    html = """<div><label for="r--dateSectionMonth-input">Month</label>
+    <input id="r--dateSectionMonth-input" role="spinbutton" value="8">
+    <label for="r--dateSectionYear-input">Year</label>
+    <input id="r--dateSectionYear-input" role="spinbutton" tabindex="-1" value="YEAR_VALUE"></div>
+    <script>
+    const parts=[...document.querySelectorAll('input')];let active=0;
+    function activate(i){active=i;parts.forEach((p,j)=>p.tabIndex=j===i?0:-1);parts[i].focus();}
+    document.querySelector('div').addEventListener('keydown',e=>{
+      if(e.key==='ArrowRight'){e.preventDefault();activate(Math.min(1,active+1));return;}
+      if(e.key==='ArrowLeft'){e.preventDefault();activate(Math.max(0,active-1));return;}
+      const target=parts[active];
+      if(e.key==='Backspace'){e.preventDefault();target.value='';return;}
+      if(/^\d$/.test(e.key)){e.preventDefault();target.value+=e.key;}
+    });</script>""".replace('YEAR_VALUE',initial_year)
+    class DateBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():route.fulfill(content_type='text/html',body=html)
+            else:route.abort()
+    browser=DateBrowser(URL)
+    try:
+        month,year=browser.observe()
+        if path=='type_field':browser.type_field(year['key'],'2026')
+        else:getattr(browser,path)(year,'2026')
+        assert [f['value'] for f in browser.observe()]==['8','2026']
+        browser.type_field(month['key'],'07')
+        assert [f['value'] for f in browser.observe()]==['07','2026']
+    finally:browser.close()
+
+
+def test_host_reads_closed_select_one_options_and_leaves_no_menu_open():
+    # Adobe-22: the model opened each closed "Select One" question in its own round. The host now
+    # reads them once on page entry; nothing is chosen and every menu is closed afterwards.
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.runner import ApplicationHost
+    class SelectBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_select_one.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=SelectBrowser(URL)
+    try:
+        tools=AgentTools(browser,{'profile':{},'answers':{}},autofill=lambda:{},active=lambda:True)
+        tools.observe()
+        questions=[f for f in tools.fields if f['kind']=='combobox']
+        assert len(questions)==2 and all(not f['options'] and not f['value'] for f in questions)
+        host=ApplicationHost(tools,None,active=lambda:True,reserve=lambda kind:True,report=lambda *a:None)
+        host._read_closed_options(tools)
+        assert all([o['label'] for o in tools.observed_options[f['key']]][-2:]==['Yes','No'] for f in questions)
+        assert browser.page.locator('[role="listbox"]').count()==0
+        assert browser.page.evaluate('window.chosen')==0
+        shown={f['key']:[o['label'] for o in f['options']] for f in tools.observe()['fields'] if f['kind']=='combobox'}
+        assert all('Yes' in labels and 'No' in labels for labels in shown.values())
+    finally:browser.close()
+
+
+def test_choosing_a_searched_school_reopens_the_picker_with_the_search_text():
+    # Intel apply test (2026-10-17): search_options found "University of Wisconsin-Madison", but
+    # choose_option reopened the closed picker without text, saw "No Items." and refused.
+    class SchoolBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_search_school.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=SchoolBrowser(URL)
+    try:
+        school=next(f for f in browser.observe() if 'school' in f['key'])
+        found=[o['label'] for o in browser.inspect_options(school['key'],query='Wisconsin')]
+        assert 'University of Wisconsin-Madison' in found
+        browser.page.keyboard.press('Tab')                       # focus leaves; the menu closes and clears
+        browser.page.wait_for_timeout(100)
+        assert browser.page.locator('[role="listbox"]').count()==0
+        browser.choose_option(school['key'],'University of Wisconsin-Madison')
+        assert browser.page.evaluate('window.selected')=='University of Wisconsin-Madison'
+        with pytest.raises(BrowserBlocked):
+            browser.choose_option(school['key'],'University of Nowhere')   # still exact-match only
+    finally:browser.close()
+
+
+def test_confirm_statement_checkbox_carries_the_statement_and_the_check_sees_it():
+    # Adobe-27: the consent box is labelled only "Check this box to confirm the statement above";
+    # the answer check could not connect the user's consent to it and refused three times.
+    from eregion.runtime.auto_apply.agent import AgentTools
+    class TermsBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_terms_consent.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=TermsBrowser(URL)
+    try:
+        fields={f['name']:f for f in browser.observe()}
+        terms=fields['acceptTermsAndAgreements']
+        assert terms['label'].startswith('Check this box to confirm the statement above')
+        assert "Adobe's Recruitment and Applicant Privacy Policy" in terms['help']
+        assert fields['newsletter']['help']=='Optional job alert emails.'      # aria-describedby still wins
+        state={'profile':{},'answers':{},'chat_revision':1,'messages':[{'id':'m1','role':'user',
+            'text':'yes, tick the consent for the Adobe terms checkbox'}]}
+        tools=AgentTools(browser,state,autofill=lambda:{},active=lambda:True);tools.observe()
+        seen=[]
+        tools.verify_answers=lambda items,context=None: seen.append((items,context)) or [True]*len(items)
+        tools.execute('record_answers',{'observation_id':tools.observation_id,'answers':[{'field_key':terms['key'],
+            'message_id':'m1','quote':'yes, tick the consent','value':'Yes'}]})
+        question=seen[0][0][0]['question']
+        assert 'confirm the statement above' in question and 'Applicant Privacy Policy' in question
+        assert any('Applicant Privacy Policy' in q.get('help','') for q in seen[0][1]['questions'])
+    finally:browser.close()

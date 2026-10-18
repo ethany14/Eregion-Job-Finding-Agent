@@ -382,3 +382,39 @@ def test_a_message_during_a_pause_is_kept_and_answered_with_the_pause_state(data
         assert any(m['role']=='user' and m['id']=='held-1' for m in state['messages'])
         assert 'Paused' in state['messages'][-1]['text'] and state['messages'][-1]['role']=='assistant'
     finally:release.set();loop.close()
+
+
+def test_a_capability_asking_the_user_itself_keeps_the_wait_without_a_model_turn(database):
+    # Intel-32: each application question woke the parent to re-ask it (three calls each).
+    class Holding(Harness):
+        held=True
+        def hold_wait(self,state):return self.held
+    repo=TaskRepository(database.session_factory);harness=Holding()
+    task,_=repo.create('Wait for a capability.','hold-wait')
+    repo.change(task['task_id'],status='waiting',wait={'kind':'application','id':'child','token':1})
+    model=ToolModel(lambda _:('finish_task',{'text':'The application is ready for review.'}))
+    loop=TaskLoop(TaskRepository(database.session_factory),harness,model_factory=lambda:model)
+    try:
+        harness.version,harness.ready=2,True
+        time.sleep(1.2)
+        state=repo.get(task['task_id'])
+        assert model.calls==0 and state['status']=='waiting' and state['wait']['token']==2
+        harness.held,harness.version=False,3
+        assert settled(repo,task['task_id'],('completed',))['status']=='completed' and model.calls==1
+    finally:loop.close()
+
+
+def test_a_reply_routed_to_its_capability_waits_without_a_model_turn(database):
+    class Routing(Harness):
+        def route_user_control(self,state,message):
+            return {'tool':'reply_application','result':{'reply_delivered':True},'wait':{'kind':'application','id':'child'}}
+    repo=TaskRepository(database.session_factory)
+    model=ToolModel(lambda _:('finish_task',{'text':'unused'}))
+    loop=TaskLoop(repo,Routing(),model_factory=lambda:model)
+    try:
+        task,_=repo.create('Apply.','route-wait')
+        state=loop.chat(task['task_id'],'1 Yes, 2 No','m1')
+        assert state['status']=='waiting' and state['wait']=={'kind':'application','id':'child','token':1}
+        assert state['history'][-1]['tool']=='reply_application'
+        time.sleep(.6);assert model.calls==0
+    finally:loop.close()

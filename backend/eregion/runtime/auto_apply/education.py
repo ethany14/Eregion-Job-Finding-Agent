@@ -33,19 +33,21 @@ def date_parts(text, *, confirmed_quote=""):
     # A graduation status describes the date; it is not part of its calendar
     # value. Project a local copy only, leaving the source fact untouched.
     calendar_text=re.sub(r'\s*\((?:expected|anticipated|projected|planned|completed|in progress)\)\s*$', '', text)
-    iso=re.fullmatch(r'((?:19|20)\d{2})[-/](0?[1-9]|1[0-2])',calendar_text)
+    iso=re.fullmatch(r'((?:19|20)\d{2})[-/.](0?[1-9]|1[0-2])',calendar_text)
     reverse=re.fullmatch(r'(0?[1-9]|1[0-2])[-/]((?:19|20)\d{2})',calendar_text)
     if iso:result.update(year=iso[1],month=str(int(iso[2])))
     if reverse:result.update(year=reverse[2],month=str(int(reverse[1])))
     # Full ISO dates are unambiguous. Slash dates require either an
     # unambiguous day (>12) or a matching, explicitly written calendar date.
-    full_iso = re.fullmatch(r'((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})', calendar_text)
+    # Year-first dates read year-month-day with one consistent separator: 2026-10-17,
+    # 2026/10/17 or 2026.10.17 (Intel-33 signature date).
+    full_iso = re.fullmatch(r'((?:19|20)\d{2})([-/.])(\d{1,2})\2(\d{1,2})', calendar_text)
     numeric = re.fullmatch(r'(\d{1,2})/(\d{1,2})/((?:19|20)\d{2})', text)
-    if re.match(r'^(?:19|20)\d{2}[-/]\d{1,2}',calendar_text) and not (iso or full_iso):
+    if re.match(r'^(?:19|20)\d{2}[-/.]\d{1,2}',calendar_text) and not (iso or full_iso):
         result.pop('month',None)
         return result # Unrecognized alternatives must not turn into a different date.
     candidates = []
-    if full_iso:candidates.append(tuple(map(int, full_iso.groups())))
+    if full_iso:candidates.append(tuple(map(int, full_iso.group(1, 3, 4))))
     if numeric:
         first, second, year = map(int, numeric.groups())
         if second > 12 or first == second:candidates.append((year, first, second))
@@ -82,6 +84,11 @@ def format_date(field, value, part=None):
     # A cited month component ("experience:<id>:start_month") is already a parsed month number.
     if part=='month' and re.fullmatch(r'(0?[1-9]|1[0-2])',value.strip()):
         return f"{int(value):02d}" if template=='MM' else None
+    # A day or year answer recorded for this very segment (Intel-33: "17" for the DD box).
+    if part=='day' and re.fullmatch(r'(0?[1-9]|[12]\d|3[01])',value.strip()):
+        return f"{int(value):02d}" if template=='DD' else None
+    if part=='year' and re.fullmatch(r'(?:19|20)\d{2}',value.strip()):
+        return value.strip() if template=='YYYY' else None
     parts=date_parts(value,confirmed_quote=value)
     # A single Workday segment needs only its own part ("Aug" -> MM, "2026" -> YYYY).
     if template=='YYYY':return parts['year'] if 'year' in parts else None
@@ -89,8 +96,8 @@ def format_date(field, value, part=None):
     if 'year' not in parts or 'month' not in parts:return None
     year,month=int(parts['year']),int(parts['month'])
     day=None
-    iso=re.search(r'(?<!\d)((?:19|20)\d{2})-(\d{1,2})-(\d{1,2})(?!\d)',value)
-    if iso:day=int(iso[3])
+    iso=re.search(r'(?<!\d)((?:19|20)\d{2})([-/.])(\d{1,2})\2(\d{1,2})(?!\d)',value)
+    if iso:day=int(iso[4])
     numeric=re.fullmatch(r'(\d{1,2})/(\d{1,2})/((?:19|20)\d{2})',value.strip())
     if numeric:
         first,second,_=map(int,numeric.groups())
@@ -161,7 +168,7 @@ def new_browser_bindings(state):
     changes = {name:{key:value for key,value in state.get(name, {}).items() if key not in stale}
         for name in ('answers','answer_sources','field_decisions','option_paths')}
     return {**changes, 'education_bindings':{}, 'experience_bindings':{}, 'autofill_scope':None, 'autofill_scope_page':None, 'observation_scope':None, 'observation_scope_page':None, 'experience_answer_overrides':work_overrides, 'education_answer_overrides':overrides,
-        'review_fields':[], 'review_digest':None}
+        'review_fields':[], 'review_digest':None, 'record_completion':{}, 'observation_structure':None}
 
 
 
@@ -215,8 +222,9 @@ def gaps(state,fields,page,*,final=False):
             for r in records if r['id'] not in represented)
     # These columns commonly remain optional even when the resume supplies them.
     # The model assigns their record/component; they must not be silently skipped.
+    from .decisions import verified_empty_decision
     for field in fields:
-        if binding(field,state):continue
+        if binding(field,state) or verified_empty_decision(field,state):continue
         label=field.get('label','').lower()
         # Veeva: "...average grade (GPA) for your last/current degree" asks for a GPA, and
         # "If you selected Other, please indicate your field of study" is a follow-up; neither

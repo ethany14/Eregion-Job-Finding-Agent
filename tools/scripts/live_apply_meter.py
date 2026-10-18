@@ -115,13 +115,25 @@ def stop_server():
     return sorted(pids)
 
 
+def time_phase(state, pending=0):
+    # The public status may come from the paused application while career is
+    # still wrapping up. Those provider calls are active work, not human wait.
+    if pending or state.get('task_status', state.get('status')) in {'running', 'queued', 'waiting'}:
+        return 'active'
+    if state.get('application_status') == 'awaiting_review' or state.get('status') in {'completed', 'cancelled', 'failed'}:
+        return 'idle'
+    if state.get('agent_reason') in {'page_budget', 'application_budget', 'agent_limit'}:
+        return 'idle'
+    return 'human' if state.get('status') == 'needs_input' else 'active'
+
+
 def main(task_id):
-    active = human = gap = 0.0
+    active = human = gap = idle_seconds = 0.0
     try:
         with open(LOG, encoding='utf-8') as log:
             previous = json.loads(log.readlines()[-1])
         active, human = float(previous['active_s']), float(previous['human_wait_s'])
-        gap = float(previous.get('gap_s', 0))
+        gap = float(previous.get('gap_s', 0)); idle_seconds = float(previous.get('idle_s', 0))
     except (OSError, IndexError, KeyError, ValueError):
         pass
     last = time.monotonic()
@@ -131,17 +143,21 @@ def main(task_id):
         now = time.monotonic(); step = now - last; last = now
         state = json.load(urllib.request.urlopen(f'{BASE}/api/career/tasks/{task_id}', timeout=30))
         status, app = state['status'], state.get('application_status')
-        waiting_user = status == 'needs_input'
+        usage = ledger(task_id)
+        phase = time_phase(state, usage['pending_attempts'])
+        waiting_user = phase == 'human'
         # apply-test-06: one ~1 h step (machine asleep) was booked as human wait.
         if step > POLL_GAP:
             gap += step
         elif waiting_user:
             human += step
+        elif phase == 'idle':
+            idle_seconds += step
         else:
             active += step
         collect(task_id, state)
         record = {'t': time.strftime('%H:%M:%S'), 'status': status, 'application': app,
-                  'active_s': round(active), 'human_wait_s': round(human), 'gap_s': round(gap), **ledger(task_id),
+                  'active_s': round(active), 'human_wait_s': round(human), 'gap_s': round(gap), 'idle_s': round(idle_seconds), **usage,
                   'message': (state.get('message') or '')[:120]}
         with open(LOG, 'a', encoding='utf-8') as log:
             log.write(json.dumps(record) + '\n')
@@ -153,7 +169,7 @@ def main(task_id):
         # the meter had already exited. Stop only after three quiet polls without ledger activity.
         idle = settled(task_id) and record['pending_attempts'] == 0
         record['settled'] = idle
-        quiet = quiet + 1 if waiting_user and idle and record['provider_attempts'] == previous_attempts else 0
+        quiet = quiet + 1 if status == 'needs_input' and idle and record['provider_attempts'] == previous_attempts else 0
         previous_attempts = record['provider_attempts']
         if quiet >= 3 or status in {'completed', 'cancelled', 'failed'} or app in {'awaiting_review', 'cancelled', 'failed'}:
             print('STOP', json.dumps(record))

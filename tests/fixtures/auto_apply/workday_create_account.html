@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Workday Create Account (Intel-31, 2026-10-17), reduced. The visible "Create Account" control is an
+     overlay div outside the <form>; the form's own submit button is aria-hidden. "Sign In" appears in
+     the page header and again below the form. "beecatcher" is a 1x0 px robot trap input. -->
+<html><body>
+<div id="app">
+  <div data-automation-id="legalNotice"><button type="submit">Decline</button><button type="submit">Accept Cookies</button></div>
+  <header>
+    <a href="#home" data-automation-id="logoLink" aria-label="Intel Careers"></a>
+    <button type="submit" data-automation-id="utilityButtonSignIn">Sign In</button>
+    <nav><button type="submit">Life at Intel</button><button type="submit">Search for Jobs</button></nav>
+  </header>
+  <main>
+    <div data-automation-id="applyFlowPage">
+      <button type="button" role="link" data-automation-id="backToJobPosting">Back to Job Posting</button>
+      <h2 data-automation-id="pageHeaderTitle">Create Account</h2>
+      <div id="account">
+        <form id="create" onsubmit="event.preventDefault()" style="position:relative">
+          <label for="input-4">Email Address*</label><input id="input-4" type="text" data-automation-id="email">
+          <label for="input-5">Password*</label><input id="input-5" type="password" data-automation-id="password">
+          <label for="input-6">Verify New Password*</label><input id="input-6" type="password" data-automation-id="verifyPassword">
+          <button type="submit" aria-hidden="true" tabindex="-2" data-automation-id="createAccountSubmitButton">Create Account</button>
+        </form>
+        <div role="button" tabindex="0" data-automation-id="click_filter" aria-label="Create Account"
+             onclick="window.created={email:document.getElementById('input-4').value,
+               filled:[...document.querySelectorAll('#create input[type=password]')].every(e=>e.value.length>0)};
+               document.querySelector('[data-automation-id=applyFlowPage]').innerHTML='<h2>Autofill with Resume</h2><p>Upload a file</p>'">Create Account</div>
+        <p>Already have an account?</p>
+        <button type="submit" data-automation-id="signInLink" onclick="window.switched=(window.switched||0)+1;
+          document.querySelector('h2').textContent='Sign In';
+          document.getElementById('account').innerHTML=`<form id='signin' onsubmit='event.preventDefault()'>
+            <label for='input-7'>Email Address*</label><input id='input-7' type='text' data-automation-id='email'>
+            <label for='input-8'>Password*</label><input id='input-8' type='password' data-automation-id='password'>
+            <button type='submit' aria-hidden='true' tabindex='-2' data-automation-id='signInSubmitButton'>Sign In</button></form>
+            <div role='button' tabindex='0' data-automation-id='click_filter' aria-label='Sign In'
+              onclick='window.signedIn={email:document.getElementById(&quot;input-7&quot;).value,
+                filled:document.getElementById(&quot;input-8&quot;).value.length>0};
+                document.querySelector(&quot;[data-automation-id=applyFlowPage]&quot;).innerHTML=&quot;<h2>Autofill with Resume</h2>&quot;'>Sign In</div>
+            <button type='submit' data-automation-id='createAccountLink'>Create Account</button>
+            <button type='submit' data-automation-id='forgotPasswordLink'>Forgot your password?</button>`">Sign In</button>
+        <button type="submit" data-automation-id="forgotPasswordLink">Forgot your password?</button>
+        <input type="text" name="website" aria-label="Enter website. This input is for robots only, do not enter if you're human."
+               data-automation-id="beecatcher" style="width:1px;height:0;padding:0;border:0;margin:0">
+      </div>
+    </div>
+  </main>
+  <footer><a href="#privacy">Intel Privacy Notice &amp; Legal Statements</a></footer>
+</div>
+</body></html>

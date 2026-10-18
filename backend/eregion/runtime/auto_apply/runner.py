@@ -18,8 +18,7 @@ from .prompt import SYSTEM
 # actions on a field (reset by each user message), optional fields are left empty and
 # required ones go back to the user.
 FIELD_ATTEMPT_LIMIT = 4
-# Adobe Workday spent 523 model calls, most on one page, because the step budget resets on
-# every message. One page gets this many calls per user message, then the user is asked.
+# Per business step across replies, pauses and revisits; the task ledger is the outer cap.
 PAGE_MODEL_CALL_LIMIT = 30
 # Refusals by the progress guards: the action was not executed.
 PROTECTIVE = {'repeated_action', 'field_attempt_limit', 'unchanged_failure'}
@@ -30,12 +29,19 @@ logger = logging.getLogger(__name__)
 ATTEMPT_TARGET_VERSION = 3
 
 
-def step_marker(page):
-    """The step a multi-step form reports ("current step 3 of 7"). Adobe re-test 08: every Workday
-    step shares one url and heading, so the page budget counted several steps as one page."""
+from .steps import step_marker, budget_record
+
+
+def undecided_optional_question(fields, state):
+    """An empty optional Workday questionnaire question with no saved model decision.
+    Questionnaire replay 02: the host advanced past the optional PhD question, so whether to
+    answer or omit it was never the model's decision. Structure only (the questionnaire id)."""
     import re
-    match = re.search(r'current step (\d+) of (\d+)', str((page or {}).get('text') or ''), re.I)
-    return f'{match[1]}/{match[2]}' if match else None
+    from .decisions import active_decision
+    return any(re.search(r'questionnaire--', str(f.get('dom_id') or ''), re.I) and not f.get('required')
+               and f['kind'] not in {'file', 'password'} and f.get('value') in ('', None, [])
+               and f['key'] not in state.get('answers', {}) and active_decision(f, state) is None
+               for f in fields)
 
 
 def record_page(fields, state, page):
@@ -88,7 +94,7 @@ class ApplicationHost:
         self.session, self.model, self.browser = session, model, session.browser
         self.is_active, self.reserve, self.report = active, reserve, report
         self.refresh, self.communicate, self.checkpoint = refresh, communicate, checkpoint
-        self.requests, self.deadline = ModelRequests(), time.monotonic() + 180
+        self.requests, self.deadline = ModelRequests(), time.monotonic() + max(180, getattr(model, "timeout", 45) + 5)
         self.history = list(session.state.get('decision_history', []))
         self.pending, self.started, self.fingerprint = {}, None, None
         self.context_archive = None
@@ -133,7 +139,7 @@ class ApplicationHost:
         self.pending.clear()
 
     def observe(self):
-        from .agent import HIDDEN_TOOLS, TOOLS, VISUAL_TOOLS
+        from .agent import HIDDEN_TOOLS, TOOLS, VISUAL_TOOLS, BROWSER_NAMES
         self.fingerprint, self.started = None, None
         snapshot = self._prepare_page()
         check = getattr(self.browser, 'verification_barrier', None)
@@ -174,7 +180,15 @@ class ApplicationHost:
             desired_answer(f,self.session.state) is not None and not matches(f,desired_answer(f,self.session.state))
             for f in self.session.fields if f['kind']!='file')
         snapshot['autofill_available']=fill_available
+        _, step_bucket = budget_record(self.session.state, self.session.page_context)
+        snapshot['step_budget'] = {**step_bucket, 'limit': PAGE_MODEL_CALL_LIMIT,
+            'remaining': max(0, PAGE_MODEL_CALL_LIMIT - step_bucket['count']),
+            'identity_confirmed': step_marker(self.session.page_context) is not None}
+        browser_expanded = bool(self.session.state.get('browser_tools_requested')) or (snapshot.get('page') or {}).get('stage') != 'application'
+        snapshot['browser_tools'] = {'expanded':browser_expanded, 'expand_with':'enable_browser_tools'}
         tools = [item for item in TOOLS if item['function']['name'] not in HIDDEN_TOOLS
+                 and (browser_expanded or item['function']['name'] not in BROWSER_NAMES)
+                 and (not browser_expanded or item['function']['name'] != 'enable_browser_tools')
                  and (self.session.state.get('visual_fallback') or item['function']['name'] not in VISUAL_TOOLS)
                  and (fill_available or item['function']['name']!='autofill')]
         if self.host_autofill is not None:
@@ -182,13 +196,20 @@ class ApplicationHost:
         return Turn(SYSTEM, snapshot, tools, snapshot.get('chat_revision', 0), images,
             batchable=frozenset({'type_from_source', 'choose_option', 'resolve_field', 'record_answers',
                 'use_remembered_answer', 'bind_document', 'bind_education', 'bind_experience', 'draft_answer', 'say',
-                'update_plan', 'search_options', 'inspect_field', 'autofill', 'click_page_action'}),
+                'update_plan', 'plan_records', 'search_options', 'inspect_field', 'autofill', 'click_page_action'}),
             compatibility_tools=[t for t in TOOLS if t['function']['name'] in {'observe', 'use_chat_answer'} | ({'autofill'} if not fill_available else set())])
+
+    def expand_call(self, call, turn):
+        if call['name'] == 'apply_record':
+            from .record_actions import expand
+            return expand(self.session, call)
+        return None
 
     def validate_batch(self, calls, turn):
         seen, bound = set(), set()
         observed = {f['key'] for f in self.session.fields}
-        binds = {'bind_education', 'bind_experience', 'bind_document'}
+        # record_answers saves evidence only (no page write), like a binding.
+        binds = {'bind_education', 'bind_experience', 'bind_document', 'record_answers'}
         # Experience-page test: binding a row, saving its checkbox decision and filling it took
         # separate rounds. A field may be bound and then acted on once in the same turn, and a
         # scoped autofill may close the batch for fields no other call in it writes.
@@ -228,6 +249,45 @@ class ApplicationHost:
                 if key in target or (call['name'] in binds and key in seen):
                     raise ToolArgumentsError('Batch rejected: bind a field at most once and act on it at most once per turn, binding first.')
                 target.add(key)
+
+    def _read_closed_options(self, session, *, limit=8, seconds=12):
+        """Adobe-22: a closed Workday "Select One" control exposes no options, so the model spent
+        one round per question opening each before it could answer. On page entry the host reads
+        them once (open, read, close; nothing chosen or typed) and the observation shows them."""
+        inspect = getattr(self.browser, 'inspect_options', None)
+        if not callable(inspect):
+            return
+        menu_closer, escape = getattr(self.browser, '_close_other_menu', None), getattr(self.browser, 'press_key', None)
+        def close(key, _):
+            # Workday prompts ignore Escape and close on Tab; the browser's own closer does both
+            # and verifies the menu is gone. Fakes/replays only take a key press.
+            if callable(menu_closer):
+                menu_closer(None)
+            elif callable(escape):
+                escape(key, 'Escape')
+        deadline, read = time.monotonic() + seconds, 0
+        for field in list(session.fields):
+            if read >= limit or time.monotonic() >= deadline or not self.active():
+                break
+            constraints = field.get('constraints')
+            # Only fixed "Select One" buttons. A searchable picker (placeholder "Search",
+            # autocomplete) lists an unfiltered page when opened without a query, which is not
+            # evidence of its options; unknown control shapes are left to the model.
+            plain_button = isinstance(constraints, dict) and not constraints.get('placeholder') and not constraints.get('autocomplete')
+            if (field['kind'] != 'combobox' or not plain_button or field.get('value') or field.get('options')
+                    or field['key'] in session.observed_options or field['key'] in session.state.get('abandoned_fields', [])):
+                continue
+            try:
+                options = inspect(field['key'])
+            except Exception:
+                continue
+            finally:
+                if callable(close):
+                    try:close(field['key'], 'Escape')
+                    except Exception:pass
+            if options:
+                session.observed_options[field['key']] = options
+                read += 1
 
     def _page_fingerprint(self):
         page = self.session.page_context or {}
@@ -284,6 +344,7 @@ class ApplicationHost:
                 finally:
                     session._host_literal_autofill = False
                 self.host_autofill = {k: result.get(k, {} if k == 'failed' else []) for k in ('filled', 'failed', 'historical_failure_count', 'completion_level', 'scope_note')}
+                self._read_closed_options(session)
                 snapshot = self._scan()
                 page = session.page_context or {}
             if session.state.get('input_request'):
@@ -303,10 +364,10 @@ class ApplicationHost:
                 except BrowserBlocked:
                     return snapshot
                 raise LoopStop('ready', chat_revision=snapshot.get('chat_revision', 0))
-            if record_page(session.fields, session.state, page):
+            if record_page(session.fields, session.state, page) or undecided_optional_question(session.fields, session.state):
                 # Adobe re-test 08: the host advanced My Experience with one of two jobs and one of
                 # two schools; empty required fields were its only completeness test. Whether a
-                # record section is complete is the model's call (record_status shows it).
+                # record section is complete is the model's call (record_coverage shows it).
                 return snapshot
             controls = [c for c in page.get('controls', []) if c['kind'] == 'next' and not c.get('disabled')]
             if len(controls) != 1 or fingerprint in self.advanced_pages:
@@ -325,19 +386,20 @@ class ApplicationHost:
 
     def invoke(self, messages, tools, turn):
         page = self.session.page_context or {}
-        page_id = [page.get('url'), page.get('heading'), step_marker(page), turn.revision]
-        record = self.session.state.get('page_calls') or {}
-        if record.get('page') != page_id:
-            record = {'page': page_id, 'count': 0}
+        budgets, record = budget_record(self.session.state, page)
         if record['count'] >= PAGE_MODEL_CALL_LIMIT:
             raise LoopStop('page_budget')
         # W3: a request that cannot finish before the slice ends is cut off and reported as a
         # model timeout. Yield (a normal, saved stop) instead of starting it.
-        if self.deadline - time.monotonic() < self.expected_model_seconds():
+        # Recent median is not an upper bound: a slower valid request must still have
+        # its configured timeout window. Yield before reserving/billing, not midway.
+        if self.deadline - time.monotonic() < max(self.expected_model_seconds(), getattr(self.model, 'timeout', 45) + 2):
             raise LoopStop('yielded', chat_revision=turn.revision)
         if not self.reserve('model'):
             raise LoopStop('agent_limit')
         record['count'] += 1
+        budgets['counts'][budgets['active']] = record['count']
+        self.session.state['step_budgets'] = self.pending['step_budgets'] = budgets
         self.session.state['page_calls'] = self.pending['page_calls'] = record
         started = time.monotonic()
         try:
@@ -377,17 +439,20 @@ class ApplicationHost:
             metadata['provider_seconds'] = metadata.pop('seconds')
             self.timed('fast_options', started, failed=result.status != 'ok', **metadata)
 
-    def verify_answers(self, answers):
+    def verify_answers(self, answers, *, context=None):
         if not hasattr(self.model, 'verify_answers'):
             raise BrowserBlocked('Semantic answer verification is unavailable; use an explicit field reply.', code='verification_unavailable')
+        timeout = min(90, getattr(self.model, 'timeout', 45))
+        if self.deadline-time.monotonic() < timeout+2:
+            raise LoopStop('yielded', stage='answer_verification')
         if not self.reserve('model'):
             raise LoopStop('agent_limit', stage='answer_verification')
         started, revision = time.monotonic(), self.revision()
         failed, error_code = True, None
         try:
-            result = self.requests.call(lambda: self.model.verify_answers(answers),
+            result = self.requests.call(lambda: self.model.verify_answers(answers, context=context),
                 active=lambda: self.active() and self.revision() == revision,
-                timeout=min(47, max(.01, self.deadline - time.monotonic())), pump=getattr(self.browser, 'pump', None))
+                timeout=timeout+2, pump=getattr(self.browser, 'pump', None))
             failed = False
             return result
         except ModelInterrupted as exc:
@@ -427,6 +492,8 @@ class ApplicationHost:
                     'incomplete': str(exc)}
 
     def execute(self, call, turn):
+        if call['name'] == 'apply_record':
+            raise ToolArgumentsError('Use apply_record alone in a reply; its actions must be expanded by AgentLoop.')
         name, args = call['name'], call['args']
         if not self.active() or self.revision() != turn.revision:
             raise LoopStop('steered', chat_revision=turn.revision)
@@ -460,6 +527,12 @@ class ApplicationHost:
         # decision, reported at review (W6 review: the count must not decide for it).
         if (field is not None and name not in NON_FIELD_ACTIONS and name != 'resolve_field'
                 and self.attempts(field) >= FIELD_ATTEMPT_LIMIT):
+            from .decisions import verified_empty_decision, active_decision
+            if verified_empty_decision(field, session.state):
+                return {**action_failure('field_attempt_limit', 'Not executed: this optional field already has your saved '
+                    'leave_empty decision and the current page verifies it is empty. Further searching is not required. '
+                    'Keep this decision and address remaining blockers or request the next page; reconsider only with new evidence.'),
+                    'abandoned': key, 'resolved': True, 'saved_decision': active_decision(field, session.state)}
             if field.get('required'):
                 raise LoopStop('no_progress', field_keys=[key])
             return {**action_failure('field_attempt_limit', f'{FIELD_ATTEMPT_LIMIT} attempts with this target did not fill the field, '
@@ -558,8 +631,15 @@ class ApplicationHost:
             tried += [k for k, d in (outcome.get('failure_details') or {}).items() if d.get('error_code') != 'unchanged_failure']
         for k in dict.fromkeys(tried):
             field = current.get(k)
-            if field is not None and (not field.get('value') or field.get('invalid')):
-                self.count_attempt(field)
+            if field is not None:
+                from .autofill import desired_answer, matches
+                from .decisions import verified_empty_decision
+                desired = desired_answer(field, self.session.state)
+                resolved = verified_empty_decision(field, self.session.state) or (desired is not None and matches(field, desired))
+                # A preselected value or a search query is not a resolved mapping.
+                # Count operations that leave the field unresolved, even when nonempty.
+                if not resolved:
+                    self.count_attempt(field)
         self.session._cached_fields = (time.monotonic(), fields)
         self.report(fields, name, args.get('field_key'), 'failed' if failed else 'completed')
         if name == 'ready_for_review' and 'error' not in outcome:

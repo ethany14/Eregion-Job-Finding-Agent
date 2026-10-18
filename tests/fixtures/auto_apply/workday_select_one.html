@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Workday questionnaire "Select One" dropdowns (Adobe-22 Application Questions 1 of 2), reduced:
+     the closed button exposes no options; the menu opens on click, ignores Escape and closes when
+     focus leaves the button. Labels are the observed question text; nothing here is an answer. -->
+<html><body>
+<h1>Application Questions 1 of 2</h1>
+<div data-automation-id="formField-q1">
+  <label id="q1-label">Are you willing to submit a background check during the hiring process?*</label>
+  <button id="primaryQuestionnaire--q1" aria-haspopup="listbox" aria-labelledby="q1-label" aria-required="true" type="button" value="">Select One</button>
+</div>
+<div data-automation-id="formField-q2">
+  <label id="q2-label">Will you now or in the future require sponsorship for employment visa status?*</label>
+  <button id="primaryQuestionnaire--q2" aria-haspopup="listbox" aria-labelledby="q2-label" aria-required="true" type="button" value="">Select One</button>
+</div>
+<button type="button" id="next" onclick="window.nextCount++; document.body.innerHTML='<h1>Application Questions 2 of 2</h1>'">Next</button>
+<script>
+window.chosen = 0; window.nextCount = 0;
+for (const button of document.querySelectorAll('button[aria-haspopup="listbox"]')) {
+  button.addEventListener('click', () => {
+    document.getElementById('menu')?.remove();
+    const menu = document.createElement('ul');
+    menu.id = 'menu'; menu.setAttribute('role', 'listbox');
+    for (const label of ['Select One', 'Yes', 'No']) {
+      const item = document.createElement('li');
+      item.setAttribute('role', 'option'); item.textContent = label;
+      item.addEventListener('click', () => { button.textContent = label; window.chosen++; menu.remove(); });
+      menu.append(item);
+    }
+    document.body.append(menu);
+  });
+  button.addEventListener('keydown', e => { if (e.key === 'Escape') e.preventDefault(); });   // ignored, like Workday
+  button.addEventListener('blur', () => setTimeout(() => document.getElementById('menu')?.remove(), 0));
+}
+</script>
+</body></html>

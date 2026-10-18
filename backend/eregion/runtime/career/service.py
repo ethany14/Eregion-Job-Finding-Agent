@@ -203,8 +203,10 @@ class CareerService:
         latest_user = next((m for m in reversed(child['messages']) if m['role']=='user'),None)
         event_id = (latest_user['id'] if latest_user and ('answers' in clean or action=='reply')
             else f'application-action:{run_id}:{action}:{clean.get("expected_version",0)}')
-        self.chat(task_id,latest_user['text'] if latest_user and ('answers' in clean or action=='reply')
-            else 'I confirmed submission using the review button.' if clean.get('confirm_submit') else 'Continue this application.',event_id)
+        direct = latest_user and ('answers' in clean or action=='reply')
+        self.chat(task_id,latest_user['text'] if direct
+            else 'I confirmed submission using the review button.' if clean.get('confirm_submit') else 'Continue this application.',event_id,
+            context={'delivered_to_application':run_id} if direct else None)
         return self.view(task_id)
 
     def set_browser_visible(self,task_id,visible,version):

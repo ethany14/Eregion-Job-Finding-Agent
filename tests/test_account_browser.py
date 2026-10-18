@@ -155,3 +155,36 @@ def test_password_only_frame_on_existing_site_is_detected(browser):
     assert ctx['origin']=='https://example.wd5.myworkdayjobs.com'
     authentication.authenticate(browser,credentials(browser))
     assert frame.get_by_role('heading',name='Application').count()==1
+
+
+def _workday_account(browser):
+    from pathlib import Path
+    browser.page.set_content((Path(__file__).parent/'fixtures/auto_apply/workday_create_account.html').read_text(encoding='utf-8'))
+
+
+class NoModel:
+    def invoke(self, messages, tools):
+        raise AssertionError('The Workday account page is structurally unambiguous.')
+
+
+def test_workday_overlay_create_account_outside_form_without_model(browser):
+    # Intel-31: the visible Create Account control is an overlay outside <form>, the form's
+    # submit button is aria-hidden, and a 1x0 px robot-trap text input sits below the form.
+    _workday_account(browser)
+    controls = authentication.account_browser.catalog(authentication.root(browser))
+    assert not any(c['purpose'] == 'unknown' and c['tag'] == 'INPUT' for c in controls)
+    assert [c['purpose'] for c in controls if c['tag'] == 'DIV'] == ['register']
+    assert authentication.context(browser)['mode'] == 'register'
+    authentication.authenticate(browser, credentials(browser), model_factory=NoModel)
+    assert browser.page.evaluate('window.created') == {'email':'candidate@example.com','filled':True}
+    assert browser.page.locator('[data-automation-id=beecatcher]').count() == 0
+
+
+def test_workday_switch_to_sign_in_uses_the_form_link_not_the_header(browser):
+    _workday_account(browser)
+    origin = authentication.context(browser)['origin']
+    authentication.switch_mode(browser, 'login', origin, model_factory=NoModel)
+    assert browser.page.evaluate('window.switched') == 1
+    assert authentication.context(browser)['mode'] == 'login'
+    authentication.authenticate(browser, credentials(browser), model_factory=NoModel)
+    assert browser.page.evaluate('window.signedIn') == {'email':'candidate@example.com','filled':True}

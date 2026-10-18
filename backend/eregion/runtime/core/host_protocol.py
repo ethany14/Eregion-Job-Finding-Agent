@@ -14,7 +14,9 @@ REQUIRED = ('active', 'revision', 'observe', 'invoke', 'progress', 'on_text',
 # Used when present: fence text completion, validate a batch before any effect,
 # turn a tool screenshot into model input, replace the default output check
 # (model_output.output_problem) or per-call schema validation (validate_call).
-OPTIONAL = ('text_guard', 'validate_batch', 'image_message', 'output_problem', 'validate')
+# expand_call is pure normalization of one model call into a bounded batch of
+# existing tools; it must not execute effects, invoke models or mutate state.
+OPTIONAL = ('text_guard', 'validate_batch', 'image_message', 'output_problem', 'validate', 'expand_call')
 # Attribute the engine assigns its ContextArchive to when the Host declares it.
 ATTRIBUTES = ('context_archive',)
 

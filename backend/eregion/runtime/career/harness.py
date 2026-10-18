@@ -715,7 +715,7 @@ class CareerHarness:
 
     def route_user_control(self,state,message):
         """Queue interview answers and explicit controls before model routing."""
-        routed=self.interview_inputs.route(state,message)
+        routed=self.interview_inputs.route(state,message) or self.route_application_reply(state,message)
         if routed:return routed
         text=message['text'].strip().rstrip('.!。！').casefold()
         if text not in {'end interview','end the interview','end this interview',
@@ -1342,7 +1342,16 @@ class CareerHarness:
             return {'evidence_id':confirmed.evidence_id,'saved':True,'quote':quote}
         if name=='inspect_application':
             self.repository.change(task_id,active_application_run=args['run_id'],active_browser='application')
-            return self.application(args['run_id'],include_fields=args.get('include_fields',False),field_key=args.get('field_key'))
+            result=self.application(args['run_id'],include_fields=args.get('include_fields',False),field_key=args.get('field_key'))
+            # Rereading a page that waits on the user (sign-in, verification, a question) within one
+            # turn cannot change it; say so once instead of letting the turn poll the same state.
+            seen=[state.get('chat_revision',0),result.get('version')]
+            if result.get('status')=='needs_input' and (state.get('inspected_waiting') or {}).get(args['run_id'])==seen:
+                result={**result,'unchanged_since_last_inspection':True,
+                    'next':'Nothing changed since your last inspection in this turn; the application is waiting for the user. Do not inspect again; ask or report once and end the turn.'}
+            if result.get('status')=='needs_input':
+                self.repository.change(task_id,lambda s:{'inspected_waiting':{**(s.get('inspected_waiting') or {}),args['run_id']:seen}})
+            return result
         if name=='reply_application':
             message = self.user_message(state,args['message_id'])
             previous = self.applications.repository.get(args['run_id'])
@@ -1672,7 +1681,7 @@ class CareerHarness:
         if child.get('input_request'):
             result['next']=("The application asks the user the input_request question. Ask the user unless their latest "
                             "message already answers it; then forward that message with reply_application.")
-        elif child.get('agent_reason') in {'page_budget','application_budget','agent_limit','no_progress'}:
+        elif child.get('agent_reason') in self.LIMIT_REASONS:
             # Adobe re-test: after a page-budget stop the career agent spent 10 calls re-inspecting
             # the full field list and searching jobs, and never told the user what was blocking.
             result['next']=("The application stopped on a limit and needs the user's decision. Tell the user what blocks "
@@ -1683,6 +1692,26 @@ class CareerHarness:
             result['next']=("The application is stopped, not running. Forward the user's latest message with "
                             'reply_application to resume it, or ask the user for what it needs.')
         return result
+
+    LIMIT_REASONS = {'page_budget','application_budget','agent_limit','no_progress'}
+
+    def hold_wait(self,state):
+        """An application stopped on a question or account form that it already shows the user
+        (with its own answer form). Re-asking it cost three parent calls per question (Intel-32)."""
+        wait = state.get('wait') or {}
+        if wait.get('kind')!='application':return False
+        child = self.applications.repository.get(wait['id'])
+        return (child['status']=='needs_input' and not child.get('pause_requested') and not child.get('paused_for_control')
+                and bool(child.get('input_request') or child.get('account_request'))
+                and child.get('agent_reason') not in self.LIMIT_REASONS)
+
+    def route_application_reply(self,state,message):
+        """Answers sent with the application's own form were delivered already; wait for it."""
+        run_id = (message.get('context') or {}).get('delivered_to_application')
+        if not run_id or run_id not in state.get('application_runs',[]):return None
+        if self.applications.repository.get(run_id)['status'] not in {'queued','running'}:return None
+        return {'tool':'reply_application','result':{'run_id':run_id,'reply_delivered':True,'direct':True},
+                'wait':{'kind':'application','id':run_id}}
 
     def wake(self,state):
         wait = state.get('wait') or {}

@@ -206,3 +206,75 @@ def test_record_rows_stop_the_host_from_advancing_but_plain_pages_do_not():
     assert not record_page([field('legal-age')], state, {'controls': [{'kind': 'next', 'label': 'Next'}]})
     browser, tools = session(); bind(tools)
     assert record_page(tools.fields, tools.state, {'controls': []})      # model-bound work field, no DOM id
+
+
+def test_an_empty_optional_questionnaire_question_waits_for_the_models_decision():
+    from eregion.runtime.auto_apply.runner import undecided_optional_question
+    phd = {**field('textarea:phd:1', kind='textarea', required=False), 'dom_id': 'secondaryQuestionnaire--phd'}
+    state = {'profile': {}, 'answers': {}}
+    assert undecided_optional_question([phd], state)
+    state['field_decisions'] = {phd['key']: {'field': {k: phd.get(k) for k in ('key', 'label', 'kind', 'group')}, 'value': None,
+                                             'mode': 'leave_empty', 'sources': {}, 'original_answer': None, 'reason': 'Not a PhD candidate.'}}
+    from eregion.runtime.auto_apply.decisions import signature
+    state['field_decisions'][phd['key']]['field'] = signature(phd)
+    assert not undecided_optional_question([phd], state)
+    assert not undecided_optional_question([{**field('ext', required=False), 'dom_id': 'phoneNumber--extension'}], {'profile': {}, 'answers': {}})
+    assert not undecided_optional_question([{**phd, 'required': True}], {'profile': {}, 'answers': {}})
+
+
+# --- Adobe-22: closed dropdown options read once at page entry; record then choose in one turn ---
+def test_host_reads_closed_dropdown_options_once_without_choosing():
+    from eregion.runtime.auto_apply.agent import AgentTools
+    from eregion.runtime.auto_apply.runner import ApplicationHost
+    reads, closes = [], []
+    button = {'placeholder': None, 'autocomplete': None}
+    q1 = {**field('q1', kind='combobox'), 'options': [], 'constraints': button}
+    q2 = {**field('q2', kind='combobox'), 'options': [], 'constraints': button}
+    filled = {**field('lang', kind='combobox'), 'options': [], 'value': 'English', 'constraints': button}
+    gone = {**field('q3', kind='combobox'), 'options': [], 'constraints': button}
+    search = {**field('school', kind='combobox'), 'options': [], 'constraints': {'placeholder': 'Search', 'autocomplete': 'off'}}
+    unknown = {**field('other', kind='combobox'), 'options': []}
+    browser = NextPage([q1, q2, filled, gone, search, unknown])
+    browser.inspect_options = lambda key, query=None: reads.append(key) or [{'label': 'Yes', 'value': '1'}, {'label': 'No', 'value': '2'}]
+    browser.press_key = lambda key, value: closes.append((key, value))
+    state = {'profile': {}, 'answers': {}, 'abandoned_fields': ['q3']}
+    tools = AgentTools(browser, state, autofill=lambda: {}, active=lambda: True); tools.observe()
+    host = ApplicationHost(tools, None, active=lambda: True, reserve=lambda kind: True, report=lambda *a: None)
+    host._read_closed_options(tools, limit=1)
+    assert reads == ['q1'] and closes == [('q1', 'Escape')]
+    host._read_closed_options(tools)
+    assert reads == ['q1', 'q2']   # already read, filled, abandoned, searchable and unknown shapes skipped
+    assert all(f['value'] in ('', 'English') for f in browser.fields)   # nothing chosen
+    shown = next(f for f in tools.observe()['fields'] if f['key'] == 'q2')
+    assert [o['label'] for o in shown['options']] == ['Yes', 'No']
+
+
+def test_record_an_answer_then_choose_it_in_one_turn():
+    batch(('record_answers', {'answers': [{'field_key': 'a'}, {'field_key': 'b'}]}),
+          ('choose_option', {'field_key': 'a'}), ('choose_option', {'field_key': 'b'}),
+          ('click_page_action', {'control_id': 'next'}))
+    with pytest.raises(__import__('eregion.runtime.core.engine', fromlist=['x']).ToolArgumentsError):
+        batch(('choose_option', {'field_key': 'a'}), ('record_answers', {'answers': [{'field_key': 'a'}]}))
+
+
+def test_a_third_reopen_of_an_unchanged_page_is_refused_until_the_user_writes(monkeypatch):
+    # Adobe-23: the model reopened a Workday maintenance redirect seven times.
+    from eregion.runtime.auto_apply.agent import AgentTools
+    opened = []
+    monkeypatch.setattr('eregion.runtime.browser.tools.execute',
+        lambda session, name, args: opened.append(args['url']) or {'page_evidence_hash': 'same', 'title': 'Unavailable'})
+    browser = NextPage([field('x', required=False)])
+    state = {'profile': {}, 'answers': {}, 'chat_revision': 1}
+    tools = AgentTools(browser, state, autofill=lambda: {}, active=lambda: True); tools.observe()
+    tools.browsing = object()
+    url = {'url': 'https://example.test/job'}
+    tools.execute('browser_open', dict(url)); tools.execute('browser_open', dict(url))
+    with pytest.raises(BrowserBlocked, match='same page'):
+        tools.execute('browser_open', dict(url))
+    assert len(opened) == 2
+    rebuilt = AgentTools(browser, state, autofill=lambda: {}, active=lambda: True); rebuilt.observe(); rebuilt.browsing = object()
+    with pytest.raises(BrowserBlocked, match='same page'):      # survives a new slice
+        rebuilt.execute('browser_open', dict(url))
+    state['chat_revision'] = 2                                  # the user wrote again
+    rebuilt.execute('browser_open', dict(url))
+    assert len(opened) == 3

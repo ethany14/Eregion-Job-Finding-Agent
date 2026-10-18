@@ -14,14 +14,27 @@ from .browser import BrowserBlocked
 
 
 SCAN = r"""root => {
+  // A text input too small to see (e.g. a 1x0 px robot trap) is not a candidate control.
+  const sized = e => !e.matches('input:not([type="checkbox"]):not([type="radio"])')
+    || (r => r.width > 2 && r.height > 2)(e.getBoundingClientRect());
   const visible = e => !!e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden'
-    && !e.closest('[aria-hidden="true"], [inert]');
+    && !e.closest('[aria-hidden="true"], [inert]') && sized(e);
   const label = e => ([...e.labels || []].map(x => x.innerText).join(' ') || e.getAttribute('aria-label') ||
     (e.getAttribute('aria-labelledby') || '').split(' ').map(id => document.getElementById(id)?.innerText || '').join(' ') ||
     e.getAttribute('placeholder') || (e.matches('input') ? e.name || e.id : e.innerText) || '').trim();
   const passwords = [...root.querySelectorAll('input[type="password"], input[data-northstar-secret]')].filter(visible);
   const forms = [...new Set(passwords.map(e => e.form).filter(Boolean))];
-  if (forms.length === 1) root = forms[0];
+  if (forms.length === 1) {
+    // Some portals render the visible submit and the mode link beside the <form>. Widen to the
+    // largest container that holds the same credential fields and no page header/nav/footer.
+    const landmarks = 'header, nav, footer, [role="banner"], [role="navigation"], [role="contentinfo"]';
+    const count = e => e.querySelectorAll('input[type="password"]').length;
+    let scope = forms[0];
+    while (scope !== root && scope.parentElement && scope.parentElement !== document.body
+        && root.contains(scope.parentElement) && !scope.parentElement.querySelector(landmarks)
+        && count(scope.parentElement) === count(forms[0])) scope = scope.parentElement;
+    root = scope;
+  }
   const elements = [...root.querySelectorAll('input, button, a[href], [role="button"]')]
     .filter(visible).filter(e => !e.matches('input[type="hidden"]')).slice(0, 120);
   return elements.map((e, i) => {

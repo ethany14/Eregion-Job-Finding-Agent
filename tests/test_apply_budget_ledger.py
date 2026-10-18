@@ -100,3 +100,42 @@ def test_an_experiment_budget_alone_still_reserves_every_requests_input(monkeypa
     monkeypatch.setenv('JOB_AGENT_EXPERIMENT_ID', 'replay')
     sizes = model._budget_sizes([HumanMessage('hello')], None, {})
     assert sizes['input_token_reservation'] > len('hello')
+
+
+def test_experiment_refusal_releases_reservation_and_keeps_career_reply_budget(loop, monkeypatch, tmp_path):
+    from eregion.runtime.provider_usage import experiment_summary
+    path=tmp_path/'refused-experiment.sqlite3'
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_ID','refused-reply-test')
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_LEDGER',str(path))
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_MAX_PROVIDER_ATTEMPTS','9')
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_MAX_INPUT_TOKENS','10000')
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS','9')
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_INPUT_TOKENS','10000')
+    ledger=UsageLedger(loop.repository.sessions);sent=[]
+    with usage_scope(ledger=ledger,task_id='reply-task'):
+        for _ in range(6):attempt(sent,usage=100,purpose='application')
+        # Each refusal is persisted in the experiment, but sends nothing.
+        for _ in range(2):
+            with pytest.raises(TaskProviderBudgetExceeded):
+                attempt(sent,usage=100,purpose='application')
+        total=experiment_summary(path,'refused-reply-test')
+        assert total['calls']==6 and total['refused_before_send']==2
+        assert total['budget_input_tokens']==600 and total['usage_complete']
+        for _ in range(3):attempt(sent,usage=100,purpose='agent')
+        with pytest.raises(TaskProviderBudgetExceeded):attempt(sent,usage=100)
+    total=experiment_summary(path,'refused-reply-test')
+    assert len(sent)==9 and total['calls']==9 and total['completed']==9
+    assert total['input_tokens']==900 and total['unknown_usage_calls']==0
+    assert total['refused_before_send']==2
+
+
+def test_refusal_is_distinct_from_sent_failed_and_pending_attempts():
+    total=summarize([
+        {'status':'refused_before_send','reserved_input_tokens':900,'input_tokens':0,'output_tokens':0},
+        {'status':'failed','reserved_input_tokens':100},
+        {'status':'pending','reserved_input_tokens':200},
+        {'status':'completed','input_tokens':30,'output_tokens':5},
+    ])
+    assert total['refused_before_send']==1 and total['calls']==3
+    assert total['budget_input_tokens']==330 and total['unknown_usage_calls']==2
+    assert total['failed']==1 and total['pending']==1 and total['completed']==1

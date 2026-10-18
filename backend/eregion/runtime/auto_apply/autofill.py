@@ -143,7 +143,14 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
             break
         pending = []
         # Upload first: ATS resume parsers may populate contact fields afterwards.
-        for field in sorted(fields, key=lambda item: item["kind"] != "file"):
+        # Workday discards a provisional month while the year is blank. Write already
+        # sourced years before months/days, without adding any field to the selected scope.
+        def write_order(item):
+            from .browser import date_segment
+            identifier = item.get('dom_id') or item['key']
+            part = 0 if 'dateSectionYear' in identifier else 1 if 'dateSectionMonth' in identifier else 2
+            return (0, 0) if item['kind'] == 'file' else (2, part) if date_segment(item) else (1, 0)
+        for field in sorted(fields, key=write_order):
             key = field["key"]
             if state.get('autofill_scope') is not None and key not in state['autofill_scope']:
                 continue
@@ -233,4 +240,13 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
                 details[key] = failure('value_not_retained', 'The control did not retain the supplied value.')
                 memory[key] = {'signature': failure_signature(current or field, value), 'code': failed[key]}
         progress(observed, 'autofill', None, 'needs_agent' if failed else 'verified')
+    if failed and active():
+        for current in browser.observe():
+            key = current['key']
+            if key not in failed:
+                continue
+            target = desired_answer(current, state)
+            if target is not None and matches(current, target):
+                completed.append(key)
+                failed.pop(key, None); details.pop(key, None); memory.pop(key, None)
     return {"filled": list(dict.fromkeys(completed)), "failed": failed, "failure_details": details}

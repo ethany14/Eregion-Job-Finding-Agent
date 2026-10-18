@@ -20,8 +20,9 @@ from .errors import BrowserBlocked
 from .contracts import GREENHOUSE, LEVER, posting, public_https_url
 from .matching import clean, equivalent, resolve_option, search_text
 from .navigation import PAGE_SCAN, page_state
+from .upload_status import UPLOAD_STATUS
 
-SCAN = r"""() => {
+SCAN = r"""() => {""" + UPLOAD_STATUS + r"""
   const visible = el => !!(el.getClientRects().length) && getComputedStyle(el).visibility !== 'hidden';
   const clean = text => (text || '').replace(/\s+/g, ' ').trim().slice(0, 1000);
   const nearbyLabel = el => {
@@ -71,7 +72,7 @@ SCAN = r"""() => {
     if (kind === 'file' && el.closest('form, [role="form"], [role="tabpanel"]') && !visible(el.closest('form, [role="form"], [role="tabpanel"]'))) continue;
     if (kind === 'file' && !label(el)) continue; // Ignore an unlabelled resume-autofill dropzone.
     const id = `ns-${index}`; el.setAttribute('data-northstar-field', id);
-    const wrapper = el.closest('[data-automation-id^="formField-"], .application-question, .form-field, .field, [data-field-path]');
+    const wrapper = el.closest('[data-automation-id^="formField-"], [data-automation-id="attachments-FileUpload"], .application-question, .form-field, .field, [data-field-path]');
     const group = el.closest('fieldset, [role="group"]');
     const sections=[];
     for(let parent=el.parentElement;parent && parent!==root;parent=parent.parentElement){
@@ -81,7 +82,7 @@ SCAN = r"""() => {
     const described = attr => (el.getAttribute(attr) || '').split(/\s+/).map(id => document.getElementById(id)).filter(Boolean);
     const errors = [...described('aria-errormessage'), ...described('aria-describedby').filter(x => /error/i.test(x.id)),
       ...Array.from(wrapper?.querySelectorAll('[role="alert"], [data-automation-id="errorMessage"], .field-error, .error-message') || [])]
-      .filter(visible).map(x => clean(x.textContent)).filter(Boolean);
+      .filter(visible).filter(x => !isUploadSuccessNotice(x)).map(x => clean(x.textContent)).filter(Boolean);
     if (el.validationMessage) errors.push(el.validationMessage);
     const choice = kind === 'combobox' || kind === 'select' || kind === 'radio' ||
       ['listbox','tree','true'].includes(el.getAttribute('aria-haspopup')) ||
@@ -134,16 +135,26 @@ SCAN = r"""() => {
         .filter(id => id.endsWith('-description')).map(id => document.getElementById(id)?.textContent || '').join(' '));
       if (description && !text.includes(description)) text = `${description} — ${text}`;
       value = el.checked;
-      const peers = elements.filter(x => x.type === 'checkbox' && x.name && x.name === el.name);
+      // Workday options can have distinct ids and no shared name. The nearest
+      // explicit question wrapper supplies group identity, never answer meaning.
+      const wdOwner = el.closest('[data-automation-id^="formField-"]');
+      // Workday questionnaire groups nest their shared legend in an outer
+      // fieldset; the inner checkbox fieldset has no legend of its own.
+      const wdTitle = wdOwner?.querySelector(':scope > [data-automation-id="formLabel"], :scope > label, :scope > fieldset > legend');
+      const wdPeers = wdOwner ? elements.filter(x => x.type === 'checkbox' &&
+        x.closest('[data-automation-id^="formField-"]') === wdOwner) : [];
+      const wdGroup = wdPeers.length > 1 && wdTitle && !wdPeers.some(x =>
+        wdTitle.contains(x) || [...x.labels || []].includes(wdTitle));
+      const peers = wdGroup ? wdPeers : elements.filter(x => x.type === 'checkbox' && x.name && x.name === el.name);
       const leverGroup = !!el.closest('[data-qa="checkboxes"]');
       // Greenhouse repeats native required on every member of a multi-choice
       // question. Its shared legend/error describes the group, not each choice.
       const errorId = el.getAttribute('aria-errormessage');
       const greenhouseGroup = el.name.endsWith('[]') && group?.querySelector(':scope > legend.checkbox__description') &&
         errorId && peers.every(x => x.closest('fieldset, [role="group"]') === group && x.getAttribute('aria-errormessage') === errorId);
-      if (peers.length > 1 && (parentRequired || leverGroup || greenhouseGroup)) {
+      if (peers.length > 1 && (parentRequired || leverGroup || greenhouseGroup || wdGroup)) {
         checkboxGroup = true;
-        const groupRequired = parentRequired || peers.some(x => x.required);
+        const groupRequired = parentRequired || peers.some(x => x.required || x.getAttribute('aria-required') === 'true') || (wdGroup && /[✱*]/.test(wdTitle.textContent));
         // Only discard native valueMissing. Keep visible website errors and
         // independent required consent controls intact.
         if (el.validity?.valueMissing && el.validationMessage && errors.at(-1) === el.validationMessage) errors.pop();
@@ -152,7 +163,7 @@ SCAN = r"""() => {
         required = false;
         parentRequired = false;
       }
-      const groupLabel = clean(el.closest('.application-question')?.querySelector('.application-label')?.textContent);
+      const groupLabel = clean(wdGroup ? wdTitle.textContent : el.closest('.application-question')?.querySelector('.application-label')?.textContent);
       if (peers.length > 1 && groupLabel) text = `${groupLabel.replace(/[✱*]/g, '').trim()} — ${text}`;
     } else if (kind === 'file') {
       // Upload buttons may be labelled only 'Attach'; use the containing
@@ -203,8 +214,23 @@ SCAN = r"""() => {
     // Modal menus hide sibling controls using aria-hidden. Count their stable
     // occurrences before excluding them, or row 2 becomes row 1 while editing.
     if(hiddenField)continue;
+    // Adobe-27: a consent box labelled only "Check this box to confirm the statement above" sits
+    // after the statement it confirms. Keep that preceding text as the box's help (no decision).
+    let statement = '';
+    if (kind === 'checkbox' && !described('aria-describedby').length && /\b(above|statement|terms|agree|confirm|acknowledg)/i.test(text)) {
+      let node = el.closest('[data-automation-id^="formField-"]') || el.parentElement;
+      for (let depth = 0; node && depth < 4 && !statement; depth++, node = node.parentElement) {
+        const parts = [];
+        for (let prev = node.previousElementSibling; prev && parts.join(' ').length < 1500; prev = prev.previousElementSibling) {
+          if (prev.querySelector('input,select,textarea,button')) break;
+          const piece = clean(prev.textContent);
+          if (piece) parts.unshift(piece);
+        }
+        statement = clean(parts.join(' ')).slice(-1500);
+      }
+    }
     fields.push({id, dom_id:el.id, name:el.name || '', key, kind, label:text || 'Unlabelled field', required:!checkboxGroup && !!(required || parentRequired || text.includes('*') || text.includes('✱')), options, value, invalid,
-      choice_control:choice, value_committed:committed, ...(select2 ? {select2:true} : {}), errors:[...new Set(errors)], help:clean(described('aria-describedby').map(x=>x.textContent).join(' ')),
+      choice_control:choice, value_committed:committed, ...(select2 ? {select2:true} : {}), errors:[...new Set(errors)], help:clean(described('aria-describedby').map(x=>x.textContent).join(' ')) || statement,
       group:clean(group?.querySelector('legend')?.textContent || group?.getAttribute('aria-label')), section:sections.join(' / ').slice(0,500),
       constraints:{read_only:!!el.readOnly, pattern:el.getAttribute('pattern'), max_length:el.getAttribute('maxlength'), min_length:el.getAttribute('minlength'),
         placeholder:el.getAttribute('placeholder'), input_mode:el.getAttribute('inputmode'), autocomplete:el.getAttribute('autocomplete')}});
@@ -365,6 +391,7 @@ class ApplicationBrowser:
         self.choice_fields = set()
         self._option_owner = None
         self._choice_queries = {}
+        self.option_search_evidence = {}
         self.navigation_hosts = set(GREENHOUSE if self.platform == 'greenhouse' else LEVER if self.platform == 'lever' else {urlsplit(self.url).hostname})
         self.session_store, self.owner_key = session_store, owner_key
         self.session_site = urlsplit(self.url).hostname
@@ -504,6 +531,15 @@ class ApplicationBrowser:
         if not _pooled_browser(previous):
             previous.close()
         if visible:active.bring_to_front()
+
+    def wait_for_step(self):
+        if self.platform == "workday" and "/apply" in self.page.url:
+            # Workday's route shell renders before its account/application step.
+            # Wait for that step, not the always-present header Sign In button.
+            try:
+                self.page.locator('input:visible, textarea:visible, [data-automation-id="SignInWithEmailButton"]:visible, [data-automation-id="pageHeaderTitle"]:visible').first.wait_for(timeout=8000)
+            except Exception:
+                pass
 
     def save_login_state(self, *, force=False):
         if not self.session_store or not self.owner_key or not hasattr(self, "page") or not self.is_open(): return
@@ -645,6 +681,7 @@ class ApplicationBrowser:
     def click_page_action(self, action):
         # Re-identify the exact observed target, not its ephemeral DOM index.
         page = self.page_state()
+        before_fields = self.observe()
         candidates = [c for c in page["controls"] if all(c.get(k) == action.get(k)
             for k in ("label", "href", "automation_id", "kind")) and not c["disabled"]]
         target = next((c for c in candidates if c["id"] == action["id"]), None)
@@ -661,16 +698,30 @@ class ApplicationBrowser:
         self._trusted_until = time.monotonic() + TRUSTED_NAVIGATION_SECONDS
         locator.click(timeout=8000)
         self._settle()
-        if self.platform == "workday" and "/apply/" in self.page.url:
-            # Workday's route shell renders before its account/application step.
-            # Wait for that step, not the always-present header Sign In button.
-            try:
-                self.page.locator('input:visible, textarea:visible, [data-automation-id="SignInWithEmailButton"]:visible, [data-automation-id="pageHeaderTitle"]:visible').first.wait_for(timeout=8000)
-            except Exception:
-                pass
+        self.wait_for_step()
         self.option_cache.clear()
         self._check_page()
         self.save_login_state()
+
+        from .steps import step_key, structure_signature
+        after_fields = self.observe()
+        after = self.page_state(fields=after_fields)
+        if action['kind'] == 'next':
+            def advanced():
+                old_step, new_step = step_key(page), step_key(after)
+                return (old_step != new_step) if old_step and new_step else (
+                    page.get('url') != after.get('url') or page.get('heading') != after.get('heading'))
+            deadline = time.monotonic() + 10
+            while not advanced() and not any(f.get('invalid') for f in after_fields) and time.monotonic() < deadline:
+                self.page.wait_for_timeout(200)
+                after_fields = self.observe()
+                after = self.page_state(fields=after_fields)
+            # A changed field list alone can be validation/dynamic fields on the same step.
+            verified = advanced()
+        else:
+            verified = structure_signature(page, before_fields) != structure_signature(after, after_fields)
+        return {'executed': True, 'verified': verified, 'navigated': verified,
+                'step_before': step_key(page), 'step_after': step_key(after)}
 
     def _clear_consent(self):
         """Take a cookie banner out of the way without consenting (reject if offered, else hide)."""
@@ -775,6 +826,7 @@ class ApplicationBrowser:
 
     def inspect_options(self, key, query=None):
         field = self.field(key)
+        self.option_search_evidence.pop(key, None)
         if field["kind"] in {"select", "radio"}:
             options = field["options"]
             if query is None or not str(query).strip():
@@ -791,7 +843,9 @@ class ApplicationBrowser:
                 for part in ("label", "value"))]
         if field["kind"] not in {"combobox", "location", "text", "search", "tel"}:
             return []
-        if date_segment(field) or not (field.get('choice_control') or field['kind'] in {'combobox', 'location'}):
+        # A read-only text input cannot be typed into; it is filled only by its picker.
+        picker = field.get('choice_control') or field['kind'] in {'combobox', 'location'} or (field.get('constraints') or {}).get('read_only')
+        if date_segment(field) or not picker:
             raise BrowserBlocked('This is not an option control. Use read_field for a read-only inspection.', code='invalid_action')
         self._close_other_menu(key)
         locator = self.locate(field)
@@ -828,6 +882,10 @@ class ApplicationBrowser:
             # Field of Study search returned the unfiltered list). Wait for a changed,
             # settled list, bounded.
             options = self._settled_options(field, before)
+            current_query = locator.input_value() if locator.evaluate("e => e.matches('input,textarea')") else locator.inner_text()
+            self.option_search_evidence[key] = {'query':str(query), 'input_retained':current_query == str(query),
+                'list_changed':self._option_labels(field) != before,
+                'meaning':'Observed choices only. An unchanged list is not confirmed filtered results and does not prove the query has no match.'}
         try:
             options.first.wait_for(state="visible", timeout=1000)
         except Exception:
@@ -896,12 +954,23 @@ class ApplicationBrowser:
         options = self._option_locator(field)
         if not options.count():
             # Changing a filled picker (Adobe: UW-Madison degree "Masters" -> "Bachelors"):
-            # inspection returned early without opening it, so open it here.
-            self.inspect_options(key)
+            # inspection returned early without opening it, so open it here. A searchable picker
+            # reopens with the text last searched in it (Intel: reopened empty, it showed
+            # "No Items." and the searched school could not be chosen).
+            previous = self._choice_queries.get(key)
+            self.inspect_options(key, query=previous) if previous else self.inspect_options(key)
             options = self._option_locator(self.field(key))
         # Match only the active field's observed options, never a global text hit.
         choices = options.evaluate_all(OPTION_SCAN)
-        matching = [(item["index"], item) for item in choices if item['label'].strip().casefold() == label.strip().casefold() and not item['disabled']]
+        wanted = label.strip().casefold()
+        matching = [(item["index"], item) for item in choices if item['label'].strip().casefold() == wanted and not item['disabled']]
+        searchable = field['kind'] in {'text', 'search'} or (field.get('constraints') or {}).get('placeholder')
+        if not matching and searchable:
+            # Filter by the exact label the model chose; selection below is still exact-match only.
+            self.inspect_options(key, query=label.strip())
+            options = self._option_locator(self.field(key))
+            choices = options.evaluate_all(OPTION_SCAN)
+            matching = [(item["index"], item) for item in choices if item['label'].strip().casefold() == wanted and not item['disabled']]
         if not matching or resolve_option(field["label"], label, [item for _, item in matching]) is None:
             raise BrowserBlocked("The option changed or is ambiguous. Inspect the field again.", code='options_changed')
         options.nth(matching[0][0]).click(timeout=5000)
@@ -945,18 +1014,60 @@ class ApplicationBrowser:
         current = locator.input_value()
         if same_segment(current, value):
             return
-        locator.focus()
-        if current.strip().isdigit():
-            locator.press('End')
-            for _ in range(len(current.strip())):
-                locator.press('Backspace')
-            cleared = locator.input_value()
-            if cleared.strip().isdigit():
-                raise BrowserBlocked('Date segment could not be cleared; no replacement digits were typed.', code='date_write_failed')
-        # Re-focus before each character: Workday can automatically move focus to another segment.
-        for digit in str(value):
+        def focus_segment():
             locator.focus()
-            self.page.keyboard.type(digit, delay=60)
+            # Workday's roving spinbutton has an internal active segment. Calling
+            # focus() on tabindex=-1 does not update it: Adobe-18's first year
+            # digit changed the month. Navigate from the actual tab stop instead.
+            if locator.get_attribute('role') != 'spinbutton' or locator.get_attribute('tabindex') != '-1':
+                return
+            group = [item for item in segments.evaluate_all(
+                "els => els.map(e => ({id:e.id,tab:e.tabIndex}))")
+                if prefix and item['id'].startswith(prefix)]
+            target = next((i for i, item in enumerate(group) if item['id'] == identifier), None)
+            active = [i for i, item in enumerate(group) if item['tab'] >= 0]
+            if target is None or len(active) != 1:
+                raise BrowserBlocked('Date segment has no unambiguous active tab stop; no digits were typed.', code='date_write_failed')
+            index = active[0]
+            anchor = self.page.locator('[id='+json.dumps(group[index]['id'])+']')
+            anchor.focus()
+            direction = 'ArrowRight' if target > index else 'ArrowLeft'
+            for _ in range(abs(target-index)):
+                self.page.keyboard.press(direction)
+            if locator.get_attribute('tabindex') == '-1' or not locator.evaluate('e => document.activeElement === e'):
+                raise BrowserBlocked('Date segment navigation did not activate the requested input; no digits were typed.', code='date_write_failed')
+
+        def check_siblings():
+            now = group_values()
+            changed = [key for key, previous in before.items()
+                       if key != identifier and (key not in now or not same_segment(now[key], previous))]
+            if changed:
+                raise BrowserBlocked('Date write changed a sibling segment: '+', '.join(changed)+
+                                     '. Read the date group before repairing from confirmed facts.', code='date_group_changed')
+
+        if current.strip().isdigit():
+            # Select only this input, not the composite date widget. Some controlled
+            # years re-pad single-character deletions and cannot be emptied that way.
+            focus_segment()
+            locator.select_text()
+            locator.press('Backspace')
+            check_siblings()
+            # Older segment widgets ignore DOM selection. Bounded deletion is still
+            # supported, but never issue End (it can move the widget's active segment).
+            for _ in range(len(current.strip())):
+                if not locator.input_value().strip().isdigit():
+                    break
+                focus_segment()
+                locator.press('Backspace')
+                check_siblings()
+            if locator.input_value().strip().isdigit():
+                raise BrowserBlocked('Date segment could not be cleared; no replacement digits were typed.', code='date_write_failed')
+        # Locator.press focuses the exact segment and dispatches the key together;
+        # a separate focus + keyboard.type lets delayed auto-focus steal the digit.
+        for digit in str(value):
+            focus_segment()
+            locator.press(digit, delay=60)
+            check_siblings()
         locator.press('Tab')
         self._settle()
         after = group_values()
@@ -1004,6 +1115,51 @@ class ApplicationBrowser:
                 locator.press_sequentially(str(value), delay=0, timeout=8000)
                 locator.press('Tab')
         self._settle()
+
+    def clear_optional_field(self, key):
+        """Execute an explicit model omission; never infer which fact to omit."""
+        field = self.field(key)
+        if field.get('required') or field['kind'] in {'checkbox', 'radio', 'file', 'password'}:
+            raise BrowserBlocked('This control cannot be left empty.', code='invalid_action')
+        locator = self.locate(field)
+        if field.get('choice_control'):
+            self._close_other_menu(key)
+            shell = locator.locator('xpath=ancestor::*[@data-automation-id="multiSelectContainer"][1]')
+            if shell.count() == 1:
+                # Only observed remove controls inside this field's own picker.
+                # Never delete DOM nodes or infer that clearing query text removes a tag.
+                for _ in range(20):
+                    pills = shell.locator('[data-automation-id="selectedItem"], [data-automation-id="selectedItemLabel"], [data-automation-id="selectedPrompt"]')
+                    if not pills.count(): break
+                    buttons = shell.locator('button, [role="button"], [data-automation-id="DELETE_charm"], [data-automation-id="deleteButton"]')
+                    candidates = buttons.evaluate_all("""els=>els.map((e,i)=>({i,visible:!!e.getClientRects().length,
+                        disabled:e.disabled||e.getAttribute('aria-disabled')==='true',
+                        label:[e.getAttribute('aria-label'),e.getAttribute('title'),e.textContent].filter(Boolean).join(' '),
+                        id:e.getAttribute('data-automation-id')||''}))""")
+                    remove = next((x for x in candidates if x['visible'] and not x['disabled'] and
+                        (re.search(r'(?i)\b(remove|delete|clear)\b', x['label']) or x['id'] in {'DELETE_charm','deleteButton'})),None)
+                    if remove is None:
+                        raise BrowserBlocked('Selected value has no observed removal control in this field. Use a supported field action or request help.',code='dom_interaction_failed')
+                    before = pills.all_inner_texts()
+                    buttons.nth(remove['i']).click(timeout=5000)
+                    self._settle()
+                    if pills.all_inner_texts() == before:
+                        raise BrowserBlocked('The selected value did not clear; no repeated removal was attempted.',code='value_not_retained')
+                else:
+                    raise BrowserBlocked('Too many selected values to clear in one action.',code='dom_interaction_failed')
+        if field['kind'] == 'select':
+            if not locator.locator('option[value=""]').count():
+                raise BrowserBlocked('No empty option is present.',code='options_changed')
+            locator.select_option(value='')
+        elif locator.evaluate("e=>e.matches('input,textarea') || e.isContentEditable"):
+            locator.fill('',timeout=5000)
+            locator.press('Tab')
+        else:
+            raise BrowserBlocked('No supported empty-value action for this control.',code='invalid_action')
+        self._choice_queries.pop(key,None)
+        self.option_cache.pop(key,None)
+        self._settle()
+        return self.field(key)
 
     def press_key(self, key, value):
         if value not in {"ArrowDown", "ArrowUp", "Escape", "Tab"}:
@@ -1083,7 +1239,15 @@ class ApplicationBrowser:
         kind = field["kind"]
         if kind == "file":
             filename = upload_filename or ('cover-letter.pdf' if 'cover letter' in field['label'].casefold() else 'resume.pdf')
+            # Workday appends every upload as another attachment (Intel-34 Review listed resume.pdf
+            # three times). The same document already uploaded here and still shown is kept.
+            digest = hashlib.sha256(value).hexdigest() if isinstance(value, (bytes, bytearray)) else None
+            uploaded = getattr(self, '_uploaded_documents', set())
+            if digest and (filename, digest) in uploaded and filename in str(field.get('value') or ''):
+                return
             locator.set_input_files({"name": filename, "mimeType": "application/pdf", "buffer": value})
+            if digest:
+                self._uploaded_documents = uploaded | {(filename, digest)}
             upload = locator.locator('xpath=ancestor::*[@data-automation-id="attachments-FileUpload"][1]')
             if upload.count():
                 upload.locator('[data-automation-id="file-upload-successful"]').last.wait_for(state="visible", timeout=10000)

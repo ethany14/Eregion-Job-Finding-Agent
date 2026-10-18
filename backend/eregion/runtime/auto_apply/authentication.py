@@ -69,7 +69,12 @@ def switch_mode(browser, mode, origin, **options):
         links = root(browser).get_by_role("button", name=pattern).filter(visible=True)
     if links.count() != 1:
         controls = account_browser.catalog(root(browser))
-        plan = account_browser.choose(browser, controls, mode=mode, switch=True, **options)
+        # The catalog excludes page headers, so one remaining mode control is the form's own link.
+        local = [c for c in controls if c['purpose'] == mode and not c['disabled']]
+        if len(local) == 1:
+            plan = {'username_ids':[], 'password_ids':[], 'control_id':local[0]['id']}
+        else:
+            plan = account_browser.choose(browser, controls, mode=mode, switch=True, **options)
         if plan['username_ids'] or plan['password_ids']:
             raise BrowserBlocked('Switching account mode must not send credentials.')
         target = _validate(controls, plan, mode, switch=True)
@@ -100,6 +105,8 @@ def authenticate(browser, credentials, *, expected=None, active=lambda: True,
             if verification:raise BrowserBlocked(verification)
             current = context(browser)
             if not current:
+                # Workday shows an empty route shell first (Intel-32: the agent asked to sign in again).
+                if hasattr(browser, 'wait_for_step'):browser.wait_for_step()
                 browser.save_login_state(force=True)
                 return
             if current['mode'] != credentials.mode:

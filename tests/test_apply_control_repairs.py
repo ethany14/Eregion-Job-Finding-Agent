@@ -71,3 +71,16 @@ def test_browser_replacement_clears_observation_scope():
     _,state,_=make();state['observation_scope']=['work'];state['observation_scope_page']=['url','Experience']
     reset=new_browser_bindings(state)
     assert reset['observation_scope'] is None and reset['observation_scope_page'] is None
+
+
+@pytest.mark.parametrize('value,invalid,expected',[('8',False,True),('08',False,True),('9',False,False),('8',True,False)])
+def test_read_field_reports_mechanical_date_match_without_deciding(value,invalid,expected):
+    browser,state,session=make()
+    f=session.fields[0];f.update(key='text:x-dateSectionMonth-input:1',dom_id='x-dateSectionMonth-input',label='Month',kind='text',value=value,invalid=invalid)
+    state['profile']['experience']=[{'id':'dated','company':'Example','start_date':'Aug 2026'}]
+    session._bind_experience({'experience_id':'dated','fields':[{'field_key':f['key'],'component':'start_month'}]})
+    before=dict(state.get('field_decisions',{}))
+    result=session.execute('read_field',{'field_key':f['key'],'observation_id':session.observation_id})
+    assert result['value_matches_target'] is expected
+    assert state.get('field_decisions',{})==before
+    assert result['read_only']

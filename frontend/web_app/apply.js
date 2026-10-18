@@ -593,7 +593,9 @@ async function act(action,body,id=current?.run_id){if(!current||current.run_id!=
 async function browserWindow(visible){
   if(!current||actionBusy||chatBusy)return;
   const item=current;actionBusy=true;error();render();
-  try{await request(`/${item.run_id}/browser-window`,{visible,expected_version:item.career?item.task_version:item.version});await refresh();}
+  // A busy chat can bump the version between polls; take the latest version and retry once.
+  const post=()=>request(`/${item.run_id}/browser-window`,{visible,expected_version:(current?.run_id===item.run_id?current:item)[item.career?'task_version':'version']});
+  try{try{await post();}catch(e){if(!/changed/i.test(e.message))throw e;await refresh();await post();}await refresh();}
   catch(e){error(e.message);await refresh();}finally{actionBusy=false;render();}
 }
 

@@ -206,7 +206,7 @@ def test_two_education_rows_include_optional_details_and_do_not_refill():
         assert autofill(browser,state,lambda:b'')['filled']==[]
         assert browser.page.locator('#rows > fieldset').count()==2
         browser.page.locator('#major-2').fill('')
-        assert 'Field of Study' in gaps(state,browser.observe(),browser.page_state())
+        assert any(g.startswith('Field of Study') for g in gaps(state,browser.observe(),browser.page_state()))
         degree=next(f for f in fields if f['dom_id']=='degree-2');state['answers'][degree['key']]='B.Sc.'
         assert desired_answer(degree,state)=='B.Sc.'
     finally:browser.close()

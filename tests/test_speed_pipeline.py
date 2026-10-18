@@ -485,7 +485,7 @@ def test_education_binding_beats_a_decision_from_the_profiles_latest_degree():
     assert desired_answer(field,state)=='Bachelors'
 
 
-def test_one_page_gets_a_bounded_number_of_model_calls_per_user_message(monkeypatch):
+def test_business_step_budget_survives_title_changes_messages_and_revisits(monkeypatch):
     # Adobe pilot: 523 model calls, mostly on one Workday page, because the step budget
     # reset on every message. A page now stops at PAGE_MODEL_CALL_LIMIT and asks the user.
     from test_auto_apply import FakeBrowser, field
@@ -495,7 +495,7 @@ def test_one_page_gets_a_bounded_number_of_model_calls_per_user_message(monkeypa
     monkeypatch.setenv('TYPESAFE_ENABLED','false')
     browser=FakeBrowser('');browser.fields=[field('note',required=False)]
     session=AgentTools(browser,{'profile':{},'answers':{}},autofill=lambda:{},active=lambda:True)
-    session.observe();session.page_context={'url':'https://example.test/apply','heading':'My Experience','controls':[]}
+    session.observe();session.page_context={'url':'https://example.test/apply','heading':'My Experience','current_step':'current step 3 of 7','controls':[]}
     class Model:
         timeout=5
         def invoke(self,messages,tools):return 'ok'
@@ -506,7 +506,13 @@ def test_one_page_gets_a_bounded_number_of_model_calls_per_user_message(monkeypa
     with pytest.raises(LoopStop) as stop:host.invoke([],[],turn)
     assert stop.value.result['reason']=='page_budget'
     session.page_context={**session.page_context,'heading':'Application Questions'}
-    host.invoke([],[],turn)  # a new page starts a new budget
+    with pytest.raises(LoopStop):host.invoke([],[],turn)  # title alone is not a new business step
+    session.page_context['current_step']='current step 4 of 7'
+    host.invoke([],[],turn)
+    session.page_context['current_step']='current step 3 of 7'
+    session.state['chat_revision']=1
+    with pytest.raises(LoopStop) as stop:host.invoke([],[],Turn('',{},[],revision=1))
+    assert stop.value.result['reason']=='page_budget'
 
 
 def test_autofill_does_not_repeat_an_unchanged_failure_but_retries_after_a_change():
@@ -555,6 +561,11 @@ def test_no_model_request_starts_when_the_slice_cannot_fit_it(monkeypatch):
     host.deadline=time.monotonic()+20
     with pytest.raises(LoopStop) as stop:host.invoke([],[],Turn('',{},[]))
     assert stop.value.result['reason']=='yielded' and not calls
+    # Recent calls may be fast, but 40 s still cannot fit this model's 60 s timeout.
+    host.deadline=time.monotonic()+40
+    with pytest.raises(LoopStop) as stop:host.invoke([],[],Turn('',{},[]))
+    assert stop.value.result['reason']=='yielded' and not calls
+    assert not session.state.get('page_calls')
     host.deadline=time.monotonic()+120
     host.invoke([],[],Turn('',{},[]))
     assert calls==[1]

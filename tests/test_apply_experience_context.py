@@ -151,3 +151,48 @@ def test_record_coverage_exposes_real_components_and_missing_binding_is_actionab
         tools._bind_experience({'experience_id':'two','fields':[{'field_key':'current','component':'current'}]})
     assert 'resolve_field' in str(failure.value)
     assert not tools.state.get('experience_bindings')
+
+
+def test_signature_date_segments_type_the_components_recorded_for_them():
+    # Intel-33: the user gave "2026/10/17"; the model recorded "10" for MM and "17" for DD,
+    # then type_from_source(answer:<segment>) refused both and the run spent its budget.
+    from eregion.runtime.auto_apply.education import date_parts, format_date
+    browser = FakeBrowser('')
+    prefix = 'text:selfIdentifiedDisabilityData--dateSignedOn-dateSection'
+    browser.fields = [field(prefix+part+'-input:1', label='Date*') for part in ('Month','Day','Year')]
+    browser.type_field = lambda key, value: browser.fill(next(f for f in browser.fields if f['key']==key), value)
+    state = {'profile': {}, 'answers': {browser.fields[0]['key']:'10', browser.fields[1]['key']:'17', browser.fields[2]['key']:'2026'}}
+    tools = AgentTools(browser, state, autofill=lambda: {}, active=lambda: True)
+    for current in list(browser.fields):
+        tools.observe()
+        tools.execute('type_from_source', {'observation_id':tools.observation_id,'field_key':current['key'],'source_ref':'answer:'+current['key']})
+    assert [f['value'] for f in browser.fields] == ['10','17','2026']
+    for text in ('2026/10/17','2026.10.17','2026-10-17'):
+        assert date_parts(text) == {'year':'2026','month':'10'}
+        assert [format_date(f, text) for f in browser.fields] == ['10','17','2026']
+    assert date_parts('2026/10.17') == {'year':'2026'}  # mixed separators stay unparsed
+
+
+def test_voluntary_self_identification_is_not_left_empty_without_the_users_answer():
+    # Intel-34: the Hispanic/Latino question was left empty instead of asking the user.
+    browser = FakeBrowser('')
+    hispanic = field('combobox:hispanicOrLatino:1', kind='combobox', label='Please indicate if you identify yourself as Hispanic or Latino.', required=False)
+    hispanic['options'] = [{'label':'Yes','value':'1'},{'label':'No','value':'2'}]
+    note = field('textarea:roleDescription:1', kind='textarea', label='Role Description', required=False)
+    browser.fields = [hispanic, note]
+    tools = AgentTools(browser, {'profile': {}, 'answers': {}}, autofill=lambda: {}, active=lambda: True)
+    tools.observe()
+    leave = lambda key, refs: tools.execute('resolve_field', {'observation_id':tools.observation_id,'field_key':key,
+        'mode':'leave_empty','value':'','source_refs':refs,'reason':'No confirmed fact for this optional question.'})
+    with pytest.raises(BrowserBlocked, match='Ask them once'):
+        leave(hispanic['key'], [])
+    assert leave(note['key'], [])['left_empty']  # ordinary optional fields are unaffected
+    tools.state['answers'][hispanic['key']] = 'I prefer not to answer'
+    tools.observe()
+    assert leave(hispanic['key'], ['answer:'+hispanic['key']])['left_empty']
+
+
+def test_observation_carries_the_local_calendar_date():
+    from datetime import datetime
+    browser, tools = session()
+    assert tools.observe()['local_date'].startswith(datetime.now().astimezone().date().isoformat())

@@ -224,16 +224,38 @@ class AgentLoop:
                 # explicit summary, not grounds to replay earlier domain work.
                 if calls[0]['name'] == 'finish_task' and calls[0]['args'] == {} and text and len(text) <= 4000:
                     calls[0]['args'] = {'text': text}
+                # A domain may lower one model-selected compound call to ordinary calls.
+                # This loop remains the only executor: child intents are journaled and
+                # cancellation/steering are checked between every effect.
+                original_calls, expanded, expansion_failed = calls, False, False
+                expansion_error = None
+                if len(calls) == 1 and hasattr(self.host, 'expand_call'):
+                    try:
+                        validate_call(calls[0], (turn.allowed_tools if turn.allowed_tools is not None else turn.tools) + turn.compatibility_tools)
+                        children = self.host.expand_call(calls[0], turn)
+                        if children is not None:
+                            if not isinstance(children, list) or not 1 <= len(children) <= 64:
+                                raise ToolArgumentsError('Compound call must contain 1 to 64 actions.')
+                            for child in children:
+                                validate_call(child, (turn.allowed_tools if turn.allowed_tools is not None else turn.tools) + turn.compatibility_tools)
+                                if child['name'] not in turn.batchable:
+                                    raise ToolArgumentsError('Compound actions must be batchable tools.')
+                            if hasattr(self.host, 'validate_batch'):
+                                self.host.validate_batch(children, turn)
+                            calls, expanded = children, True
+                            self.event('tool_expanded', call_id=original_calls[0]['id'], child_count=len(calls))
+                    except Exception as exc:
+                        expansion_error = exc
                 results, stopped = [], None
                 batch = all(c['name'] in turn.batchable for c in calls)
-                batch_error = None
+                batch_error = expansion_error
                 if batch and hasattr(self.host, 'validate_batch'):
                     try:
                         self.host.validate_batch(calls, turn)
                     except ToolArgumentsError as exc:
                         batch_error = exc
                 for index, call in enumerate(calls):
-                    if stopped or (index and not batch) or not self.host.active() or self.host.revision() != turn.revision:
+                    if stopped or expansion_failed or (index and not batch) or not self.host.active() or self.host.revision() != turn.revision:
                         results.append({'deferred': True, 'next': 'Read the fresh observation and latest user message before this action.'})
                         continue
                     tool_started, action_persistence = None, 0.0
@@ -271,6 +293,9 @@ class AgentLoop:
                     if image and hasattr(self.host, 'image_message'):
                         image_inputs = self.host.image_message(image)
                     stopped = self.host.after_action(call, outcome, turn)
+                    if expanded and (outcome.get('error') or outcome.get('failed') or outcome.get('unresolved_fields')
+                                     or outcome.get('verified') is False or outcome.get('scope_status') in {'partial', 'failed'}):
+                        expansion_failed = True
                     results.append(self.archive.tool_result(outcome))
                     self.event('tool_completed', tool=call['name'], call_id=call['id'], failed='error' in outcome,
                                tool_execution_seconds=tool_seconds)
@@ -278,7 +303,14 @@ class AgentLoop:
                         'tool_execution_seconds': tool_seconds, 'persistence_seconds': action_persistence,
                         'persistence_boundary': 'intent_checkpoint', 'failed': 'error' in outcome})
                     self.runtime['inflight'] = None
-                self.context.append(snapshot, text, calls, results, turn.revision)
+                if expanded:
+                    # Provider transcript must answer the original call exactly once;
+                    # synthetic child IDs belong only to the execution journal.
+                    results = [self.archive.tool_result({'actions': [
+                        {'tool': c['name'], 'result': r} for c, r in zip(calls, results)],
+                        'partial': expansion_failed or any(r.get('deferred') for r in results),
+                        'next': 'Check the fresh record status; successful actions do not prove the whole page is complete.'})]
+                self.context.append(snapshot, text, original_calls, results, turn.revision)
                 self.save()
                 if stopped and self.host.revision() == turn.revision:
                     result = stopped

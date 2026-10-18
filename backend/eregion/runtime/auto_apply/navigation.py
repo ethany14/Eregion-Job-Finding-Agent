@@ -1,7 +1,8 @@
 """Site-independent page observations and application navigation boundaries."""
 import re
+from .upload_status import UPLOAD_STATUS
 
-PAGE_SCAN = r"""() => {
+PAGE_SCAN = r"""() => {""" + UPLOAD_STATUS + r"""
   const visible = el => !!el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden' && !el.closest('[aria-hidden="true"], [inert]');
   const clean = s => (s || '').replace(/\s+/g, ' ').trim();
   const root = [...document.querySelectorAll('[role="dialog"], dialog[open]')].filter(visible).at(-1) || document;
@@ -40,8 +41,12 @@ PAGE_SCAN = r"""() => {
       onlyInput.getAttribute('placeholder') || onlyInput.name || onlyInput.id)));
   const identifier = accountHeading && (accountSubmit || !!username);
   const text = clean((root === document ? document.querySelector('main, [role="main"], form') || document.body : root).innerText).slice(0,6000);
-  const errors = [...root.querySelectorAll('[role="alert"], [data-automation-id="errorMessage"], .field-error, .error-message')].filter(visible).map(el=>clean(el.textContent)).filter(Boolean).slice(0,20);
-  return {heading, text, controls, errors, authentication_required: password || otp || identifier};
+  const errors = [...root.querySelectorAll('[role="alert"], [data-automation-id="errorMessage"], .field-error, .error-message')].filter(visible).filter(el => !isUploadSuccessNotice(el)).map(el=>clean(el.textContent)).filter(Boolean).slice(0,20);
+  const currentSteps = [...document.querySelectorAll('[aria-current="step"]')].filter(visible)
+    .map(el => clean(el.getAttribute('aria-label') || el.textContent));
+  const current_step = currentSteps.length === 1 ? currentSteps[0] : null;
+  const document_text = root !== document ? clean((document.querySelector('main, [role="main"]') || document.body).innerText).slice(0,12000) : text;
+  return {heading, text, document_text, current_step, controls, errors, authentication_required: password || otp || identifier};
 }"""
 
 
@@ -77,7 +82,8 @@ def page_state(raw, *, url, fields):
     controls = [{**c, "kind": action_kind(c, has_fields=bool(fields))} for c in raw["controls"]]
     final = [c for c in controls if c["kind"] == "submit" and not c["disabled"]]
     auth = raw["authentication_required"]
-    return {"url":url, "heading":raw["heading"], "text":raw["text"],
+    return {"url":url, "heading":raw["heading"], "text":raw["text"], 'current_step':raw.get('current_step'),
+        "document_text":raw.get("document_text") if not fields and not auth and not final else None,
         "stage": "authentication" if auth else "review" if final else "application" if fields else "job_page",
         "authentication_required":auth, "errors":raw.get("errors", []), "can_submit":len(final) == 1 and not auth,
         "controls":[c for c in controls if c["kind"] != "unavailable"]}

@@ -202,7 +202,7 @@ class UsageLedger:
                     raise ReplyBudgetReserved('reply_reserve')
                 if 'input_tokens' in limits:
                     reserve = details.get('reserved_input_tokens')
-                    unknown = any(r.get('source') != 'tool_action' and 'input_tokens' not in r
+                    unknown = any(r.get('source') != 'tool_action' and r.get('status') != 'refused_before_send' and 'input_tokens' not in r
                                   and r.get('reserved_input_tokens') is None for r in rows)
                     if unknown or reserve is None or total['budget_input_tokens'] + reserve > limits['input_tokens']:
                         raise TaskProviderBudgetExceeded('input_tokens')
@@ -235,10 +235,16 @@ class UsageLedger:
 def summarize(rows):
     result = {'calls': 0, 'completed': 0, 'failed': 0, 'pending': 0, 'discarded': 0, 'retries': 0,
               'input_tokens': 0, 'output_tokens': 0, 'unknown_usage_calls': 0, 'groups': [],
-              'budget_input_tokens': 0}
+              'budget_input_tokens': 0, 'refused_before_send': 0}
     groups = {}
     for row in rows:
         if row.get('source') == 'tool_action':
+            continue
+        if row.get('status') == 'refused_before_send':
+            # The experiment reserved first, then the task refused before
+            # provider I/O. Keep the audit event, release its capacity, and do
+            # not consume the outer agent's reserved reply attempts.
+            result['refused_before_send'] += 1
             continue
         result['calls'] += 1
         result['budget_input_tokens'] += row.get('input_tokens', row.get('reserved_input_tokens', 0))

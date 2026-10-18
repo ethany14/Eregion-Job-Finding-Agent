@@ -146,7 +146,7 @@ class GroundingChecks(unittest.TestCase):
         tools = AgentTools(None, state, autofill=None, active=lambda: True,
                            bind_answers=lambda rows, revision: saved.extend(rows))
         tools.fields, tools.observation_id = [question], 'observation'
-        def verify(items):
+        def verify(items, *, context=None):
             calls.append(items)
             return [item['proposed'] == 'No' for item in items]
         tools.verify_answers = verify

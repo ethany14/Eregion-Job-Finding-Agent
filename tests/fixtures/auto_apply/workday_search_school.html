@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- Workday searchable school picker (Intel apply test 2026-10-17), reduced: the menu shows
+     "No Items." until text is typed, filters by the typed text, and closes when focus leaves.
+     School names are public institution names; nothing here is a candidate answer. -->
+<html><body>
+<div data-automation-id="formField-school">
+  <label for="education-2--school">School or University*</label>
+  <div data-automation-id="multiSelectContainer">
+    <input id="education-2--school" placeholder="Search" autocomplete="off" aria-required="true" role="combobox" aria-expanded="false">
+  </div>
+</div>
+<script>
+const schools = ['University of Wisconsin-Eau Claire', 'University of Wisconsin-Madison', 'University of Wisconsin-Milwaukee',
+                 'Concordia University-Wisconsin', 'Cornell University'];
+const input = document.getElementById('education-2--school');
+window.selected = null;
+function render() {
+  document.getElementById('menu')?.remove();
+  const menu = document.createElement('ul');
+  menu.id = 'menu'; menu.setAttribute('role', 'listbox');
+  const text = input.value.trim().toLowerCase();
+  const hits = text ? schools.filter(s => s.toLowerCase().includes(text)) : [];
+  for (const label of (hits.length ? hits : ['No Items.'])) {
+    const item = document.createElement('li');
+    item.setAttribute('role', 'option'); item.textContent = label;
+    if (label !== 'No Items.') item.addEventListener('mousedown', e => { e.preventDefault(); window.selected = label;
+      input.value = label; input.setAttribute('aria-expanded', 'false'); menu.remove(); });
+    menu.append(item);
+  }
+  input.setAttribute('aria-expanded', 'true');
+  document.body.append(menu);
+}
+input.addEventListener('focus', render);
+input.addEventListener('click', render);
+input.addEventListener('input', render);
+input.addEventListener('blur', () => setTimeout(() => { document.getElementById('menu')?.remove(); input.setAttribute('aria-expanded', 'false');
+  if (window.selected === null) input.value = ''; }, 0));
+</script>
+</body></html>

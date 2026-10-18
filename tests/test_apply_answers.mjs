@@ -97,3 +97,15 @@ test('failed submission keeps the edited draft and re-enables the textarea',asyn
   input.value='My edited answer';await input.fire('input');await form.fire('submit');
   assert.equal(input.disabled,false);assert.deepEqual(drafts.payload('A'),{essay:'My edited answer'});
 });
+
+test('Workday MM / DD / YYYY boxes are asked once and the date reaches every segment',async()=>{
+  const prefix='text:selfIdentifiedDisabilityData--dateSignedOn-dateSection';
+  const segments=['Month','Day','Year'].map(part=>({key:`${prefix}${part}-input:1`,label:'Date*',kind:'text'}));
+  const item={run_id:'run',status:'needs_input',fields:[],input_request:{id:'q-date',field_keys:segments.map(f=>f.key),fields:segments}};
+  const container=el('div'),calls=[];
+  renderPendingQuestion({item,container,drafts:new AnswerDrafts(),busy:false,reply:async body=>{calls.push(body);return true;},el,button});
+  const form=container.children[0],inputs=form.querySelectorAll('input');
+  assert.equal(inputs.length,1);assert.equal(inputs[0].type,'date');
+  inputs[0].value='2026-10-17';await inputs[0].fire('input');await form.fire('submit');
+  assert.deepEqual(calls,[{request_id:'q-date',answers:Object.fromEntries(segments.map(f=>[f.key,'2026-10-17']))}]);
+});

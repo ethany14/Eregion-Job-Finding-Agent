@@ -164,6 +164,13 @@ class TaskLoop:
                     logger.warning('Task control failure: task=%s type=%s',task_id,type(exc).__name__)
                     self.repository.append(task_id,role='assistant',text=failure['message'])
                     return self.repository.change(task_id,status='needs_input',error=failure,model_activity=None)
+                if routed and routed.get('wait'):
+                    # The reply already reached the capability; wait for it without a model turn.
+                    wait=routed['wait']
+                    return self.repository.change(task_id,lambda s:{'history':[*s['history'],
+                        {'tool':routed['tool'],'arguments':{'message_id':message_id},'result':routed['result'],
+                         'chat_revision':s['chat_revision'],'at':now()}][-24:]},status='waiting',
+                        wait={**wait,'token':self.harness.wait_token(wait)})
                 if routed:
                     self.repository.append(task_id,role='assistant',text=routed['text'])
                     result=self.repository.change(task_id,lambda s:{'history':[*s['history'],
@@ -182,6 +189,11 @@ class TaskLoop:
                         with self.lock:
                             latest = self.repository.get(state['task_id'])
                             if latest['status']!='waiting':continue
+                            hold = getattr(self.harness,'hold_wait',None)
+                            if hold and hold(latest):
+                                # The capability asks the user directly; keep waiting without a model turn.
+                                self.repository.change(state['task_id'],wait={**latest['wait'],'token':self.harness.wait_token(latest['wait'])})
+                                continue
                             self.repository.change(state['task_id'],status='queued',wait=None)
                             self.schedule(state['task_id'])
             except Exception:

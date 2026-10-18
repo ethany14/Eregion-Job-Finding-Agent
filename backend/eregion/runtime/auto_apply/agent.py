@@ -11,12 +11,13 @@ from uuid import uuid4
 
 from eregion.runtime.model_runtime import model_timeout
 
+from .observation import observation_messages, answer_verification_context
 from .browser import BrowserBlocked
 from .errors import failure
 from .contracts import normalized_label
 from .matching import resolve_option, search_text, boolean_answer, is_consent, clean, equivalent
 from .autofill import desired_answer, matches, pending_documents
-from .decisions import active_decision, protected, preserves_format, signature, source_value
+from .decisions import active_decision, verified_empty_decision, protected, preserves_format, signature, source_value
 from .contracts import candidate_answer
 from .education import COMPONENTS, facts as education_facts, binding as education_binding, gaps as education_gaps, repeatable as repeatable_education, format_date, date_format
 from .drafting import prepare_draft, visible_drafts
@@ -43,7 +44,21 @@ VISUAL_TOOLS = {"view_browser", "view_field", "computer_click", "computer_move",
 from .experience import BINDING_COMPONENTS, binding as experience_binding, facts as experience_facts, coverage as experience_coverage, gaps as experience_gaps
 
 TOOLS = [
-    tool('bind_experience', 'Bind observed fields to one saved work-experience record. You choose the correspondence. For current-employment checkboxes, then use resolve_field with your explicit yes/no interpretation and cited fact; binding does not decide the boolean.',
+    tool('enable_browser_tools', 'Expose ordinary low-level browser tools when form tools are insufficient. This only changes tool visibility; it performs no browser action and relaxes no safety checks.'),
+    tool('apply_record', 'Process ONE observed work/education row in one call: bind, save YOUR decisions, fill the explicit remaining fields, optionally click one final page control. Use alone in a reply. A failure stops dependent actions. Inspect unknown options first. Never put a decision field in fill_fields as well.',
+        {'observation_id': TEXT, 'record': {'type': 'string', 'description': 'Exact record_coverage.record including its work: or education: prefix; do not use a bare id.'},
+         'bindings': {'type': 'array', 'maxItems': 20, 'items': {'type': 'object', 'properties': {'field_key': TEXT, 'component': TEXT}, 'required': ['field_key', 'component'], 'additionalProperties': False}},
+         'decisions': {'type': 'array', 'maxItems': 20, 'items': {'type': 'object', 'properties': {
+             'field_key': TEXT, 'mode': {'type': 'string', 'enum': ['format', 'equivalent', 'default', 'leave_empty']},
+             'value': TEXT, 'source_refs': {'type': 'array', 'items': TEXT}, 'reason': TEXT},
+             'required': ['field_key', 'mode', 'value', 'source_refs', 'reason'], 'additionalProperties': False}},
+         'fill_fields': {'type': 'array', 'items': TEXT, 'maxItems': 20}}, optional={'then_control_id': TEXT}),
+    tool('plan_records', 'Choose records to include. Binding also chooses inclusion. Omissions need cited facts and a reason; unknown applicability stays needs_input. This does not fill fields or mark records complete.',
+         {'observation_id': TEXT, 'records': {'type': 'array', 'minItems': 1, 'maxItems': 50, 'items': {
+             'type': 'object', 'properties': {'record': TEXT, 'status': {'type': 'string', 'enum': ['include', 'omit', 'needs_input']},
+                 'reason': TEXT, 'source_refs': {'type': 'array', 'items': TEXT}},
+             'required': ['record', 'status', 'reason', 'source_refs'], 'additionalProperties': False}}}),
+    tool('bind_experience', 'Bind observed fields to one saved work-experience record. Every component must exist in available_components; otherwise the entire batch is refused. Omit a missing current component from bindings, then interpret existing dated facts using resolve_field. You choose the correspondence. For current-employment checkboxes, then use resolve_field with your explicit yes/no interpretation and cited fact; binding does not decide the boolean.',
          {'observation_id':TEXT, 'experience_id':TEXT, 'fields':{'type':'array','items':{'type':'object',
           'properties':{'field_key':TEXT,'component':{'type':'string','enum':list(BINDING_COMPONENTS)}},
           'required':['field_key','component'],'additionalProperties':False}}}),
@@ -56,7 +71,7 @@ TOOLS = [
         {**FIELD, 'text':TEXT, 'evidence':{'type':'array','items':{'type':'object',
             'properties':{'source_ref':TEXT,'quote':TEXT}, 'required':['source_ref','quote'],'additionalProperties':False}},
          'missing_details':{'type':'array','items':TEXT}}),
-    tool('bind_education','Associate each visible field once with one saved education record. Combined dates use start_date/end_date; use month/year only for separate controls. Autofill formats explicit field date templates without changing source graduation status.',
+    tool('bind_education','Associate every field you will fill or resolve with its own component in one saved education record. Binding school alone does not bind degree or major; include them explicitly. Combined dates use start_date/end_date; use month/year only for separate controls. Autofill formats explicit field date templates without changing source graduation status.',
         {'observation_id':TEXT,'education_id':TEXT,'fields':{'type':'array','items':{'type':'object','properties':{
             'field_key':TEXT,'component':{'type':'string','enum':list(COMPONENTS)}},'required':['field_key','component'],'additionalProperties':False}}}),
     tool('use_remembered_answer','Reuse a confirmed answer from an earlier application when the question means the same thing and its scope still applies.',
@@ -75,9 +90,10 @@ TOOLS = [
          {**SCREEN, "field_key":TEXT, "source_ref":TEXT, "replace":{"type":"boolean"}}),
     tool("computer_wait", "Wait briefly for a visual transition, then read a fresh screenshot.", SCREEN),
     tool("resolve_field", "Apply a model-decided representation of a confirmed fact, semantic option mapping, or incidental default. "
-         "Saves only a run-local decision, never a new candidate fact. mode=leave_empty records your decision to leave an "
+         "Saves only a run-local decision, never a new candidate fact. For a standalone questionnaire, cite education facts with format/equivalent and your reason; evidence is model-verified without inventing a repeated-row binding. "
+         "mode=leave_empty records your decision to leave an "
          "OPTIONAL field empty when no observed option reliably represents the fact (value may be empty; give the reason); "
-         "it is shown to the user immediately. Never pick a merely similar option instead.",
+         "it is shown to the user immediately. An existing optional value is cleared through its own control and read back; a failed clear is not completion. Never pick a merely similar option instead.",
          {**FIELD, "mode":{"type":"string", "enum":["format", "equivalent", "default", "leave_empty"]}, "value":TEXT,
           "source_refs":{"type":"array", "items":TEXT}, "reason":TEXT}),
     tool("explore_option", "Enter an observed category to find a user's intended leaf. Read returned children/new fields; the category is not the final answer.",
@@ -96,7 +112,7 @@ TOOLS = [
              "required": ["field_key", "message_id", "quote", "value"], "additionalProperties": False}}}),
     tool("update_plan", "Save the remaining steps and the current approach for this application.",
          {"steps": {"type": "array", "items": TEXT}, "approach": TEXT}),
-    tool("autofill", "Fill the observed field_keys you choose. Scope persists until you select new fields; unrelated failures are not this operation's failures. Boolean/semantic decisions still require resolve_field. Omit field_keys only to reuse the saved scope (or initial page scope).", optional={'field_keys':{'type':'array','items':TEXT,'minItems':1,'maxItems':100}}),
+    tool("autofill", "Fill the observed field_keys you choose. Scope persists until you select new fields; unrelated failures are not this operation's failures. Boolean/semantic decisions still require resolve_field. Omit field_keys only to reuse the saved scope (or initial page scope). literal_only=true skips nested semantic option choices; unresolved controls remain for your decision.", optional={'field_keys':{'type':'array','items':TEXT,'minItems':1,'maxItems':100}, 'literal_only':{'type':'boolean'}}),
     tool("observe", "Read the latest form values, missing fields and validation errors."),
     tool("say", "Send a short progress explanation or question to the user in the application chat.", {"text": TEXT}),
     tool("use_chat_answer", "Legacy literal-only answer tool; prefer record_answers for natural conversation.",
@@ -104,9 +120,15 @@ TOOLS = [
     tool("read_field", "Read a field's current value, target, saved decision and date siblings without clicking, opening menus or typing.", FIELD),
     tool("focus_fields", "Choose fields for detailed observations; other fields remain in a page-wide index and blockers. Empty field_keys restores full detail. Does not write or decide any answers.", {"field_keys":{"type":"array","items":TEXT,"maxItems":100}}),
     tool("inspect_field", "Open a dropdown and read its actual options. Clears a previous search so parent categories can be explored when searching a leaf found nothing. Follow next_offset to read long lists.", FIELD, optional=OPTION_PAGE),
-    tool("search_options", "Search an autocomplete dropdown using a supplied fact; expand known country/school aliases. Follow next_offset to read long results.", {**FIELD, "source_ref": TEXT}, optional=OPTION_PAGE),
+    tool("search_options", "Search using a cited fact. Optionally choose a shorter or alternative query with a reason; a search term is not a candidate answer or an equivalence decision.", {**FIELD, "source_ref": TEXT}, optional={**OPTION_PAGE,
+        "query": {"type":"string", "maxLength":120, "description":"Model-chosen search term grounded in source_ref; does not change the fact."},
+        "query_reason": {"type":"string", "maxLength":500, "description":"Why this alternative query helps find options for the cited fact."},
+        "extra_queries": {"type":"array", "maxItems":3, "items":{"type":"string", "maxLength":120},
+            "description":"Up to three more grounded search terms run in the same call (covered by query_reason); each result is reported separately."}}),
     tool("click_field", "Click/focus an observed text control or dropdown, without changing checkbox answers.", FIELD),
-    tool("type_from_source", "Type a value from an allowed source, with keyboard input events.", {**FIELD, "source_ref": TEXT}),
+    tool("type_from_source", "Type a value from an allowed source verbatim, with keyboard input events. For a narrower "
+         "control than a compound source (a City box beside a separate State control, given \"Ithaca, NY\"), use "
+         "resolve_field mode=format with the verbatim part instead, so the other part is not duplicated.", {**FIELD, "source_ref": TEXT}),
     tool("choose_option", "Select an observed option using this field's allowed_source_refs. If no answer is bound yet, use record_answers with the relevant original user message first.", {**FIELD, "source_ref": TEXT, "option_label": TEXT}),
     tool("press_key", "Use ArrowDown, ArrowUp, Escape or Tab on a control; Enter is unavailable.",
          {**FIELD, "key": {"type": "string", "enum": ["ArrowDown", "ArrowUp", "Escape", "Tab"]}}),
@@ -194,9 +216,9 @@ class ConfiguredToolModel:
         model = self.model if complex_turn else self.fast_model
         return model.bind_tools(tools).invoke(messages, timeout=self.timeout, max_tokens=MAX_OUTPUT_TOKENS)
 
-    def verify_answers(self, answers):
+    def verify_answers(self, answers, *, context=None):
         from .grounding import verify_boolean_answers
-        return verify_boolean_answers(self.fast_model, answers, timeout=self.timeout)
+        return verify_boolean_answers(self.fast_model, answers, timeout=self.timeout, context=context)
 
 
 class HybridApplicationAgent:
@@ -217,6 +239,18 @@ class HybridApplicationAgent:
             bind_answers=bind_answers, publish_question=publish_question)
         return DecisionRunner(self.model_factory, decisions=self.decisions).run(session, active=active, reserve=reserve,
             report=report, refresh=refresh, communicate=communicate, checkpoint=checkpoint)
+
+
+# Workday's standard voluntary self-identification controls (structural ids, not label semantics).
+SELF_IDENTIFICATION = re.compile(r"hispanicOrLatino|ethnicity|\brace\b|gender|veteranStatus|disabilityStatus|sexualOrientation", re.I)
+
+
+def local_date():
+    """The user's calendar date (this machine's local time zone), e.g. for a signature date."""
+    from datetime import datetime
+    now = datetime.now().astimezone()
+    offset = now.strftime("%z")  # tzname() is localized on Windows; the offset is not
+    return f"{now.date().isoformat()} (UTC{offset[:3]}:{offset[3:]})"
 
 
 def _without_empty(entry):
@@ -255,7 +289,7 @@ def record_status(fields, state):
                     undecided.append(key)
                     continue
                 if decision and decision['mode'] == 'leave_empty' and not field.get('required'):
-                    verified.append(key); continue
+                    (verified if not field.get('value') and not field.get('invalid') else pending).append(key); continue
                 target = desired_answer(field, state)
                 (verified if target is not None and matches(field, target) and not field.get('invalid') else pending).append(key)
             result.append({'record': f"{kind}:{record['id']}",
@@ -285,6 +319,8 @@ class AgentTools:
         self.fast_choices = None
         self.fast_option_attempts = set()
         self._cached_fields = None
+        self._previous_observation = None
+        self._observation_revision = 0
 
     def observe(self):
         if self.refresh: self.state = self.refresh()
@@ -297,13 +333,32 @@ class AgentTools:
             self.page_context = self.browser.page_state(fields=self.fields) if isinstance(self.browser, ApplicationBrowser) else self.browser.page_state()
         else:
             self.page_context = None
+        page = self.page_context or {}
+        if not self.state.get('opening_page_evidence') and page.get('stage')=='job_page' and any(
+                c.get('kind') in {'open_application','resume'} for c in page.get('controls',[])) and page.get('text'):
+            # Preserve observed posting context before the form replaces it.
+            # Raw site text remains untrusted; the model resolves its meaning.
+            self._save_decisions(opening_page_evidence={'url':page.get('url'),
+                'heading':page.get('heading'),'text':(page.get('document_text') or page['text'])[:12000]})
+        from .steps import structure_signature
+        structure = structure_signature(self.page_context, self.fields)
+        previous = self.state.get('observation_structure')
+        if previous and previous != structure:
+            self._save_decisions(observation_scope=None, observation_scope_page=None)
+        if previous != structure:
+            self._save_decisions(observation_structure=structure)
         if repeatable_education(self.page_context) and self.state['profile'].get('education') and not self.state.get('education_required'):
             self._save_decisions(education_required=True)
         self._reconcile_paths()
         completed_keys = [f["key"] for f in self.fields
-            if desired_answer(f, self.state) is not None and matches(f, desired_answer(f, self.state))]
+            if verified_empty_decision(f, self.state) or (desired_answer(f, self.state) is not None and matches(f, desired_answer(f, self.state)))]
         self.failed_fields.difference_update(completed_keys)
         self.observation_id = str(uuid4())
+        from .observation import field_delta
+        self._observation_revision += 1
+        delta = field_delta(self._previous_observation, self.fields, self._observation_revision)
+        from copy import deepcopy
+        self._previous_observation = {'revision': self._observation_revision, 'fields': deepcopy(self.fields)}
         sources = {f"profile:{key}": value for key, value in self.state["profile"].items() if value and key not in {'education', 'experience'}}
         sources.update(education_facts(self.state['profile'], self.state.get('education_answer_overrides')))
         from .experience import facts as experience_facts
@@ -320,7 +375,8 @@ class AgentTools:
         if page and self.fields and len(page.get("text", "")) > 2000:
             page = {**page, "text": page["text"][:2000], "text_truncated": True}
         def options(field):
-            values = field.get("options", [])
+            # A closed control shows no options; keep the ones read on this page (host or model).
+            values = field.get("options") or self.observed_options.get(field["key"], [])
             limit = 300 if field["key"] in self.observed_options or len(values) <= OPTION_PREVIEW else OPTION_PREVIEW
             return values[:limit]
         def allowed_sources(field):
@@ -377,6 +433,15 @@ class AgentTools:
                 return ref.split(':', 1)[0]
             source = self.state.get('answer_sources', {}).get(ref.removeprefix('answer:'), {})
             return {k: source[k] for k in ('type', 'interpretation', 'message_id') if source.get(k)}
+        from .record_coverage import coverage, exposed_kinds
+        covered = coverage(self.fields, self.state)
+        exposed = exposed_kinds(self.fields, self.state, self.page_context)
+        invalidated = {r['record'] for r in covered if r['record'].split(':')[0] in exposed and not r['complete']}
+        completion = {k:v for k,v in self.state.get('record_completion', {}).items() if k not in invalidated}
+        seen = sorted(set(self.state.get('record_kinds_seen', [])) | exposed)
+        if seen != self.state.get('record_kinds_seen', []) or completion != self.state.get('record_completion', {}):
+            self._save_decisions(record_kinds_seen=seen, record_completion=completion)
+        from .observation import control_input, record_rows
         snapshot = {"observation_id": self.observation_id, "autofill_called": self.autofill_called, "autofill_scope": self.state.get("autofill_scope"),
             'pending_document_uploads':pending_documents(self.state,self.fields),
             'document_bindings':self.state.get('document_bindings',{}),
@@ -386,13 +451,14 @@ class AgentTools:
             # W3: bindings/decisions only for fields on this page (others stay in saved state).
             'education_bindings':{k:b.get('source_ref') for k,b in self.state.get('education_bindings',{}).items() if k in current_keys},
             'experience_coverage':experience_coverage(self.state),
-            'record_status':record_status(self.fields,self.state),
+            'record_coverage':covered,
+            'record_rows':record_rows(self.fields,self.state,completed_keys),
             'unreviewed_checkboxes':unreviewed_checkboxes(self.fields,self.state),
             'education_gaps':education_gaps(self.state,self.fields,self.page_context),
             'remembered_answers':memories if self.state.get('reuse_answers',True) else [],
             'resume_context':resume,
             'answer_drafts':visible_drafts(self.state, self.fields),
-            "field_decisions":{k:{'value':d.get('value'),'mode':d.get('mode'),'sources':list(d.get('sources') or {})}
+            "field_decisions":{k:{'value':d.get('value'),'mode':d.get('mode'),'sources':list(d.get('sources') or {}), 'reason':str(d.get('reason') or '')[:400]}
                 for k,d in self.state.get("field_decisions", {}).items() if k in current_keys}, "option_paths":self.state.get("option_paths", {}),
             "task": {"url": self.state.get("url"), "goal": "Complete this application using confirmed candidate facts, then return for review."},
             "task_plan": self.state.get("task_plan", []), "approach": self.state.get("approach", ""),
@@ -405,20 +471,28 @@ class AgentTools:
             "chat_revision": self.state.get("chat_revision", 0), "completed_fields": completed_keys,
             # Point 3: what blocks Next, separately from what is selected on the page.
             "next_step_blockers": blockers,
+            'observation_changes': {'kind': delta['kind'], 'revision': delta['revision'],
+                'added_or_changed': [f['key'] for f in delta.get('changed', delta.get('fields', []))],
+                'removed': delta.get('removed', [])},
             "any_field_source_refs": sorted(universal),
+            # Intel-34: without a clock the model assumed UTC "today" (a day ahead in the evening).
+            "local_date": local_date(),
             "user_messages": [{k: v for k, v in {"id": m["id"], "role": m["role"], "text": m["text"], "field_key": m.get("field_key"),
                 "bound_answers": m.get("bound_answers"), "binding_method": m.get("binding_method"),
                 "question_keys": m.get("question_keys"), 'in_reply_to':m.get('in_reply_to')}.items() if v not in (None, [], {})}
-                for m in self.state.get("messages", [])[-12:]],
+                for m in observation_messages(self.state.get("messages", []))],
             "facts": [{'ref': key, 'value': value[:2000] if isinstance(value, str) else value,
                 'origin': origin(key)} for key, value in sources.items()],
-            "fields": [{"key": f["key"], "label": f["label"][:250], "value": f["value"], "done": True} if f["key"] in completed_keys else _without_empty({"key": f["key"], "label": f["label"][:250], "kind": f["kind"],
+            "fields": [{"key": f["key"], "label": f["label"][:250], "value": f["value"], "done": True, **({"completion": "model_decided_leave_empty", "reason": active_decision(f, self.state)["reason"][:400]} if verified_empty_decision(f, self.state) else {})} if f["key"] in completed_keys else _without_empty({"key": f["key"], "label": f["label"][:250], "kind": f["kind"],
                 "allowed_source_refs":[r for r in allowed[f["key"]] if r not in universal],
                 # selected (value) vs target fact vs saved semantic mapping vs verified write.
-                **status[f["key"]],
+                **status[f["key"]], "control_input": control_input(f),
                 **({"search_history": search_log[f["key"]]} if f["key"] in search_log else {}),
                 "required": f["required"], "invalid": f.get("invalid", False),
-                "choice_control":f.get("choice_control", False), "group":f.get("group", ""),
+                "choice_control":f.get("choice_control", False), "value_committed":f.get("value_committed"),
+                **({"selected_option_decision": "This committed value is already an observed option. You may resolve_field equivalent with cited facts and your reason without searching for it again; its presence alone does not establish equivalence."}
+                    if f.get("value_committed") and status[f["key"]]["mapping"] == "undecided" else {}),
+                "group":f.get("group", ""),
                 "search_text":f.get("search_text", ""), "section":f.get("section", ""),
                 "help":f.get("help", ""), "errors":f.get("errors", []),
                 "constraints":{k:v for k,v in (f.get("constraints") or {}).items() if v not in (None, "", False)},
@@ -429,7 +503,37 @@ class AgentTools:
                     **({"disabled":True} if o.get("disabled") else {})} for o in options(f)]}) for f in self.fields]}
 
         from .observation import focus_observation
+        from .record_coverage import gaps as record_gaps
+        snapshot['record_blockers'] = record_gaps(self.fields, self.state, self.page_context)
         return focus_observation(snapshot, self.state, self.fields)
+
+    def selected_option_context(self, field):
+        if not field.get('value_committed') or field.get('value') in ('', None):
+            return {}
+        decision = active_decision(field, self.state)
+        return {'current_selection': {'value': field['value'], 'committed': True,
+                    'saved_decision': decision.get('mode') if decision else None},
+                'selection_note': 'This value is currently selected on the page, independently of the search results. '
+                    'Being selected does not establish equivalence to the candidate fact. Compare the evidence, '
+                    'bind the field before writing, and save your decision; do not search only to rediscover this value.'}
+
+    def search_source(self, field, reference):
+        # Looking up choices does not bind a record or authorize a later write.
+        # An unbound education picker can use an explicit existing fact, while
+        # a row already assigned to another record remains protected.
+        if reference.startswith('education:') and not education_binding(field, self.state):
+            from .observation import record_identity
+            from .record_coverage import binding_ref
+            value = source_value(self.state, reference)
+            if value in (None, ''):
+                raise BrowserBlocked('That education detail is not in the resume; do not invent it.')
+            row = record_identity(field)
+            record = ':'.join(reference.split(':')[:2])
+            if row and any(record_identity(peer) == row and binding_ref(peer, self.state) not in (None, record)
+                           for peer in self.fields):
+                raise BrowserBlocked('This row belongs to another record.', code='education_source_mismatch')
+            return value
+        return self.source(field, reference)
 
     def source(self, field, reference):
         if reference == 'material:cover_letter':
@@ -453,6 +557,8 @@ class AgentTools:
         if reference.startswith('education:'):
             bound=education_binding(field,self.state)
             if not bound:
+                if self._question_education_sources(field, {reference: source_value(self.state, reference)}):
+                    raise BrowserBlocked('This questionnaire needs your interpretation, not a direct copy. Use resolve_field with cited education facts and a reason; its evidence will be model-verified before writing.', code='source_required')
                 raise BrowserBlocked('Bind this field to the correct education record before using that source.', code='education_binding_required')
             if bound['source_ref'] != reference:
                 raise BrowserBlocked('This field is already bound. Use its component source: '+bound['source_ref'], code='education_source_mismatch')
@@ -500,11 +606,27 @@ class AgentTools:
             raise BrowserBlocked("Visual fallback is not enabled for this attempt.")
         if self.visual and name not in VISUAL_TOOLS and name not in {"observe","say","update_plan","record_answers","ready_for_review","request_input","ask_user"}:
             self.visual.invalidate()
+        if name == 'enable_browser_tools':
+            self._save_decisions(browser_tools_requested=True)
+            return {'enabled':True,'next':'Ordinary browser tools appear in the next turn; field, consent and submission safeguards remain in force.'}
         if name in BROWSER_NAMES:
             from eregion.runtime.browser.session import BrowserSession
             from eregion.runtime.browser.tools import execute
             if self.browsing is None:self.browsing = BrowserSession(self.browser,application=True)
-            return execute(self.browsing,name,args)
+            if name != 'browser_open':
+                return execute(self.browsing,name,args)
+            # Adobe-23: Workday redirected to a maintenance page and the model reopened the same
+            # link 7 times. Two opens of one URL that land on identical page evidence are enough;
+            # a third is refused until the user writes again. Nothing here interprets the page.
+            revision = self.state.get('chat_revision', 0)
+            opens = [o for o in self.state.get('open_history', []) if o.get('revision') == revision and o.get('url') == args.get('url')]
+            if len(opens) >= 2 and opens[-1]['evidence'] and opens[-1]['evidence'] == opens[-2]['evidence']:
+                raise BrowserBlocked('Reopening this URL twice returned the same page. Tell the user what the page shows '
+                                     'and ask whether to wait or use another link; do not reopen it again.', code='repeated_action')
+            result = execute(self.browsing,name,args)
+            evidence = result.get('page_evidence_hash') if isinstance(result, dict) else None
+            self._save_decisions(open_history=[*self.state.get('open_history', []), {'revision': revision, 'url': args.get('url'), 'evidence': evidence}][-12:])
+            return result
         if name == 'focus_fields':
             keys = args['field_keys']
             if not isinstance(keys, list) or len(keys)>100 or any(not isinstance(k,str) or k not in {f['key'] for f in self.fields} for k in keys):
@@ -539,7 +661,10 @@ class AgentTools:
                 if 'field_keys' in args and not getattr(self, '_host_literal_autofill', False):
                     self._save_decisions(observation_scope=list(dict.fromkeys(keys)), observation_scope_page=page)
             result = self.autofill() or {}
-            fast_filled = [] if (getattr(self, '_host_literal_autofill', False) or keys is None) else fill_options(self, field_keys=keys)
+            # A record plan already contains the model's semantic decisions. Its
+            # literal tail must not start another decision/observation cycle and
+            # invalidate the model's final page-control reference.
+            fast_filled = [] if (args.get('literal_only', False) or getattr(self, '_host_literal_autofill', False) or keys is None) else fill_options(self, field_keys=keys)
             result['filled'] = list(dict.fromkeys([*result.get('filled', []), *fast_filled]))
             for key in fast_filled:
                 result.get('failed', {}).pop(key, None)
@@ -642,11 +767,23 @@ class AgentTools:
             invalid = [f["key"] for f in self.fields if f.get("invalid") or (f["required"] and not f["value"])]
             if invalid or self._unresolved_paths():
                 raise BrowserBlocked("Repair the website's validation errors and complete the option path before review: " + "; ".join(invalid + self._unresolved_paths()))
-            gaps=education_gaps(self.state,self.fields,self.page_context,final=True) + experience_gaps(self.state,self.fields)
+            from .record_coverage import effective_state, review_gaps, completion_evidence
+            guarded_state = effective_state(self.state)
+            gaps=education_gaps(guarded_state,self.fields,self.page_context,final=True) + experience_gaps(guarded_state,self.fields)
+            gaps += review_gaps({**self.state, 'record_completion': {
+                **self.state.get('record_completion', {}), **completion_evidence(self.fields, self.state)}})
             if gaps:raise BrowserBlocked('Complete supplied education details before review: '+'; '.join(gaps))
             return {"host_validation_required": True}
         if args["observation_id"] != self.observation_id:
             raise BrowserBlocked("Stale observation. Observe the form again.", code='stale_observation')
+        if name == 'plan_records':
+            from .record_coverage import plan_records, coverage
+            self._save_decisions(record_plan=plan_records(self.state, args['records']))
+            if self.communicate:
+                for item in args['records']:
+                    if item['status'] == 'omit':
+                        self.communicate(f"Record omitted ({item['record']}): {item['reason']}")
+            return {'record_coverage': coverage(self.fields, self.state), 'next': 'Create and verify included records; a plan is not completion.'}
         if name=='bind_experience':return self._bind_experience(args)
         if name=='bind_education':return self._bind_education(args)
         if name == "view_browser": return self._view_browser()
@@ -658,11 +795,35 @@ class AgentTools:
             if control is None or control["kind"] in {"submit","guarded","field","unavailable"} or control["disabled"]:
                 raise BrowserBlocked("Choose an ordinary observed page control. Use field tools for choices; guarded or final-send controls require browser help/review.")
             if control["kind"] == "next":
+                old_control = dict(control)
+                from .steps import step_key
+                old_step = step_key(self.page_context)
+                self._cached_fields = None
+                self.observe()
+                if step_key(self.page_context) != old_step:
+                    raise BrowserBlocked('The business step changed; observe before navigating.', code='stale_observation')
+                control = next((c for c in (self.page_context or {}).get('controls', [])
+                                if c['id'] == old_control['id'] and c['kind'] == 'next'
+                                and c['label'] == old_control['label'] and not c.get('disabled')), None)
+                if control is None:
+                    raise BrowserBlocked('Next changed; observe before navigating.', code='stale_observation')
+                from .record_coverage import gaps as record_gaps, effective_state
+                guarded_state = effective_state(self.state)
                 missing = [f["key"] for f in self.fields if (f["required"] and not f["value"]) or
                     (is_consent(f) and self.state.get("consent_policy", "ask") == "ask" and f["key"] not in self.state["answers"])]
                 missing += self._unresolved_paths()
                 missing += [k for k in visible_drafts(self.state, self.fields) if any(f['key'] == k and f.get('required') for f in self.fields)]
-                missing += education_gaps(self.state,self.fields,self.page_context) + experience_gaps(self.state,self.fields)
+                missing += education_gaps(guarded_state,self.fields,self.page_context) + experience_gaps(guarded_state,self.fields)
+                missing += record_gaps(self.fields, self.state, self.page_context)
+                # Some sites clear an error only on Next: a field already holding the agent's
+                # decided (corrected) value may revalidate there; an uncorrected error still blocks.
+                from .autofill import matches as holds_answer
+                def corrected(f):
+                    decided = (self.state.get('field_decisions') or {}).get(f['key'], {})
+                    value = self.state['answers'].get(f['key'], decided.get('value'))
+                    return bool(f.get('value')) and value is not None and holds_answer({**f, 'invalid': False}, value)
+                missing += [f['key'] for f in self.fields if f.get('invalid') and not corrected(f)]
+                missing += [f'Pending document: {kind}' for kind in pending_documents(self.state, self.fields)]
                 if missing:
                     raise BrowserBlocked("Complete this step's required answers and consent before continuing: " + "; ".join(missing))
             history = [*self.state.get("page_history", []), {"url":self.page_context["url"], "heading":self.page_context["heading"]}][-20:]
@@ -670,15 +831,23 @@ class AgentTools:
             review.update({f["key"]:f for f in self.fields})
             self.state.update(page_history=history, review_fields=list(review.values()))
             if self.checkpoint: self.checkpoint(page_history=history, review_fields=list(review.values()))
-            self.browser.click_page_action(control)
+            if control['kind'] == 'next':
+                from .record_coverage import completion_evidence
+                completed = completion_evidence(self.fields, self.state)
+            navigation = self.browser.click_page_action(control)
+            if control['kind'] == 'next' and (not isinstance(navigation, dict) or navigation.get('verified')):
+                self._save_decisions(record_completion={**self.state.get('record_completion', {}), **completed},
+                    record_kinds_seen=sorted(set(self.state.get('record_kinds_seen', [])) | {r.split(':')[0] for r in completed}))
             # A page action changes the structure (Add Another keeps url and heading): the next
             # observation must show the whole changed page, not a detail scope chosen before it.
             self._save_decisions(observation_scope=None, observation_scope_page=None)
+            self.observation_id = None
+            self._cached_fields = None
             self.visual_field_key = None
             self.autofill_called = False
             self.observed_options.clear()
-            self.failed_fields.clear()
-            return {"navigated": True, "label":control["label"], "next":"Observe the new page before choosing another action."}
+            return {**(navigation if isinstance(navigation, dict) else {"navigated": True}),
+                    "label":control["label"], "next":"Observe the new page before choosing another action; an unverified transition is not completion."}
         field = next((f for f in self.fields if f["key"] == args["field_key"]), None)
         if field is None:
             raise BrowserBlocked("The field is not in the latest observation.", code="stale_observation")
@@ -690,8 +859,12 @@ class AgentTools:
                 prefix = re.split(r'dateSection(?:Month|Day|Year)', field.get('dom_id') or key)[0]
                 siblings = [{'key':f['key'],'value':f['value'],'invalid':f.get('invalid',False)}
                     for f in self.fields if (f.get('dom_id') or f['key']).startswith(prefix) and date_segment(f)]
+            target = desired_answer(field,self.state)
+            verified = (not field.get('invalid') and not field.get('errors') and matches(field,target)) if target is not None else None
             return {'field_key':key,'value':field['value'],'kind':field['kind'],
-                    'target':desired_answer(field,self.state),'decision':active_decision(field,self.state),
+                    'target':target,'decision':active_decision(field,self.state),
+                    'value_matches_target':verified,
+                    'verification_note':'Mechanical readback against the saved target, including date padding; this does not create a semantic decision or complete a record.',
                     'errors':field.get('errors',[]),'date_group':siblings,'read_only':True}
         if name=='bind_document':
             if field['kind']!='file' or args['document'] not in {'resume','cover_letter'}:
@@ -748,26 +921,56 @@ class AgentTools:
             options = self.browser.inspect_options(key)
             self.observed_options[key] = options
             self._log_search(key, None, options, args)
-            if not options and self.state.get("visual_fallback"):
+            current = self.browser.field(key) if hasattr(self.browser, "field") else field
+            selected = self.selected_option_context(current)
+            if not options and not selected and self.state.get("visual_fallback"):
                 # The menu may render rows the DOM does not expose as options.
                 # Report a DOM failure so the runner attaches a screenshot.
                 return {**failure("dom_interaction_failed", "No options could be read from this control's DOM."),
                     "field_key": key, "options": []}
-            return self._option_page(options, args)
+            return {**self._option_page(options, args), **selected}
         if name == "search_options":
-            query = search_text(field["label"], self.source(field, args["source_ref"]))
+            fact = self.search_source(field, args["source_ref"])
+            query = search_text(field["label"], fact)
+            if "query" in args:
+                proposed, reason = args["query"], args.get("query_reason")
+                if (not isinstance(proposed, str) or not proposed.strip() or len(proposed) > 120 or
+                        (proposed.strip() != query and (not isinstance(reason, str) or not reason.strip() or len(reason) > 500))):
+                    raise BrowserBlocked("Give a nonempty search query and a reason tied to the cited fact. A query does not change the saved answer.")
+                query = proposed.strip()
+            extra = args.get("extra_queries") or []
+            if extra and (not isinstance(extra, list) or len(extra) > 3 or not isinstance(args.get("query_reason"), str)
+                    or not args["query_reason"].strip() or any(not isinstance(q, str) or not q.strip() or len(q) > 120 for q in extra)):
+                raise BrowserBlocked("Give up to three nonempty extra queries and a query_reason tied to the cited fact.")
             options = self.browser.inspect_options(key, query=query)
-            self.observed_options[key] = options
             self._log_search(key, query, options, args)
+            primary_evidence = getattr(self.browser, 'option_search_evidence', {}).get(key)
+            # Dynamic-19: three dependent-free searches for one major took three model rounds.
+            # Extra terms run in this call; each keeps its own results and evidence.
+            additional, seen = [], list(options)
+            for term in dict.fromkeys(q.strip() for q in extra if q.strip() != query):
+                found = self.browser.inspect_options(key, query=term)
+                self._log_search(key, term, found, args)
+                item = {"query": term, "options": [o.get("label") for o in found][:OPTION_PREVIEW], "total_options": len(found)}
+                evidence = getattr(self.browser, 'option_search_evidence', {}).get(key)
+                if evidence:
+                    item["search_evidence"] = evidence
+                additional.append(item)
+                seen += [o for o in found if o.get("label") not in {x.get("label") for x in seen}]
+            self.observed_options[key] = seen
             current = self.browser.field(key)
-            if current.get("value_committed") and matches(current, query):
+            if current.get("value_committed") and matches(current, fact):
                 return {"field_key":key, "already_filled":True, "value":current["value"],
                     "next":"The picker committed this value; continue with other fields."}
-            page = self._option_page(options, args)
-            if not resolve_option(field["label"], query, options):
+            page = {**self._option_page(options, args), **self.selected_option_context(current)}
+            if primary_evidence:
+                page['search_evidence'] = primary_evidence
+            if additional:
+                page["additional_searches"] = additional
+            if not resolve_option(field["label"], fact, seen):
                 # Replay: the model searched and said it would "keep looking" without saving a
                 # decision. Name the decisions that resolve the field; the choice stays the model's.
-                page["unresolved"] = ("No candidate here is the fact itself. Resolve the field with a saved decision: "
+                page["unresolved"] = ("No returned search option literally matches the fact. Any current_selection is separate evidence and may remain valid even when absent from these results. Decide its equivalence rather than searching to rediscover it. Resolve the field with a saved decision: "
                     "resolve_field mode=equivalent if an observed option represents the fact (say why), a different "
                     "grounded search, ask_user with a specific question, or resolve_field mode=leave_empty with your "
                     "reason for an optional field.")
@@ -776,6 +979,9 @@ class AgentTools:
             self.browser.click_field(key)
         elif name == "type_from_source":
             part = args["source_ref"].rsplit(":", 1)[-1].rsplit("_", 1)[-1]
+            if args["source_ref"] == f"answer:{key}":
+                # The answer recorded for this exact segment is that segment's component.
+                part = {"MM": "month", "DD": "day", "YYYY": "year"}.get(date_format(field), part)
             answer = format_date(field, self.source(field, args["source_ref"]), part)
             if answer is None:
                 raise BrowserBlocked(f"The cited value does not give this control's {date_format(field)} format. Cite the "
@@ -830,6 +1036,7 @@ class AgentTools:
         entry["seen"] = list(dict.fromkeys([*entry["seen"], *(o.get("label") for o in options)]))[:80]
         offset = args.get("offset", 0) if isinstance(args.get("offset"), int) else 0
         entry["more_pages"] = offset + 300 < len(options)
+        entry["coverage"] = "Observed DOM options only; no remaining buffered page does not prove the site's full catalogue was exhausted."
         log[key] = entry
         self._save_decisions(option_search_log=log)
 
@@ -880,6 +1087,13 @@ class AgentTools:
             field=next((f for f in self.fields if f['key']==item['field_key']),None)
             if not field or field['key'] in seen or field['kind'] in {'password','file','checkbox'}:
                 raise BrowserBlocked('Use each visible education field once.')
+            if re.search(r'questionnaire--', str(field.get('dom_id') or ''), re.I):
+                # Questionnaire replay (Adobe-21 page 2): the model bound "current status",
+                # graduation date and major to the Cornell row, which skipped evidence
+                # verification. A Workday questionnaire question is never an education row.
+                raise BrowserBlocked(f"{field['key']} is a questionnaire question, not an education row; nothing in this batch "
+                    'was bound. Use resolve_field (format/equivalent) citing the education facts and your reason; '
+                    'the evidence is model-verified before writing.', code='source_required')
             old=education_binding(field,self.state)
             if old and old['education_id']!=record['id']:
                 raise BrowserBlocked('This row belongs to another education. Add or locate the correct row.')
@@ -1025,9 +1239,10 @@ class AgentTools:
         self.state.update(changes)
         if self.checkpoint: self.checkpoint(**changes)
 
-    def _decision(self, field, value, mode, sources, reason):
+    def _decision(self, field, value, mode, sources, reason, *, source_context=None):
         decision = {"field":signature(field), "value":value, "mode":mode, "sources":sources,
             "original_answer":candidate_answer(field, self.state["profile"], self.state["answers"]), "reason":reason}
+        if source_context: decision["source_context"] = source_context
         self._save_decisions(field_decisions={**self.state.get("field_decisions", {}), field["key"]:decision})
 
     def _require_confirmed_sources(self, field, sources):
@@ -1049,21 +1264,66 @@ class AgentTools:
                 continue
             self.source(field,ref)
 
+    def _question_education_sources(self, field, sources):
+        # Question evidence is not a repeated-row binding or a literal fill source.
+        from .observation import record_identity
+        return bool(sources and all(ref.startswith('education:') for ref in sources)
+            and not record_identity(field) and not repeatable_education(self.page_context)
+            and not education_binding(field, self.state) and not experience_binding(field, self.state)
+            and field['key'] not in self.state['answers'] and field['kind'] not in {'file','password'})
+
+    def _verify_question_sources(self, field, sources, value):
+        if self.verify_answers is None:
+            raise BrowserBlocked('This questionnaire interpretation needs model evidence verification or an explicit user answer.', code='verification_unavailable')
+        from eregion.runtime.telemetry import outcome_fingerprint
+        context = answer_verification_context(self.state, self.page_context, self.fields)
+        item = {'question': field['label'], 'evidence_type': 'resume_facts',
+                'sources': sources, 'proposed': value}
+        key = outcome_fingerprint([item, context])
+        cache = dict(self.state.get('answer_verification_cache') or {})
+        revision = self.state.get('chat_revision', 0)
+        if type(cache.get(key)) is not bool:
+            checks = self.verify_answers([item], context=context)
+            if len(checks) != 1 or type(checks[0]) is not bool:
+                raise BrowserBlocked('Incomplete evidence verification; no decision was saved.', code='verification_unavailable')
+            if not self.active() or (self.refresh and self.refresh().get('chat_revision', 0) != revision):
+                raise BrowserBlocked('The conversation changed during verification.', code='stale_observation')
+            cache[key] = checks[0]
+            self._save_decisions(answer_verification_cache=dict(list(cache.items())[-128:]))
+        if cache[key] is not True:
+            raise BrowserBlocked('The cited resume facts do not establish this answer. Cite sufficient facts or ask the user; do not infer a missing qualification.', code='source_required')
+
     def _resolve_field(self, field, args):
         value, mode, refs, reason = (args[k] for k in ("value", "mode", "source_refs", "reason"))
         if mode == "leave_empty":
             # The model's explicit decision for an optional field; the attempt limit only stops
             # repetition and never decides this (W6 review).
-            if field.get("required"):
-                raise BrowserBlocked("Only an optional field can be left empty; ask the user for a required one.")
+            if field.get("required") or field["kind"] in {"checkbox", "radio", "file", "password"}:
+                raise BrowserBlocked("Only an optional value field can be left empty; ask for a required answer or explicitly decide a checkbox.")
             if not isinstance(reason,str) or not 0 < len(reason) <= 1000:
                 raise BrowserBlocked("Explain why no observed option represents the fact.")
+            # Intel-34: Workday's Hispanic/Latino question was left empty without asking. These
+            # standard self-identification controls stay the user's choice.
+            identity = ' '.join(str(field.get(k) or '') for k in ('key', 'dom_id', 'name'))
+            if SELF_IDENTIFICATION.search(identity) and not any(str(r).startswith('answer:') for r in (refs or [])):
+                raise BrowserBlocked("Voluntary self-identification is the user's choice. Ask them once, offering the "
+                    "site's decline option, unless they already answered or declined; cite that answer to leave it empty.",
+                    code='source_required')
             decisions = {**self.state.get("field_decisions", {}), field["key"]: {"field": signature(field), "value": None,
                 "mode": "leave_empty", "sources": {}, "original_answer": candidate_answer(field, self.state["profile"], self.state["answers"]),
                 "reason": reason}}
             self._save_decisions(field_decisions=decisions)
-            return {"field_key": field["key"], "left_empty": True, "reason": reason,
-                    "next": "Recorded and shown to the user. Continue with the other fields or the next step."}
+            # Dynamic-19: a search the model typed ("Systems") stayed in the picker input after it
+            # chose to omit the major; the observed value excludes uncommitted text (search_text).
+            if field.get('value') not in ('', None) or field.get('search_text'):
+                clear = getattr(self.browser, 'clear_optional_field', None)
+                if clear is None:
+                    raise BrowserBlocked('Decision saved, but this browser cannot clear the selected value.',code='dom_interaction_failed')
+                field = clear(field['key'])
+                self._cached_fields = None
+            verified = field.get('value') in ('', None) and not field.get('invalid')
+            return {"field_key": field["key"], "left_empty": verified, "verified": bool(verified), "reason": reason,
+                    "next": "Decision saved; the field is empty." if verified else "Decision saved, but the page is not empty/valid. Resolve the actual value before continuing."}
         if mode not in {"format", "equivalent", "default"} or not isinstance(value,str) or not 0 < len(value) <= 2000 or not isinstance(reason,str) or not 0 < len(reason) <= 1000:
             raise BrowserBlocked("Give a bounded value and explain its relationship to the source and page.")
         if not isinstance(refs,list) or len(refs)>6 or not all(isinstance(r,str) for r in refs):
@@ -1081,11 +1341,15 @@ class AgentTools:
             if foreign:
                 raise BrowserBlocked(f"This field's bound work-experience record is {bound['experience_id']}; cite only that "
                                      f"record's facts (not {', '.join(foreign)}).", code='experience_source_mismatch')
+        question_sources = self._question_education_sources(field, sources)
+        if question_sources and mode == 'default':
+            raise BrowserBlocked('A questionnaire fact needs an evidence-backed equivalent or format decision, not a default.')
         material = protected(field)
         if material:
             if mode == "default":
                 raise BrowserBlocked("A default cannot supply a material fact or consent. Cite its confirmed source for an equivalent representation.")
-            self._require_confirmed_sources(field,sources)
+            if not question_sources:
+                self._require_confirmed_sources(field,sources)
         options = self.observed_options.get(field["key"]) or field.get("options", [])
         choice = field["kind"] in {"select","radio","combobox","location"} or field.get("choice_control") or bool(options)
         if choice and isinstance(field.get("value"), str) and field["value"].strip() and not field.get("invalid"):
@@ -1121,12 +1385,15 @@ class AgentTools:
             if checked is None:
                 raise BrowserBlocked("A checkbox takes a yes/no value.")
             value = checked
-        self._decision(field, value, mode, sources, reason)
+        if question_sources:
+            self._verify_question_sources(field, sources, value)
+        self._decision(field, value, mode, sources, reason,
+                       source_context='question' if question_sources else None)
         if choice:
             if not matches(field,value): self.browser.choose_option(field["key"],value)
         elif not matches(field,value): self.browser.fill(field,value)
         current = next((f for f in self.browser.observe() if f["key"]==field["key"]),None)
-        return {"field_key":field["key"], "value":value, "verified":bool(current and matches(current,value)),
+        return {"field_key":field["key"], "value":value, "verified":bool(current and not current.get('invalid') and matches(current,value)),
             "errors":current.get("errors",[]) if current else [], "decision":mode,
             "next":"Read the updated page; repair remaining errors or continue to the next step."}
 
@@ -1208,8 +1475,11 @@ class AgentTools:
             if not isinstance(value, str) or not value.strip() or len(value) > 2000:
                 raise BrowserBlocked("Supply a bounded, nonempty field value.")
             if boolean_answer(value) is not None and boolean_answer(quote) is None:
-                evidence = (field["label"], quote, value)
-                if evidence not in self.verified_answers:
+                # Adobe-27: "Check this box to confirm the statement above" is only answerable with
+                # the statement itself, which the scanner keeps in help.
+                question = field["label"] + (" — " + field["help"][:1500] if field.get("help") else "")
+                evidence = (question, quote, value)
+                if evidence not in semantic:
                     semantic.append(evidence)
             elif (not grounded(field, quote, value, self.observed_options.get(key) or field.get("options", []))
                     and not confirms_proposal(messages[:order[message_id]], quote, value)):
@@ -1248,14 +1518,21 @@ class AgentTools:
         if semantic:
             if self.verify_answers is None:
                 raise BrowserBlocked("This nonliteral Yes/No answer needs semantic verification before filling.", code="quote_mismatch")
-            checks = self.verify_answers([{"question": label, "quote": quote, "proposed": value}
-                                          for label, quote, value in semantic])
-            if len(checks) != len(semantic):
-                raise BrowserBlocked('Incomplete semantic verification; no unverified answers were saved.', code='verification_unavailable')
-            unsupported = {evidence for evidence, checked in zip(semantic, checks) if checked is not True}
-            if not self.active() or (self.refresh and self.refresh().get("chat_revision", 0) != revision):
-                raise BrowserBlocked("The conversation changed during verification. Read the latest reply.", code="stale_observation")
-            self.verified_answers.update(evidence for evidence in semantic if evidence not in unsupported)
+            from eregion.runtime.telemetry import outcome_fingerprint
+            context = answer_verification_context(self.state, self.page_context, self.fields)
+            cache = dict(self.state.get('answer_verification_cache') or {})
+            keys = {e:outcome_fingerprint([e,context]) for e in semantic}
+            missing = [e for e in semantic if type(cache.get(keys[e])) is not bool]
+            if missing:
+                checks = self.verify_answers([{"question": label, "quote": quote, "proposed": value}
+                                              for label, quote, value in missing], context=context)
+                if len(checks) != len(missing) or any(type(x) is not bool for x in checks):
+                    raise BrowserBlocked('Incomplete semantic verification; no unverified answers were saved.', code='verification_unavailable')
+                if not self.active() or (self.refresh and self.refresh().get("chat_revision", 0) != revision):
+                    raise BrowserBlocked("The conversation changed during verification. Read the latest reply.", code="stale_observation")
+                cache.update({keys[e]:checked for e,checked in zip(missing,checks)})
+                self._save_decisions(answer_verification_cache=dict(list(cache.items())[-128:]))
+            unsupported = {e for e in semantic if cache[keys[e]] is not True}
         rejected = [item['field_key'] for item in prepared
                     if (fields[item['field_key']]['label'], item['quote'],
                         next(raw['value'] for raw in items if raw['field_key'] == item['field_key'])) in unsupported]
