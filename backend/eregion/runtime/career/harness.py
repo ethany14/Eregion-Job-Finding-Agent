@@ -358,7 +358,8 @@ class CareerHarness:
         from .candidate_queue import enabled as candidate_batches, view as candidate_view
         search_view=recovery(state,saved_urls=[self.runtime.workspace.application_job(a).canonical_url for a in state['jobs']])
         task_memory = getattr(self.runtime, 'task_memory', None)
-        return {**(task_memory.context(state) if task_memory else {}),
+        return {**(task_memory.context(state, runs=self.applications.repository.get, budget=self.task_budget)
+                   if task_memory else {}),
             'candidate':saved.get('profile',{}),'resume_text':text[:40000],
             'search_recovery':search_view,
             # Coverage, yield and remaining budget sit beside the queue: they are what a
