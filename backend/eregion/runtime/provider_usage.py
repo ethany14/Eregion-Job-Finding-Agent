@@ -184,6 +184,24 @@ class UsageLedger:
         self.sessions = sessions
 
     def start(self, call_id, scope, details, *, limits=None, reply_reserve=True):
+        try:
+            self._start(call_id, scope, details, limits=limits, reply_reserve=reply_reserve)
+        except TaskProviderBudgetExceeded as refusal:
+            # The refusal is an audit event: record it (nothing was sent), then stop the caller.
+            # summarize() keeps refused rows out of calls and budget.
+            # Its own row id: the attempt's id stays free (another ledger may share the database).
+            refused = {**details, 'status': 'refused_before_send', 'input_tokens': 0, 'output_tokens': 0,
+                       'refusal_reason': refusal.reason, 'refused_call_id': call_id}
+            try:
+                with self.sessions.begin() as db:
+                    db.add(ProviderUsageRow(call_id=f'{call_id}:refused'[:40], task_id=scope.get('task_id'), run_id=scope.get('run_id'),
+                        request_id=scope.get('request_id'), adopted=True, created_at=datetime.now(UTC).isoformat(),
+                        details_json=json.dumps(refused)))
+            except Exception as exc:
+                log.warning('Refused provider attempt was not recorded: %s', type(exc).__name__)
+            raise
+
+    def _start(self, call_id, scope, details, *, limits=None, reply_reserve=True):
         with self.sessions.begin() as db:
             if limits and scope.get('task_id'):
                 # Serialize reservations across workers AND restarted processes.

@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- Workday attachments control in the shape saved by Intel-34 (2026-10-17, upload-dom.json, classes
+     and icons removed). Each successful upload appends one file-upload-item card. The page script
+     renders CARRIED card names first (an earlier step's upload shown again on this step). -->
+<html><body>
+<form id="application">
+  <h2 data-automation-id="pageHeaderTitle">My Experience</h2>
+  <label id="label53">Resume/CV*</label>
+  <div data-automation-id="attachments-FileUpload" aria-labelledby="label53">
+    <div>
+      <div data-automation-id="file-upload-drop-zone"><div>Drop files here</div>
+        <div><div>or</div><button type="button" data-automation-id="select-files" id="resumeAttachments--attachments"><span>Select files</span></button></div>
+      </div>
+      <input data-automation-id="file-upload-input-ref" type="file" multiple="">
+    </div>
+    <div id="cards"></div>
+  </div>
+</form>
+<script>
+window.uploads = 0;
+function card(name) {
+  const item = document.createElement('div');
+  item.setAttribute('data-automation-id', 'file-upload-item');
+  item.innerHTML = '<div><div><div data-automation-id="ariaLive"><div data-automation-id="ariaLiveMessage" aria-live="polite">'
+    + name + ' successfully uploaded</div></div><div data-automation-id="file-upload-item-name">' + name
+    + '</div><div>90.02 KB</div><div data-automation-id="file-upload-successful"><span></span>Successfully Uploaded!</div></div></div>'
+    + '<div><button type="button" data-automation-id="delete-file" aria-label="Delete ' + name + '" title="Delete"></button></div>';
+  document.getElementById('cards').append(item);
+}
+(window.CARRIED || []).forEach(card);
+document.querySelector('[data-automation-id="file-upload-input-ref"]').addEventListener('change', event => {
+  for (const file of event.target.files) { window.uploads += 1; card(file.name); }
+  event.target.value = '';  // Workday clears the native input after transferring the file
+});
+</script>
+</body></html>

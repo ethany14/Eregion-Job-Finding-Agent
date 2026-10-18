@@ -268,7 +268,8 @@ def test_clause_after_a_score_is_not_a_descending_score_interval():
     assert found['https://www.linkedin.com/jobs/view/4432001930/']=={'scores':[],'ranges':[[40.0,55.0]]}
 
 
-@pytest.mark.parametrize('jev,used,expected',[(True,5,4),(True,9,0),(False,5,2)])
+# Jev: about two requests per job plus 8 shared (search comparison A, 2026-10-18), not one shared request per stage only.
+@pytest.mark.parametrize('jev,used,expected',[(True,5,2),(True,9,0),(False,5,2)])
 def test_scoring_batch_is_sized_to_the_attempts_that_can_finish_it(career,monkeypatch,jev,used,expected):
     from eregion.runtime.provider_usage import UsageLedger, ReplyBudgetReserved
     monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS','20')
@@ -388,3 +389,21 @@ def test_a_connect_error_under_the_provider_error_is_retryable_but_program_error
     assert not model_failure(_chained(RuntimeError('x'), ValueError('bad argument'))).retryable
     auth = openai.AuthenticationError('denied', response=httpx.Response(401, request=request), body=None)
     assert not model_failure(auth).retryable and not recoverable_failure(auth)
+
+
+def test_scoring_batch_respects_the_input_token_budget_and_cached_jobs(career,monkeypatch):
+    from eregion.runtime.provider_usage import UsageLedger, ReplyBudgetReserved
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS','200')
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_INPUT_TOKENS','400000')
+    c=career;ledger=UsageLedger(c.repository.sessions)
+    monkeypatch.setattr(c.harness.analysis,'uses_jev',lambda:True)
+    ids=[f'app-{i}' for i in range(10)]
+    # 400k - 3x20k reserve = 340k -> 17 requests -> (17-8)//2 = 4 jobs, though attempts would allow 10.
+    now,later=c.harness.affordable_scoring(c.state['task_id'],ids)
+    assert now==ids[:4] and later==ids[4:]
+    # Already-analysed jobs cost nothing and are kept first.
+    now,later=c.harness.affordable_scoring(c.state['task_id'],ids,cached=['app-9','app-8'])
+    assert now==['app-8','app-9',*ids[:4]] and later==ids[4:8]
+    for i in range(16):ledger.start(f't{i}',{'task_id':c.state['task_id']},{'purpose':'agent','input_tokens':20000,'output_tokens':1})
+    with pytest.raises(ReplyBudgetReserved):c.harness.affordable_scoring(c.state['task_id'],ids)
+    assert c.harness.affordable_scoring(c.state['task_id'],ids,cached=['app-0'])==(['app-0'],ids[1:])

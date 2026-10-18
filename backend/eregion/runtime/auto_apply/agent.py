@@ -820,11 +820,13 @@ class AgentTools:
                 self.observe()
                 if step_key(self.page_context) != old_step:
                     raise BrowserBlocked('The business step changed; observe before navigating.', code='stale_observation')
-                control = next((c for c in (self.page_context or {}).get('controls', [])
-                                if c['id'] == old_control['id'] and c['kind'] == 'next'
-                                and c['label'] == old_control['label'] and not c.get('disabled')), None)
+                identity = ('label', 'href', 'automation_id', 'section')
+                same = [c for c in (self.page_context or {}).get('controls', []) if c['kind'] == 'next'
+                        and not c.get('disabled') and all(c.get(k) == old_control.get(k) for k in identity)]
+                # The ephemeral index may move after writes; a unique identity match is the same Next.
+                control = next((c for c in same if c['id'] == old_control['id']), same[0] if len(same) == 1 else None)
                 if control is None:
-                    raise BrowserBlocked('Next changed; observe before navigating.', code='stale_observation')
+                    raise BrowserBlocked('Next is no longer uniquely identifiable; observe before navigating.', code='stale_observation')
                 from .record_coverage import gaps as record_gaps, effective_state
                 guarded_state = effective_state(self.state)
                 missing = [f["key"] for f in self.fields if (f["required"] and not f["value"]) or
@@ -1288,10 +1290,15 @@ class AgentTools:
         if field["key"] in self.state["answers"] and set(sources) != {f"answer:{field['key']}"}:
             raise BrowserBlocked("Use this field's explicit answer; it takes precedence over profile facts.", code='source_required')
         bound = experience_binding(field, self.state)
+        school = education_binding(field, self.state)
         for ref in sources:
-            # Same-record work facts are evidence for a decision (checked in _resolve_field),
-            # not the literal value; education and other sources keep the fill-source check.
+            # Same-record facts are evidence for a decision (checked in _resolve_field), not the
+            # literal value; other sources keep the fill-source check.
             if bound and ref.startswith(f"experience:{bound['experience_id']}:"):
+                continue
+            # Adobe-36: Cornell's degree decision cited the record's degree and school and was
+            # refused. The bound component must be cited; the rest of that record may support it.
+            if school and school['source_ref'] in sources and ref.startswith(f"education:{school['education_id']}:"):
                 continue
             self.source(field,ref)
 
@@ -1372,6 +1379,16 @@ class AgentTools:
             if foreign:
                 raise BrowserBlocked(f"This field's bound work-experience record is {bound['experience_id']}; cite only that "
                                      f"record's facts (not {', '.join(foreign)}).", code='experience_source_mismatch')
+        school = education_binding(field, self.state)
+        if school:
+            record = f"education:{school['education_id']}:"
+            foreign = [ref for ref in refs if ref.startswith('education:') and not ref.startswith(record)]
+            if foreign:
+                raise BrowserBlocked(f"This field's bound education record is {school['education_id']}; cite only that "
+                                     f"record's facts (not {', '.join(foreign)}).", code='education_source_mismatch')
+            if any(ref.startswith(record) for ref in refs) and school['source_ref'] not in refs:
+                raise BrowserBlocked(f"Cite this field's bound component {school['source_ref']}; other facts of the same "
+                                     "record may be added as supporting evidence.", code='education_source_mismatch')
         question_sources = self._question_education_sources(field, sources)
         if question_sources and mode == 'default':
             raise BrowserBlocked('A questionnaire fact needs an evidence-backed equivalent or format decision, not a default.')

@@ -278,3 +278,35 @@ def test_a_third_reopen_of_an_unchanged_page_is_refused_until_the_user_writes(mo
     state['chat_revision'] = 2                                  # the user wrote again
     rebuilt.execute('browser_open', dict(url))
     assert len(opened) == 3
+
+
+def test_adobe36_inspect_then_evidence_and_independent_writes_fit_one_turn():
+    # Adobe-36: inspect_field(source) then record_answers(…source…) plus four independent field
+    # actions was rejected as a whole. Evidence does not depend on the read; it now fits one turn.
+    from eregion.runtime.auto_apply.runner import ApplicationHost
+    keys = ['text:source--source:1', 'radio:candidateIsPreviousWorker:1', 'combobox:countryRegion:1',
+            'text:city:1', 'combobox:phoneType:1', 'text:phoneNumber:1']
+    host = Host([field(k) for k in keys])
+    ApplicationHost.validate_batch(host, [{'name': n, 'args': a} for n, a in [
+        ('inspect_field', {'field_key': keys[0]}),
+        ('record_answers', {'answers': [{'field_key': keys[1]}, {'field_key': keys[2]}, {'field_key': keys[0]}]}),
+        ('resolve_field', {'field_key': keys[3]}), ('resolve_field', {'field_key': keys[4]}),
+        ('type_from_source', {'field_key': keys[5]})]], None)
+
+
+@pytest.mark.parametrize('calls,split', [
+    ([('inspect_field', {'field_key': 'a'}), ('resolve_field', {'field_key': 'a'})], 'send the read alone'),
+    ([('search_options', {'field_key': 'a'}), ('choose_option', {'field_key': 'a'})], 'send the search alone'),
+    ([('search_options', {'field_key': 'a'}), ('search_options', {'field_key': 'a'})], 'extra_queries'),
+])
+def test_writes_that_depend_on_an_unseen_read_are_refused_with_a_split(calls, split):
+    from eregion.runtime.auto_apply.runner import ApplicationHost, BatchConflict
+    with pytest.raises(BatchConflict) as error:
+        batch(*calls)
+    assert error.value.conflict['field_key'] == 'a' and split in error.value.conflict['split']
+    outcome = ApplicationHost.action_error(None, error.value)
+    assert outcome['error_code'] == 'batch_conflict' and outcome['conflict']['tool'] == calls[1][0]
+
+
+def test_readback_after_a_write_is_allowed():
+    batch(('resolve_field', {'field_key': 'a'}), ('read_field', {'field_key': 'a'}))

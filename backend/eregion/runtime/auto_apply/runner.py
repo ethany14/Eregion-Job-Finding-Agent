@@ -1,6 +1,7 @@
 """Application capability host for the shared decision kernel."""
 import base64
 import logging
+import json
 import time
 
 from langchain_core.messages import HumanMessage
@@ -87,6 +88,40 @@ def attempt_record(state, field):
         return 0, None  # A genuinely different target remains eligible.
     legacy = outcome_fingerprint([desired_answer(field, state), [o.get('label') for o in field.get('options') or []]])
     return entry.get('count', 0), 'migrated' if entry.get('target') == legacy else 'unknown_target'
+
+
+# Adobe-36: inspect_field then record_answers for the same field rejected the whole batch,
+# with four independent field actions in it. Kinds decide which same-field order is unsafe.
+BATCH_READS = {'inspect_field', 'read_field'}
+BATCH_SEARCHES = {'search_options', 'explore_option'}
+BATCH_EVIDENCE = {'bind_education', 'bind_experience', 'bind_document', 'record_answers'}
+
+
+def batch_kind(name):
+    return ('read' if name in BATCH_READS else 'search' if name in BATCH_SEARCHES
+            else 'evidence' if name in BATCH_EVIDENCE else 'write')
+
+
+# (earlier kind, later kind) on the same field -> (reason, how to split). A read is always
+# allowed (a readback after a write verifies it); evidence does not depend on page state.
+BATCH_RULES = {
+    ('evidence', 'evidence'): ('a field is bound or recorded at most once per turn', 'merge them into one call'),
+    ('write', 'evidence'): ('evidence must be saved before acting on the field', 'move the binding or record_answers before the write'),
+    ('search', 'evidence'): ('evidence must be saved before acting on the field', 'move the binding or record_answers before the search'),
+    ('write', 'write'): ('a field takes one write per turn', 'keep one write; check the result next turn'),
+    ('read', 'write'): ('this write was chosen before the read in this batch returned', 'send the read alone, then decide the write from its result'),
+    ('search', 'write'): ('this write was chosen before the search in this batch returned', 'send the search alone, then choose from its options'),
+    ('write', 'search'): ('searching after writing the same field in one turn', 'search first in its own turn'),
+    ('search', 'search'): ('a second search cannot use the first one\'s results', 'use extra_queries on one search_options call'),
+}
+
+
+class BatchConflict(ToolArgumentsError):
+    """A specific, repairable batch refusal (not a malformed argument)."""
+    def __init__(self, tool, earlier, field_key, reason, split):
+        self.conflict = {'tool': tool, 'conflicts_with': earlier, 'field_key': field_key, 'reason': reason, 'split': split}
+        super().__init__(f'Batch rejected: {tool} on {field_key} conflicts with the earlier {earlier} on it ({reason}). '
+                         f'Split: {split}. Other calls in this batch did not run; resend those independent of this field.')
 
 
 class ApplicationHost:
@@ -206,7 +241,7 @@ class ApplicationHost:
         return None
 
     def validate_batch(self, calls, turn):
-        seen, bound = set(), set()
+        seen, bound, history = set(), set(), {}
         observed = {f['key'] for f in self.session.fields}
         # record_answers saves evidence only (no page write), like a binding.
         binds = {'bind_education', 'bind_experience', 'bind_document', 'record_answers'}
@@ -242,13 +277,16 @@ class ApplicationHost:
                 args = {**args, 'fields':combined_bindings(args.get('fields', []))}
             keys = [args['field_key']] if args.get('field_key') else []
             keys += [item.get('field_key') for key in ('answers', 'fields') for item in args.get(key, [])]
-            target = bound if call['name'] in binds else seen
+            kind = batch_kind(call['name'])
             for key in keys:
                 if key not in observed:
                     raise ToolArgumentsError('Observe a newly revealed field before batching an action for it.')
-                if key in target or (call['name'] in binds and key in seen):
-                    raise ToolArgumentsError('Batch rejected: bind a field at most once and act on it at most once per turn, binding first.')
-                target.add(key)
+                for earlier_name, earlier_kind in history.get(key, []):
+                    rule = BATCH_RULES.get((earlier_kind, kind))
+                    if rule:
+                        raise BatchConflict(call['name'], earlier_name, key, *rule)
+                history.setdefault(key, []).append((call['name'], kind))
+                (seen if kind in {'write', 'search'} else bound if kind == 'evidence' else set()).add(key)
 
     def _read_closed_options(self, session, *, limit=8, seconds=12):
         """Adobe-22: a closed Workday "Select One" control exposes no options, so the model spent
@@ -533,9 +571,21 @@ class ApplicationHost:
                     'leave_empty decision and the current page verifies it is empty. Further searching is not required. '
                     'Keep this decision and address remaining blockers or request the next page; reconsider only with new evidence.'),
                     'abandoned': key, 'resolved': True, 'saved_decision': active_decision(field, session.state)}
-            if field.get('required'):
+            # Adobe-35: inspect_field on a field past its attempt limit was refused while the
+            # refusal said to decide from the observed options. A read is evidence, not another
+            # failed fill: allow it once per field state; an unchanged repeat stays blocked.
+            reads = self.__dict__.setdefault('_limit_reads', set())
+            token = (key, name, json.dumps([field.get('value'), [o.get('label') for o in field.get('options') or []]], default=str))
+            if name in BATCH_READS and token not in reads:
+                reads.add(token)
+            elif name in BATCH_READS:
+                return {**action_failure('field_attempt_limit', 'Not executed: this field was already read after its attempt '
+                    'limit and nothing changed. Decide from the options shown: resolve_field, ask the user, or leave_empty.'),
+                    'abandoned': key}
+            elif field.get('required'):
                 raise LoopStop('no_progress', field_keys=[key])
-            return {**action_failure('field_attempt_limit', f'{FIELD_ATTEMPT_LIMIT} attempts with this target did not fill the field, '
+            else:
+                return {**action_failure('field_attempt_limit', f'{FIELD_ATTEMPT_LIMIT} attempts with this target did not fill the field, '
                 'so repeating them is blocked. Decide from its observed options: map the fact to an option with resolve_field, '
                 'ask the user, or record resolve_field mode=leave_empty with your reason (shown to the user).'),
                 'abandoned': key}
@@ -581,6 +631,8 @@ class ApplicationHost:
         self.session.state['abandoned_fields'] = self.pending['abandoned_fields'] = abandoned
 
     def action_error(self, exc):
+        if isinstance(exc, BatchConflict):
+            return {**action_failure('batch_conflict', str(exc)), 'conflict': exc.conflict}
         if isinstance(exc, ToolArgumentsError):
             return action_failure('invalid_action', str(exc))
         return failure_detail(exc)

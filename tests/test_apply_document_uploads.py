@@ -171,3 +171,41 @@ def test_chrome_scan_reports_every_card_and_autofill_appends_once():
         assert data['document_uploads']['resume']['status'] == 'verified'
     finally:
         b.close()
+
+
+def _carryover_page(b, carried=()):
+    from pathlib import Path
+    import json
+    html = (Path(__file__).parent / 'fixtures/auto_apply/workday_upload_carryover.html').read_text(encoding='utf-8')
+    b.page.set_content(html.replace('<script>', f'<script>window.CARRIED={json.dumps(list(carried))};', 1))
+
+
+@pytest.mark.skipif(os.getenv('JOB_AGENT_BROWSER_TESTS') != '1', reason='Offline Chrome opt-in')
+def test_intel_shaped_carryover_is_recognised_and_unknown_or_changed_files_are_held():
+    # Intel-34: step 1 uploaded the resume; My Experience showed it again and later autofills
+    # appended copies (three on Review). The durable record recognises the carried card.
+    from test_auto_apply_browser import FixtureBrowser
+    b = FixtureBrowser('https://example.wd1.myworkdayjobs.com/en-US/External/job/x/apply')
+    try:
+        data = state()
+        _carryover_page(b)                       # step 1: empty control
+        autofill(b, data, lambda: RESUME)
+        assert b.page.evaluate('window.uploads') == 1 and data['document_uploads']['resume']['status'] == 'verified'
+        field = b.observe()[0]; key = field['key']
+        assert field['attachments'] == ['resume.pdf'] and field['appends'] is True
+        _carryover_page(b, ['resume.pdf'])       # step 2: the same upload shown again
+        data['document_refresh']['resume'] = True
+        autofill(b, data, lambda: RESUME); autofill(b, data, lambda: RESUME)
+        assert b.page.evaluate('window.uploads') == 0 and data['document_refresh']['resume'] is False
+        assert b.observe()[0]['attachments'] == ['resume.pdf']
+        # A name alone proves nothing: new content under the same name is held, not appended.
+        data['document_refresh']['resume'] = True
+        held = autofill(b, data, lambda: TAILORED)
+        assert b.page.evaluate('window.uploads') == 0 and held['failed'][key] == 'document_existing_unverified'
+        # An attachment this run never uploaded is held too.
+        fresh = state()
+        _carryover_page(b, ['Resume_2025_final.pdf'])
+        held = autofill(b, fresh, lambda: RESUME)
+        assert b.page.evaluate('window.uploads') == 0 and held['failed'][key] == 'document_existing_unverified'
+    finally:
+        b.close()

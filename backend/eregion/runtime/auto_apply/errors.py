@@ -23,6 +23,7 @@ RECOVERY = {
     'dom_interaction_failed': ('DOM interaction failed. Inspect the current viewport and use computer tools if available, then verify the field.', True),
     'field_attempt_limit': ('Repeating this field\'s unsuccessful operation is blocked. Decide from the observed options: map the fact with resolve_field, ask the user, or record resolve_field mode=leave_empty with your reason.', False),
     'unchanged_failure': ('This fill already failed and nothing relevant changed. Choose a different option or source with field tools, leave an optional field, or ask the user; autofill will not retry it until something changes.', False),
+    'batch_conflict': ('Two calls in the batch touched the same field in an unsafe order (named in conflict). Split as the error says; resend the independent calls.', False),
     'repeated_action': ('This failed action has not changed the page. Repair its cause, try a different action, or continue independent work; do not repeat it unchanged.', False),
 }
 

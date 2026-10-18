@@ -19,7 +19,7 @@ from test_task_memory_end_to_end import install
 
 def start(c, app, text='Apply to this job and stop at review.'):
     """A new conversation (stamped with the task-memory owner) about one application."""
-    state, _ = c.repository.create(text, f'task-{text[:12]}', context={'application_id': app})
+    state, _ = c.repository.create(text, 'task-' + __import__('hashlib').sha256(text.encode()).hexdigest()[:12], context={'application_id': app})
     c.state = state
     return state
 
@@ -207,3 +207,55 @@ def test_modes_off_shadow_and_allowlist(setup):
     assert 'task_memory' not in c.harness.observe(latest)  # off
     c.runtime.task_memory = TaskMemoryService(c.runtime, TaskMemoryConfig('on', frozenset({app})))
     assert 'task_memory' in c.harness.observe(latest)
+
+
+def test_another_conversation_gets_a_read_only_ownership_report_in_every_memory_mode(setup):
+    # Replays 02/03: the new conversation retried start_application and offered a duplicate.
+    from test_career_flow import execute
+    from eregion.runtime.tasks.host import TaskHost
+    c, job, pack, app, service, state, run = setup
+    for mode in ('off', 'on'):
+        c.runtime.task_memory = TaskMemoryService(c.runtime, TaskMemoryConfig(mode, frozenset({app})))
+        fresh = start(c, app, f'Status of my application ({mode})?')
+        c.repository.link(fresh['task_id'], 'application_runs', run['run_id'])
+        view = execute(c, 'inspect_application', run_id=run['run_id'])
+        ownership = view['ownership']
+        assert ownership['owned_by_this_conversation'] is False and ownership['owner_conversation']['task_id'] == state['task_id']
+        assert 'start_application' in ownership['not_allowed_here'] and 'cannot be started' in ownership['duplicate_policy']
+        with pytest.raises(ValueError) as refused:
+            applied(c, job, pack)
+        detail = TaskHost.action_error(TaskHost.__new__(TaskHost), refused.value)
+        assert detail['error_code'] == 'application_owned_elsewhere' and detail['no_new_evidence']
+        assert detail['ownership']['owner_conversation']['task_id'] == state['task_id'] and 'Do not retry' in detail['next']
+
+
+def test_cancelled_owner_allows_the_explicit_takeover_and_budget_stops_do_not_resume(setup):
+    c, job, pack, app, service, state, run = setup
+    fresh = start(c, app, 'Take over my application here.')
+    c.repository.change(state['task_id'], status='cancelled')  # the original conversation was cancelled
+    from eregion.runtime.auto_apply.repository import ApplyConflict
+    try:
+        applied(c, job, pack)
+    except ApplyConflict:
+        pass  # the fixture's autofill-only run refuses the follow-up instruction after the takeover
+    assert c.applications.repository.get(run['run_id'])['origin_task_id'] == fresh['task_id']
+    from sqlalchemy import text
+    with c.runtime.database.session_factory() as db:
+        assert db.execute(text('select count(*) from auto_applications')).scalar() == 1  # taken over, not duplicated
+    current = c.applications.repository.get(run['run_id'])
+    stopped = c.applications.repository.save(current, status='needs_input', agent_reason='application_budget')
+    memory, runs = run_entries(c, c.repository.get(fresh['task_id']))
+    assert c.applications.repository.get(run['run_id'])['version'] == stopped['version']  # reporting never resumes
+    assert 'budget is not reset' in runs[0]['next'] and runs[0]['owned_by_this_conversation'] is True
+
+
+def test_multi_start_keeps_the_structured_ownership_refusal(setup):
+    # Replay 04: start_application(application_ids=[...]) reported only the text and was retried.
+    from test_career_flow import execute
+    c, job, pack, app, service, state, run = setup
+    start(c, app, 'Continue my application from a new chat.')
+    result = execute(c, 'start_application', application_ids=[app])
+    entry = result['results'][0]
+    assert entry['started'] is False and entry['error_code'] == 'application_owned_elsewhere'
+    assert entry['ownership']['owner_conversation']['task_id'] == state['task_id'] and entry['no_new_evidence']
+    assert 'cannot be started' in entry['ownership']['duplicate_policy']

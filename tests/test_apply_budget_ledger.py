@@ -69,8 +69,10 @@ def test_career_and_application_worker_share_one_attempt_cap_checked_before_send
         with pytest.raises(TaskProviderBudgetExceeded):
             attempt(sent, usage=100)  # the 10th attempt overall: refused, never sent
     assert len(sent) == 9
-    rows = task_rows(repo, 'task-A')  # a refusal rolls back its reservation: no row, nothing sent
-    assert len(rows) == 9 and all(r.get('status') == 'completed' for r in rows)
+    rows = task_rows(repo, 'task-A')  # a refusal releases its reservation: an audit row, nothing sent
+    # Both refusals are audit rows (nothing sent); the 9 sent attempts are all completed.
+    assert [r.get('status') for r in rows].count('completed') == 9
+    assert [r.get('status') for r in rows].count('refused_before_send') == 2 and summarize(rows)['calls'] == 9
 
 
 def test_unknown_usage_is_charged_its_reservation_and_the_input_cap_refuses_before_sending(loop, monkeypatch):
@@ -126,7 +128,8 @@ def test_experiment_refusal_releases_reservation_and_keeps_career_reply_budget(l
     total=experiment_summary(path,'refused-reply-test')
     assert len(sent)==9 and total['calls']==9 and total['completed']==9
     assert total['input_tokens']==900 and total['unknown_usage_calls']==0
-    assert total['refused_before_send']==2
+    # Two task refusals plus the experiment cap's own refusal of the 10th attempt.
+    assert total['refused_before_send']==3
 
 
 def test_refusal_is_distinct_from_sent_failed_and_pending_attempts():
@@ -139,3 +142,32 @@ def test_refusal_is_distinct_from_sent_failed_and_pending_attempts():
     assert total['refused_before_send']==1 and total['calls']==3
     assert total['budget_input_tokens']==330 and total['unknown_usage_calls']==2
     assert total['failed']==1 and total['pending']==1 and total['completed']==1
+
+
+def test_experiment_cap_refusal_is_recorded_without_sending(monkeypatch, tmp_path):
+    from eregion.runtime.provider_usage import experiment_summary
+    path=tmp_path/'zero-cap.sqlite3'
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_ID','zero-cap')
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_LEDGER',str(path))
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_MAX_PROVIDER_ATTEMPTS','0')
+    monkeypatch.setenv('JOB_AGENT_EXPERIMENT_MAX_INPUT_TOKENS','0')
+    sent=[]
+    with pytest.raises(TaskProviderBudgetExceeded):
+        attempt(sent, usage=100, purpose='jev:job_screening')
+    total=experiment_summary(path,'zero-cap')
+    # A hidden call refused by a zero-call experiment is visible in the ledger, never sent.
+    assert sent==[] and total['refused_before_send']==1 and total['calls']==0 and total['budget_input_tokens']==0
+
+
+def test_task_cap_refusal_is_recorded_in_the_task_ledger(loop, monkeypatch):
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS','1')
+    ledger=UsageLedger(loop.repository.sessions);sent=[]
+    with usage_scope(ledger=ledger,task_id='capped-task'):
+        attempt(sent,usage=100)
+        with pytest.raises(TaskProviderBudgetExceeded):attempt(sent,usage=100)
+    rows=task_rows(loop.repository,'capped-task')
+    assert len(sent)==1 and [r['status'] for r in rows].count('refused_before_send')==1
+    refused=next(r for r in rows if r['status']=='refused_before_send')
+    assert refused['refusal_reason']=='provider_attempts' and refused['input_tokens']==0
+    total=summarize(rows)
+    assert total['calls']==1 and total['refused_before_send']==1

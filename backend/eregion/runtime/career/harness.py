@@ -28,6 +28,11 @@ ITEM = {'pack_id':TEXT,'item_id':TEXT}
 # The model chooses the tier; code checks only structure, citations and identity.
 TIERS = {'priority':'Priority match','stretch':'Worth trying (known gaps)','to_confirm':'Needs your confirmation'}
 JEV_STAGE_REQUESTS = 8          # measured: one shared request per Jev stage per batch
+# Search comparison A (2026-10-18): 15 jobs needed one extraction each plus repeated stage rounds
+# (focused 5, condition 3, support 3, refine 2, ...) and the batch failed at the reserve. Plan for
+# about two requests per job plus the shared stages, and for the measured ~17-19k input tokens each.
+JEV_JOB_REQUESTS = 2
+SCORING_TOKENS_PER_REQUEST = 20000
 MAIN_ROUTE_REQUESTS_PER_JOB = 5 # measured without Jev (claude-main-fit-probe-03)
 TOOLS = [
     function('dismiss_candidate','Exclude a retrieved but unsuitable posting for this user turn without paid scoring. Quote its exact title, location or JD and explain the mismatch with the user request. This is a model decision, not proof the vacancy is closed.',
@@ -65,7 +70,7 @@ TOOLS = [
     function('list_jobs','Inspect saved jobs from the old workspace as well as this task.',{'query':TEXT},[]),
     function('inspect_job','Read a saved job, score, gaps and linked artifacts. With requirement_ids (from decision_brief), '
         'return only those requirements: full posting text, level, status, reason and resume evidence.',
-        {**APP,'requirement_ids':{'type':'array','maxItems':20,'uniqueItems':True,'items':TEXT}}),
+        {**APP,'requirement_ids':{'type':'array','maxItems':20,'uniqueItems':True,'items':TEXT}},['application_id']),
     function('score_job','Run the existing resume/JD match analysis and persist the actual score and requirement gaps.',APP),
     function('score_jobs','Compare up to sixteen imported jobs against the current resume in one batch. Uses shared Jev context when enabled; preserves uncertainty and separate results.',
         {'application_ids':{'type':'array','minItems':1,'maxItems':16,'uniqueItems':True,'items':TEXT}},['application_ids']),
@@ -98,6 +103,23 @@ from .decisions import TOOL as DECIDE_JOB_TOOL
 # API-first: a directory result with fewer jobs than this gets one Treg LinkedIn supplement.
 TREG_SUPPLEMENT_BELOW = 3
 TOOLS.append(DECIDE_JOB_TOOL)
+
+
+class ApplicationOwnedElsewhere(ValueError):
+    """A structured ownership refusal: not a malformed argument, so it is never worth retrying."""
+    def __init__(self, message, ownership, *, code='application_owned_elsewhere'):
+        super().__init__(message)
+        self.workflow_detail = {'error_code': code, 'ownership': ownership, 'no_new_evidence': True,
+                                'next': ownership.get('next')}
+
+
+class PostingNotRead(ValueError):
+    """Recommendation needs this conversation's own read of the posting; names the tool that provides it."""
+    def __init__(self, url):
+        super().__init__('Read the current posting before recommending it.')
+        self.workflow_detail = {'error_code': 'posting_not_read', 'url': url, 'no_new_evidence': True,
+            'next': f'This conversation has not read this posting. Call read_job with url {url} '
+                    '(or verify_and_score_jobs for several saved jobs), then recommend it.'}
 
 
 class CareerHarness:
@@ -649,8 +671,15 @@ class CareerHarness:
             'requires_explicit_selection':i.pack_item_id not in latest}
             for p,i in current_materials(rt.workspace,rt.packs,rt.pack_workflow,application_id)]
 
-    def application(self,run_id,*,include_fields=False,field_key=None):
+    def application(self,run_id,*,include_fields=False,field_key=None,caller=None):
         state = self.applications.repository.get(run_id)
+        if caller:
+            ownership=self.ownership(caller,state)
+            if not ownership['owned_by_this_conversation']:
+                return {**self._application_view(state,run_id,include_fields,field_key),'ownership':ownership}
+        return self._application_view(state,run_id,include_fields,field_key)
+
+    def _application_view(self,state,run_id,include_fields=False,field_key=None):
         delivered=[m['id'] for m in state.get('messages',[]) if m.get('role')=='user'][-8:]
         if state['status'] in {'queued','running','submitting'} and not include_fields and not field_key:
             return {k:state.get(k) for k in ('run_id','status','version','material_refs')} | {
@@ -919,7 +948,7 @@ class CareerHarness:
                    for m in (job.get('match_report')or {}).get('matches',[])):
                 raise ValueError('A confirmed personal condition is not satisfied; this job cannot be recommended as eligible.')
             retrieved=next((j for j in state.get('retrieved_jobs',{}).values() if j.get('url') and job_key(j['url'])==job_key(job['url'])),None)
-            if not retrieved:raise ValueError('Read the current posting before recommending it.')
+            if not retrieved:raise PostingNotRead(job['url'])
             from .qualification import record
             qualification=record(self.repository,task_id,retrieved)
             if not qualification['qualified']:
@@ -1303,7 +1332,9 @@ class CareerHarness:
                 return {'error':'Verify requested constraints before paid batch scoring.','error_code':'qualification_needed','qualifications':qualifications}
             _,text=self.candidate()
             if not text:raise ValueError('Attach a resume in this chat before comparing fit.')
-            identifiers,deferred=self.affordable_scoring(task_id,identifiers)
+            cached=[a for a in identifiers if state.get('analyses',{}).get(a)==self.analysis_fingerprint(
+                text,rt.workspace.get_application(a).current_snapshot_id) and self.job_summary(a)['match_score'] is not None]
+            identifiers,deferred=self.affordable_scoring(task_id,identifiers,cached=cached)
             asyncio.run(self.analysis.analyze_many(identifiers,resume_text=text,candidate_facts=self.fit_facts()))
             fingerprints={a:self.analysis_fingerprint(text,rt.workspace.get_application(a).current_snapshot_id)for a in identifiers}
             self.repository.change(task_id,lambda s:{'analyses':{**s.get('analyses',{}),**fingerprints}})
@@ -1393,7 +1424,8 @@ class CareerHarness:
             return {'evidence_id':confirmed.evidence_id,'saved':True,'quote':quote}
         if name=='inspect_application':
             self.repository.change(task_id,active_application_run=args['run_id'],active_browser='application')
-            result=self.application(args['run_id'],include_fields=args.get('include_fields',False),field_key=args.get('field_key'))
+            result=self.application(args['run_id'],include_fields=args.get('include_fields',False),field_key=args.get('field_key'),
+                                    caller=task_id)
             # Rereading a page that waits on the user (sign-in, verification, a question) within one
             # turn cannot change it; say so once instead of letting the turn poll the same state.
             seen=[state.get('chat_revision',0),result.get('version')]
@@ -1511,7 +1543,7 @@ class CareerHarness:
                     results.append({'url':url,'started':run['run_id'] not in before,'application':run})
                     before.add(run['run_id'])
                 except (ValueError,ApplyConflict) as exc:
-                    results.append({'url':url,'started':False,'error':str(exc)})
+                    results.append({'url':url,'started':False,'error':str(exc),**getattr(exc,'workflow_detail',{})})
             return {'requested_count':len(unique),'started_count':sum(r['started'] for r in results),
                 'opened_or_reused_count':len({r['application']['run_id'] for r in results if 'application' in r}),
                 'resolved_request_count':sum('application' in r for r in results),'results':results,
@@ -1573,7 +1605,9 @@ class CareerHarness:
                         {'application_id':app_id,'resume_source':args.get('resume_source','auto')},f'{key}:{index}')
                     results.append({'application_id':app_id,'started':run['run_id'] not in before,'application':run})
                     before.add(run['run_id'])
-                except (ValueError,ApplyConflict) as exc:results.append({'application_id':app_id,'started':False,'error':str(exc)})
+                except (ValueError,ApplyConflict) as exc:
+                    # Keep structured refusals (e.g. ownership) per job; text alone was retried (replay 04).
+                    results.append({'application_id':app_id,'started':False,'error':str(exc),**getattr(exc,'workflow_detail',{})})
             return {'requested_count':len(ids),'started_count':sum(r['started'] for r in results),
                 'opened_or_reused_count':len({r['application']['run_id'] for r in results if 'application' in r}),
                 'resolved_request_count':sum('application' in r for r in results),'results':results}
@@ -1781,20 +1815,34 @@ class CareerHarness:
             [c['key'] for c in account.get('consents',[])],
             child.get('message') if child['status']=='needs_input' else None]
 
-    def affordable_scoring(self,task_id,identifiers):
-        """Start only a scoring batch the task's remaining attempts can finish.
+    def affordable_scoring(self,task_id,identifiers,*,cached=()):
+        """Start only a scoring batch the task's remaining attempts and input tokens can finish.
 
-        A Jev batch costs about one extraction per job plus shared stage requests; the
-        main-model route about five requests per job. A batch cut off midway spends
-        its extraction requests and yields no score, so the batch is sized first.
+        A Jev batch costs about two requests per job plus shared stage requests; the main-model
+        route about five per job. A batch cut off midway yields no score (paid Jev decisions stay
+        cached for a retry), so it is sized first, keeping the reply reserve. Jobs whose analysis is
+        already cached cost nothing and go first.
         """
         from eregion.runtime.provider_usage import task_limits, UsageLedger, REPLY_RESERVE, ReplyBudgetReserved
-        cap=task_limits().get('provider_attempts')
-        if not cap or cap<=2*REPLY_RESERVE:return identifiers,[]
-        room=cap-REPLY_RESERVE-UsageLedger(self.repository.sessions).summary(task_id=task_id)['calls']
-        fits=room-JEV_STAGE_REQUESTS if self.analysis.uses_jev() else room//MAIN_ROUTE_REQUESTS_PER_JOB
-        if fits<1:raise ReplyBudgetReserved('reply_reserve')
-        return identifiers[:fits],identifiers[fits:]
+        limits=task_limits()
+        cap,tokens=limits.get('provider_attempts'),limits.get('input_tokens')
+        free=[i for i in identifiers if i in set(cached)]
+        paid=[i for i in identifiers if i not in set(cached)]
+        if not paid or (not cap and not tokens):return [*free,*paid],[]
+        used=UsageLedger(self.repository.sessions).summary(task_id=task_id)
+        jev=self.analysis.uses_jev()
+        def jobs_for(requests):
+            return (requests-JEV_STAGE_REQUESTS)//JEV_JOB_REQUESTS if jev else requests//MAIN_ROUTE_REQUESTS_PER_JOB
+        fits=len(paid)
+        if cap:
+            if cap<=2*REPLY_RESERVE:return [*free,*paid],[]
+            fits=min(fits,jobs_for(cap-REPLY_RESERVE-used['calls']))
+        if tokens:
+            room=tokens-used.get('budget_input_tokens',0)-REPLY_RESERVE*SCORING_TOKENS_PER_REQUEST
+            fits=min(fits,jobs_for(room//SCORING_TOKENS_PER_REQUEST))
+        if fits<1 and not free:raise ReplyBudgetReserved('reply_reserve')
+        fits=max(0,fits)
+        return [*free,*paid[:fits]],paid[fits:]
 
     def validate_finish(self,state):
         for run_id in state['application_runs']:
@@ -1956,16 +2004,40 @@ class CareerHarness:
         owner=run.get('origin_task_id')
         if owner and owner!=state['task_id']:
             if self.owner_active(owner):
-                raise ValueError('This application is already owned by another conversation. Continue it in that conversation; no documents or browser state were changed.')
+                raise ApplicationOwnedElsewhere('This application is already owned by another conversation. Continue it in that '
+                    'conversation; no documents or browser state were changed.', self.ownership(state['task_id'],run))
             return self.adopt_application(state,run,adopt)
         if not owner:
             linked=[s['task_id'] for s in self.repository.list() if run['run_id'] in s.get('application_runs',[])]
             others=[task for task in linked if task!=state['task_id'] and self.owner_active(task)]
             if others:
-                raise ValueError('This older application is linked to another conversation. Its execution ownership is ambiguous; no documents or browser state were changed.')
+                raise ApplicationOwnedElsewhere('This older application is linked to another conversation. Its execution '
+                    'ownership is ambiguous; no documents or browser state were changed.',
+                    self.ownership(state['task_id'],run,owner=others[0]),code='application_ownership_ambiguous')
             if any(task!=state['task_id'] for task in linked):
                 return self.adopt_application(state,run,adopt)
         return run
+
+    def ownership(self,task_id,run,*,owner=None):
+        """Who executes this run and what this conversation may do with it (business state,
+        independent of task memory). Replays 02/03: a new conversation kept calling
+        start_application on a run owned elsewhere and suggested starting a duplicate."""
+        owner=owner or run.get('origin_task_id')
+        if not owner or owner==task_id:
+            return {'owned_by_this_conversation':True}
+        try:
+            other=self.repository.get(owner)
+            title=(other.get('title') or other.get('goal') or '')[:120]
+        except Exception:
+            other,title={},''
+        active=self.owner_active(owner)
+        return {'owned_by_this_conversation':False,'owner_conversation':{'task_id':owner,'title':title,'active':active},
+            'allowed_here':['inspect_application','report its status'],
+            'not_allowed_here':['start_application','reply_application','continuing or resubmitting it'],
+            'duplicate_policy':'A second application for the same posting cannot be started; the existing run is the only one.',
+            'next':(f"Tell the user this application runs in the conversation '{title or owner}' and continue it there. "
+                    'Do not retry or start another application for this posting.') if active else
+                   'The owning conversation was deleted or cancelled: reopening the job here takes the run over.'}
 
     def adopt_application(self,state,run,adopt):
         if not adopt:

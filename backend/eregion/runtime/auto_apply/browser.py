@@ -696,11 +696,19 @@ class ApplicationBrowser:
         # Re-identify the exact observed target, not its ephemeral DOM index.
         page = self.page_state()
         before_fields = self.observe()
-        candidates = [c for c in page["controls"] if all(c.get(k) == action.get(k)
-            for k in ("label", "href", "automation_id", "kind")) and not c["disabled"]]
+        if action["kind"] in {"submit", "unavailable", "guarded", "field"}:
+            raise BrowserBlocked("This control requires final submission review or is not a navigation control.")
+        identity = ("label", "href", "automation_id", "kind", "section")
+        candidates = [c for c in page["controls"] if all(c.get(k) == action.get(k) for k in identity) and not c["disabled"]]
+        # Adobe-35/36: writes earlier in the batch renumbered the ephemeral index, so the same
+        # Next was refused. The saved identity may resolve to exactly one live control instead.
         target = next((c for c in candidates if c["id"] == action["id"]), None)
-        if target is None or action["kind"] in {"submit", "unavailable", "guarded", "field"}:
-            raise BrowserBlocked("This navigation control changed or requires final submission review.")
+        if target is None and len(candidates) == 1:
+            target = candidates[0]
+        if target is None:
+            raise BrowserBlocked("This control is no longer uniquely identifiable on the page ("
+                                 + ("no matching control" if not candidates else f"{len(candidates)} matching controls")
+                                 + "). Observe the page again and choose from its current controls.", code='stale_observation')
         if target.get("href"):
             url = public_https_url(target["href"])
             # Clicking a visible application link may transfer from a company's

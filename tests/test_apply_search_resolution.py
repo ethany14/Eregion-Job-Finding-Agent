@@ -16,8 +16,14 @@ def test_preselected_but_unmapped_picker_counts_attempts_and_explains_decision(m
     for _ in range(FIELD_ATTEMPT_LIMIT):
         run(host,'inspect_field',{'observation_id':s.observation_id,'field_key':f['key']})
     assert host.attempts(f)==FIELD_ATTEMPT_LIMIT
+    # One read past the limit is evidence for the decision (Adobe-35); an unchanged repeat is not.
+    first=run(host,'inspect_field',{'observation_id':s.observation_id,'field_key':f['key']})
+    assert first.get('error_code')!='field_attempt_limit'
     outcome=run(host,'inspect_field',{'observation_id':s.observation_id,'field_key':f['key']})
-    assert outcome['error_code']=='field_attempt_limit'
+    assert outcome['error_code']=='field_attempt_limit' and 'already read' in outcome['error']
+    searched=run(host,'search_options',{'observation_id':s.observation_id,'field_key':f['key'],
+        'source_ref':f"education:{REPLAY['binding']['education_id']}:field_of_study",'query':'Systems','query_reason':'Discipline term.'})
+    assert searched['error_code']=='field_attempt_limit'  # searching is still an attempt
     assert not s.state.get('field_decisions')  # Guard does not decide equivalence or omission.
 
 

@@ -265,3 +265,27 @@ def test_queue_spreads_candidates_across_employers():
     cards=[{'url':f'https://x/{c}{i}','company':c} for c,n in (('Affirm',4),('Stripe',1),('',1),('affirm',1)) for i in range(n)]
     assert [c['company'] for c in spread(cards)]==['Affirm','Stripe','','Affirm','Affirm','Affirm','affirm']
     assert sorted(c['url'] for c in spread(cards))==sorted(c['url'] for c in cards)  # nothing dropped
+
+
+def test_low_budget_scores_what_fits_reports_the_rest_and_never_rescores(career,monkeypatch):
+    # Search comparison A/B: 15 imported jobs, 0 scored — the whole batch outran its budget.
+    c=career;jobs=[posting(i) for i in range(6)];prepare(c,monkeypatch,jobs)
+    monkeypatch.setattr(c.harness.analysis,'uses_jev',lambda:True)
+    original=c.harness.analysis.analyze_many;groups=[]
+    async def batch(ids,**kwargs):groups.append(list(ids));return await original(ids,**kwargs)
+    monkeypatch.setattr(c.harness.analysis,'analyze_many',batch)
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS','17')   # room 14 -> (14-8)//2 = 3 jobs
+    first=execute(c,'verify_and_score_jobs',urls=[j['url'] for j in jobs])
+    assert len(first['jobs'])==3 and len(first['unscored_for_budget'])==3 and 'Not recommendations' in first['budget_note']
+    scored={j['application_id'] for j in first['jobs']}
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS','200')
+    second=execute(c,'verify_and_score_jobs',urls=[j['url'] for j in jobs])
+    assert sorted(i['outcome'] for i in second.get('already_processed',[]))==['scored']*3
+    assert len(groups)==2 and not set(groups[1])&scored  # only the deferred three were sent to the scorer
+
+
+def test_inspect_job_requires_only_the_application_id():
+    from eregion.runtime.career.harness import TOOLS
+    schema=next(t for t in TOOLS if t['function']['name']=='inspect_job')['function']['parameters']
+    # requirement_ids narrows the read; a whole-job read must not be refused as malformed.
+    assert schema['required']==['application_id'] and 'requirement_ids' in schema['properties']

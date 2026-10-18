@@ -172,6 +172,11 @@ def run_one(base, info, scenario, mode):
             runs = session.execute(sql('select count(*) from auto_applications')).scalar()
         new_messages = [m for m in state['messages'] if m['role'] == 'assistant'][-3:]
         history = [h['tool'] for h in state.get('history', []) if h.get('chat_revision', 0) >= 0][-14:]
+        # Separate tool refusals from model behaviour and from simulation limits (fake browser).
+        outcomes = [(h['tool'], (h.get('result') or {}).get('error_code') if isinstance(h.get('result'), dict) else None)
+                    for h in state.get('history', [])][-14:]
+        refusals = [t for t, code in outcomes if code]
+        starts = [code for t, code in outcomes if t == 'start_application']
         result = {
             'scenario': scenario, 'mode': mode, 'task_status': state['status'], 'elapsed_s': round(elapsed, 1),
             'provider_attempts': usage['calls'], 'input_tokens': usage.get('input_tokens'), 'output_tokens': usage.get('output_tokens'),
@@ -181,7 +186,10 @@ def run_one(base, info, scenario, mode):
             'run_version_changed': child['version'] != run_before['version'], 'run_count': runs,
             'submissions': sum(b.submissions for b in env.browsers), 'browsers_opened': len(env.browsers),
             'correction_delivered': any('607-555-0199' in (m.get('text') or '') for m in child.get('messages', [])),
-            'task_memory_injected': mode == 'on',
+            'task_memory_injected': mode == 'on', 'tool_outcomes': outcomes, 'tool_refusals': refusals,
+            # New conversation: the pass criterion is an accurate ownership report, not a resume.
+            'start_attempts': len(starts), 'retried_after_ownership_refusal': starts.count('application_owned_elsewhere') > 1,
+            'simulation': 'fake browser: no website or browser session; restart marks the run browser_session_ended',
         }
     finally:
         loop.close(); env.applications.close(); env.db.close()
@@ -195,7 +203,8 @@ if __name__ == '__main__':
     info = build_base(base)
     (OUT / 'base.json').write_text(json.dumps(info, indent=1), encoding='utf-8')
     results = []
-    for scenario in SCENARIOS:
+    chosen = [x for x in os.getenv('PILOT_SCENARIOS', ','.join(SCENARIOS)).split(',') if x in SCENARIOS]
+    for scenario in chosen:
         for mode in ('off', 'on'):
             try:
                 results.append(run_one(base, info, scenario, mode))

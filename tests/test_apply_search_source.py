@@ -190,3 +190,30 @@ def test_extra_queries_need_a_reason_and_are_bounded():
         if reason:args['query_reason']=reason
         with pytest.raises(BrowserBlocked):
             s.execute('search_options',args)
+
+
+def test_degree_decision_may_cite_the_bound_record_school_but_not_another_record():
+    # Adobe-36: resolve_field(Masters) for Cornell cited its degree and school and was refused.
+    browser=RepairBrowser()
+    browser.fields=[field('School'),field('Degree','combobox')]
+    for f in browser.fields:f['dom_id']='education-1--'+f['key']
+    browser.fields[1]['options']=[{'label':'Bachelors','value':'b'},{'label':'Masters','value':'m'}]
+    saved=state()
+    saved['profile']['education']=[{'id':'a','school':'Cornell University','degree':'M.Eng.'},{'id':'b','school':'Wisconsin','degree':'B.A.'}]
+    s=AgentTools(browser,saved,autofill=lambda:{},active=lambda:True);s.observe()
+    degree=s.fields[1]
+    s._bind_education({'education_id':'a','fields':[{'field_key':degree['key'],'component':'degree'}]})
+    s.observe()
+    decide=lambda refs:s.execute('resolve_field',{'observation_id':s.observation_id,'field_key':degree['key'],'mode':'equivalent',
+        'value':'Masters','source_refs':refs,'reason':'M.Eng. is a master\'s-level degree.'})
+    with pytest.raises(BrowserBlocked,match='bound education record is a'):
+        decide(['education:a:degree','education:b:degree'])
+    with pytest.raises(BrowserBlocked,match='bound component education:a:degree'):
+        decide(['education:a:school'])
+    s.observe()
+    result=decide(['education:a:degree','education:a:school'])
+    assert result['verified'] and browser.fields[1]['value']=='Masters'
+    from eregion.runtime.auto_apply.decisions import active_decision
+    assert set(active_decision(browser.fields[1],s.state)['sources'])=={'education:a:degree','education:a:school'}
+    s.state['profile']['education'][0]['school']='Cornell Tech'  # a cited fact changed: the decision retires
+    assert active_decision(browser.fields[1],s.state) is None

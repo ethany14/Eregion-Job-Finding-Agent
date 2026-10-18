@@ -160,7 +160,10 @@ def test_recommendation_requires_score_for_current_resume_and_retrieved_posting(
     with pytest.raises(ValueError,match='current resume'):execute(c,'recommend_job',**args)
     execute(c,'score_job',application_id=job['application_id'])
     c.repository.change(c.state['task_id'],retrieved_jobs={})
-    with pytest.raises(ValueError,match='Read the current posting'):execute(c,'recommend_job',**args)
+    with pytest.raises(ValueError,match='Read the current posting') as refused:execute(c,'recommend_job',**args)
+    # The refusal names the tool that supplies the missing read, with the posting's URL.
+    detail=refused.value.workflow_detail
+    assert detail['error_code']=='posting_not_read' and 'read_job' in detail['next'] and url in detail['next']
     execute(c,'read_job',url=url)
     assert execute(c,'recommend_job',**args)['recommended']
 

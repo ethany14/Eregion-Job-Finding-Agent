@@ -13,7 +13,8 @@ RULE = ('\nFor a promising observed posting use verify_and_score to read, import
         'and qualification evidence. For a posting already read, use verify_and_score to reuse it, or '
         'dismiss_candidate with an exact source quote and reason if unsuitable. Finish started candidates before '
         'searching again. A progress message or plan is not completed candidate work.\n')
-RULE += ('For multi-job requests prefer verify_and_score_jobs with 8-20 observed URLs per call (or all remaining if fewer): it defers '
+RULE += ('For multi-job requests prefer verify_and_score_jobs with up to 20 observed URLs per call: it scores only as many as the '
+         'remaining budget can finish (others return as unscored_for_budget, never matches) and defers '
          'unverified role/location/seniority without scoring and shares the scorer across qualified candidates. '
          'Do not page through JD context first. After deciding scored results, continue a different candidate '
          'batch or query; never keep proposing the same deferred URLs. Use decision_brief for each scored job: '
