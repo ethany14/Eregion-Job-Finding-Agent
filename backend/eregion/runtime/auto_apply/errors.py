@@ -17,6 +17,7 @@ RECOVERY = {
     'date_group_changed': ('A sibling date segment changed. Use read_field, then repair only from confirmed facts; this write is not verified.', False),
     'value_not_retained': ('Observe the field again, check whether it needs a committed option or another input format, and choose a different action.', False),
     'document_pending': ('Bind the correct file control and upload the selected document before review.', False),
+    'document_existing_unverified': ('The upload control already shows attachments this application has not verified as the current document. Do not add another copy: ask the user to keep them (bind_document keep_existing) or remove them in the browser.', False),
     'input_pending': ('Read and bind the latest user reply. Wait or ask only if an actual fact is still missing.', False),
     'browser_session_lost': ('The browser session closed. Reopen it and restore saved progress; coordinates from the old session cannot be used.', False),
     'dom_interaction_failed': ('DOM interaction failed. Inspect the current viewport and use computer tools if available, then verify the field.', True),

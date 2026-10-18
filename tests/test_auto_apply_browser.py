@@ -606,19 +606,3 @@ def test_lever_select2_school_picker_is_the_hidden_required_select():
         assert browser.page.locator('#shown').inner_text() == "Cornell University"
     finally: browser.close()
 
-
-def test_the_same_document_is_not_attached_again_on_workday():
-    # Intel-34: Workday appends every upload, and Review listed resume.pdf three times.
-    b = FixtureBrowser('https://example.wd5.myworkdayjobs.com/en-US/External/job/x/apply')
-    try:
-        b.page.set_content('''<form><div data-automation-id="attachments-FileUpload"><label for="r">Resume/CV</label>
-          <input type="file" id="r" onchange="window.uploads=(window.uploads||0)+1;const d=document.createElement('div');
-          d.setAttribute('data-automation-id','file-upload-successful');d.textContent=this.files[0].name;this.parentElement.append(d)"></div></form>''')
-        key = b.observe()[0]['key']
-        b.fill(b.field(key), b'%PDF-1 resume')
-        b.fill(b.field(key), b'%PDF-1 resume')
-        assert b.page.evaluate('window.uploads') == 1
-        b.fill(b.field(key), b'%PDF-1 tailored resume')  # different content is still uploaded
-        assert b.page.evaluate('window.uploads') == 2
-    finally:
-        b.close()

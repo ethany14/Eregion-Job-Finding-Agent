@@ -62,8 +62,12 @@ TOOLS = [
          {'observation_id':TEXT, 'experience_id':TEXT, 'fields':{'type':'array','items':{'type':'object',
           'properties':{'field_key':TEXT,'component':{'type':'string','enum':list(BINDING_COMPONENTS)}},
           'required':['field_key','component'],'additionalProperties':False}}}),
-    tool('bind_document','Identify an observed file upload as the resume or approved cover letter. Then use autofill to upload that document, replacing an older attachment if required.',
-        {**FIELD,'document':{'type':'string','enum':['resume','cover_letter']}}),
+    tool('bind_document','Identify an observed file upload as the resume or approved cover letter, then use autofill to upload it. '
+         'Autofill never adds a second copy: if the control already shows attachments this application did not verify, ask the user. '
+         'If they choose to keep them, call again with keep_existing citing their message.',
+        {**FIELD,'document':{'type':'string','enum':['resume','cover_letter']}},
+        optional={'keep_existing':{'type':'object','properties':{'message_id':TEXT,'quote':TEXT},
+                  'required':['message_id','quote'],'additionalProperties':False}}),
     tool('ask_user', 'Ask your own focused question. Empty field_keys means a general question. Set wait_for_reply=false to keep working on independent steps while the user answers. The exact question stays visible.',
         {'text':TEXT,'field_keys':{'type':'array','items':TEXT}}, optional={'wait_for_reply':{'type':'boolean'}}),
     tool('wait_for_user', 'Pause for the existing pending question when no useful independent work remains. Does not repeat the question.'),
@@ -245,12 +249,26 @@ class HybridApplicationAgent:
 SELF_IDENTIFICATION = re.compile(r"hispanicOrLatino|ethnicity|\brace\b|gender|veteranStatus|disabilityStatus|sexualOrientation", re.I)
 
 
-def local_date():
-    """The user's calendar date (this machine's local time zone), e.g. for a signature date."""
-    from datetime import datetime
-    now = datetime.now().astimezone()
-    offset = now.strftime("%z")  # tzname() is localized on Windows; the offset is not
-    return f"{now.date().isoformat()} (UTC{offset[:3]}:{offset[3:]})"
+def current_clock(profile=None, *, now=None):
+    """Current date and time for the model, with where its time zone came from: the user's
+    profile, then the app setting JOB_AGENT_USER_TIMEZONE, else this machine's zone marked
+    unconfirmed (Intel-34: the model assumed UTC and asked whether the date had changed)."""
+    import os
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    instant = now or datetime.now(timezone.utc)
+    for source, name in (('profile', (profile or {}).get('timezone')), ('app_setting', os.getenv('JOB_AGENT_USER_TIMEZONE'))):
+        if isinstance(name, str) and name.strip():
+            try:
+                local = instant.astimezone(ZoneInfo(name.strip()))
+                break
+            except (ZoneInfoNotFoundError, ValueError):
+                continue
+    else:
+        source, name, local = 'machine_local_unconfirmed', None, instant.astimezone()
+    offset = local.strftime('%z')  # tzname() is localized on Windows; the offset is not
+    return {'date': local.date().isoformat(), 'time': local.strftime('%H:%M'),
+            'utc_offset': f'{offset[:3]}:{offset[3:]}', 'timezone': name, 'source': source}
 
 
 def _without_empty(entry):
@@ -476,7 +494,7 @@ class AgentTools:
                 'removed': delta.get('removed', [])},
             "any_field_source_refs": sorted(universal),
             # Intel-34: without a clock the model assumed UTC "today" (a day ahead in the evening).
-            "local_date": local_date(),
+            "clock": current_clock(self.state.get("profile")),
             "user_messages": [{k: v for k, v in {"id": m["id"], "role": m["role"], "text": m["text"], "field_key": m.get("field_key"),
                 "bound_answers": m.get("bound_answers"), "binding_method": m.get("binding_method"),
                 "question_keys": m.get("question_keys"), 'in_reply_to':m.get('in_reply_to')}.items() if v not in (None, [], {})}
@@ -875,6 +893,19 @@ class AgentTools:
                     'Ask the user to upload it in the browser; never substitute another file.', code='input_pending')
             if args['document']=='cover_letter' and not self.state.get('cover_letter'):
                 raise BrowserBlocked('No approved cover letter is available.')
+            keep = args.get('keep_existing')
+            if keep is not None:
+                from .autofill import attached_names
+                message = next((m for m in self.state.get('messages', []) if m.get('id') == keep.get('message_id') and m.get('role') == 'user'), None)
+                quote = keep.get('quote')
+                if not message or not isinstance(quote, str) or not quote.strip() or quote.casefold() not in message['text'].casefold():
+                    raise BrowserBlocked("Cite a literal quote from the user's message confirming the existing attachment.")
+                names = attached_names(field)
+                if not names:
+                    raise BrowserBlocked('This control shows no attachment to keep.')
+                binding = {'document':args['document'],'keep_existing':True,'observed':names,'message_id':message['id'],'quote':quote}
+                self._save_decisions(document_bindings={**self.state.get('document_bindings',{}),key:binding})
+                return {'bound':True,'kept':names,'next':'Call autofill for this field to record the kept attachment.'}
             self._save_decisions(document_bindings={**self.state.get('document_bindings',{}),key:args['document']})
             return {'bound':True,'next':'Call autofill to upload this document.'}
         if name == "draft_answer":

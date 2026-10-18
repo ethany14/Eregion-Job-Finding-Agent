@@ -1,5 +1,6 @@
 """Reusable bulk-fill tool, with field-level failures and bounded verification."""
 import hashlib
+from datetime import datetime, timezone
 import json
 import time
 import re
@@ -101,6 +102,7 @@ def document_kind(field,state):
     if field['kind']!='file':return None
     if other_document(field):return None
     bound = state.get('document_bindings',{}).get(field['key'])
+    if isinstance(bound, dict):bound = bound.get('document')
     if bound:return bound
     label=field['label'].casefold()
     if 'cover letter' in label:return 'cover_letter'
@@ -109,6 +111,56 @@ def document_kind(field,state):
     # is the application's document slot; optional extra-document fields are not.
     if field.get('required') and re.search(r'attach|upload|document|\bfile\b',label):return 'resume'
     return None
+
+
+UPLOAD_NAMES = {'resume': 'resume.pdf', 'cover_letter': 'cover-letter.pdf'}
+
+
+def attached_names(field):
+    """Successful attachments shown by this control, duplicates included."""
+    if field.get('attachments') is not None:
+        return list(field['attachments'])
+    return [name.strip() for name in str(field.get('value') or '').split(';') if name.strip()]
+
+
+def upload_plan(field, state, kind, data):
+    """Upload, skip or hold one document control, from this application's durable upload
+    record and the attachments the site shows. A file name alone never proves content: only
+    a record of this application uploading this fingerprint under that name does."""
+    filename = UPLOAD_NAMES[kind]
+    fingerprint = hashlib.sha256(data).hexdigest()
+    names = attached_names(field)
+    record = (state.get('document_uploads') or {}).get(kind) or {}
+    same = record.get('fingerprint') == fingerprint
+    if same and record.get('status') == 'verified' and filename in names:
+        return {'action': 'skip', 'reason': 'verified_present'}
+    if same and record.get('status') == 'attempted' and names.count(filename) > record.get('before', 0):
+        # The earlier upload finished after its wait timed out.
+        return {'action': 'skip', 'reason': 'completed_after_attempt', 'verify': True}
+    kept = state.get('document_bindings', {}).get(field['key'])
+    if same and record.get('status') == 'kept_by_user' and sorted(record.get('kept', [])) == sorted(names):
+        return {'action': 'skip', 'reason': 'kept_by_user'}
+    if names and field.get('appends'):
+        if isinstance(kept, dict) and kept.get('keep_existing') and sorted(kept.get('observed', [])) == sorted(names):
+            return {'action': 'skip', 'reason': 'kept_by_user', 'keep': names}
+        ours = record.get('status') in {'verified', 'attempted', 'kept_by_user'} and filename in names
+        message = (f"This control appends files and already shows {names}: an older version of the {kind.replace('_', ' ')} "
+                   "uploaded by this application. Uploading would add a second copy. Ask the user to remove the old "
+                   "attachment in the browser (Control browser), then autofill again." if ours else
+                   f"This control appends files and already shows {names}, which this application did not upload. "
+                   "Do not add another copy. Ask the user whether to keep them (then bind_document with keep_existing "
+                   "citing their reply) or remove them in the browser before uploading.")
+        return {'action': 'hold', 'code': 'document_existing_unverified', 'message': message}
+    return {'action': 'upload', 'filename': filename, 'fingerprint': fingerprint, 'before': names.count(filename)}
+
+
+def record_upload(state, kind, field, plan, status, after=None):
+    material = (state.get('material_refs') or {})
+    ref = material.get('tailored_resume' if kind == 'resume' else kind) or material.get(kind)
+    state.setdefault('document_uploads', {})[kind] = {
+        'fingerprint': plan['fingerprint'], 'filename': plan['filename'], 'field_key': field['key'],
+        'material_ref': ref, 'status': status, 'before': plan['before'],
+        **({'after': after} if after is not None else {}), 'at': datetime.now(timezone.utc).isoformat()}
 
 
 def pending_documents(state,fields):
@@ -132,7 +184,7 @@ def failure_signature(field, value):
 
 
 def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: True, progress=lambda *args: None):
-    attempts, failed, completed, details = {}, {}, [], {}
+    attempts, failed, completed, details, uploads = {}, {}, [], {}, {}
     memory = state.setdefault('autofill_failures', {})
     deadline = time.monotonic() + 90
     for _ in range(60):
@@ -178,6 +230,23 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
                 if field['value'] and not state.get('document_refresh',{}).get(kind):continue
                 from eregion.domain.pdf_rendering import render_letter_pdf
                 value = render_letter_pdf(state['cover_letter'])
+            if kind in UPLOAD_NAMES and isinstance(value, (bytes, bytearray)):
+                plan = upload_plan(field, state, kind, value)
+                if plan['action'] == 'skip':
+                    record = state.setdefault('document_uploads', {}).setdefault(kind, {})
+                    if plan.get('verify'):
+                        record.update(status='verified', after=attached_names(field).count(record.get('filename')))
+                    if plan.get('keep'):
+                        record.update(fingerprint=hashlib.sha256(value).hexdigest(), status='kept_by_user',
+                                      kept=plan['keep'], field_key=key, at=datetime.now(timezone.utc).isoformat())
+                    if state.get('document_refresh'):
+                        state['document_refresh'][kind] = False
+                    failed.pop(key, None); details.pop(key, None); memory.pop(key, None)
+                    continue
+                if plan['action'] == 'hold':
+                    failed[key] = plan['code']; details[key] = failure(plan['code'], plan['message'])
+                    continue
+                uploads[key] = (kind, plan)
             if value is not None:
                 if (state.get("automation_mode") == "hybrid" and value in {state["profile"].get("phone"), state["profile"].get("city")}
                         and field["kind"] != "location" and key not in state["answers"] and not active_decision(field,state)):
@@ -214,6 +283,9 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
             try:
                 upload = document_kind(field, state)
                 target = {**field, 'upload_filename': 'cover-letter.pdf' if upload == 'cover_letter' else 'resume.pdf'} if upload else field
+                if key in uploads:
+                    # Recorded before the write, so a timed-out upload that completes is recognized.
+                    record_upload(state, *uploads[key][:1], field, uploads[key][1], 'attempted')
                 if plain and hasattr(browser, 'fill_plain'):
                     browser.fill_plain(target, value)
                 else:
@@ -229,7 +301,18 @@ def autofill(browser, state, resume, *, edited_keys=frozenset(), active=lambda: 
         for field, value in attempted:
             key = field['key']
             current = current_fields.get(key)
-            verified = (current is None or bool(current['value'])) if field['kind'] == 'file' else current is not None and matches(current, value)
+            if key in uploads:
+                kind, plan = uploads[key]
+                after = attached_names(current).count(plan['filename']) if current is not None else None
+                # One more card with this name, or the native input holding exactly this file. A
+                # vanished control or a non-empty input is not evidence of this upload.
+                verified = after is not None and (after > plan['before'] if field.get('appends')
+                                                  else attached_names(current) == [plan['filename']])
+                record_upload(state, kind, field, plan, 'verified' if verified else 'attempted', after)
+            elif field['kind'] == 'file':
+                verified = current is None or bool(current['value'])
+            else:
+                verified = current is not None and matches(current, value)
             if verified:
                 completed.append(key)
                 failed.pop(key, None); details.pop(key, None); memory.pop(key, None)

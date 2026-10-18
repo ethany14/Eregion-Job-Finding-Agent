@@ -46,7 +46,7 @@ class FakeBrowser:
     def barrier(self): return None
     def fill(self, current, value):
         match = next(item for item in self.fields if item["key"] == current["key"])
-        match["value"] = "resume.pdf" if current["kind"] == "file" else value
+        match["value"] = current.get("upload_filename", "resume.pdf") if current["kind"] == "file" else value
         if self.after_fill: self.after_fill()
     def confirmation(self):
         return {"url": "https://jobs.lever.co/example/abc123/thanks", "text": "Application received"} if self.submissions and not self.uncertain else None

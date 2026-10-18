@@ -192,7 +192,3 @@ def test_voluntary_self_identification_is_not_left_empty_without_the_users_answe
     assert leave(hispanic['key'], ['answer:'+hispanic['key']])['left_empty']
 
 
-def test_observation_carries_the_local_calendar_date():
-    from datetime import datetime
-    browser, tools = session()
-    assert tools.observe()['local_date'].startswith(datetime.now().astimezone().date().isoformat())

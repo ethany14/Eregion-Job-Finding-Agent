@@ -88,7 +88,7 @@ SCAN = r"""() => {""" + UPLOAD_STATUS + r"""
       ['listbox','tree','true'].includes(el.getAttribute('aria-haspopup')) ||
       !!el.closest('[data-automation-id="multiSelectContainer"], [role="combobox"]');
     let committed = false, checkboxGroup = false;
-    let text = label(el), options = [], value = el.getAttribute('aria-valuetext') || el.value || '', required = el.required || el.getAttribute('aria-required') === 'true';
+    let text = label(el), options = [], value = el.getAttribute('aria-valuetext') || el.value || '', required = el.required || el.getAttribute('aria-required') === 'true', attachments = null;
     // An empty Workday date segment shows its own placeholder ("MM", "YYYY") as its value.
     if (/dateSection(Month|Day|Year)/.test(el.id) && /^(MM|DD|YYYY)$/.test(value)) value = '';
     let invalid = el.getAttribute('aria-invalid') === 'true' || (!!el.validity && !el.validity.valid) || errors.length > 0;
@@ -179,6 +179,8 @@ SCAN = r"""() => {""" + UPLOAD_STATUS + r"""
         .filter(item => item.querySelector('[data-automation-id="file-upload-successful"]'))
         .map(item => clean(item.querySelector('[data-automation-id="file-upload-item-name"]')?.textContent)).filter(Boolean);
       if (attached.length) value = [...new Set(attached)].join('; ');
+      // Every successful card, duplicates included: Workday appends uploads (Intel-34: three copies).
+      attachments = upload ? attached : (el.files?.length ? [...el.files].map(f => f.name) : []);
       if ((el.id === 'resume' || el.name === 'resume')) { text = 'Resume/CV'; required = true; }
     } else if (kind === 'combobox') {
       const shell = el.closest('.select__container, .select-shell');
@@ -230,7 +232,8 @@ SCAN = r"""() => {""" + UPLOAD_STATUS + r"""
       }
     }
     fields.push({id, dom_id:el.id, name:el.name || '', key, kind, label:text || 'Unlabelled field', required:!checkboxGroup && !!(required || parentRequired || text.includes('*') || text.includes('✱')), options, value, invalid,
-      choice_control:choice, value_committed:committed, ...(select2 ? {select2:true} : {}), errors:[...new Set(errors)], help:clean(described('aria-describedby').map(x=>x.textContent).join(' ')) || statement,
+      choice_control:choice, value_committed:committed, ...(select2 ? {select2:true} : {}),
+      ...(kind === 'file' ? {attachments, appends:!!el.multiple || !!el.closest('[data-automation-id="attachments-FileUpload"]')} : {}), errors:[...new Set(errors)], help:clean(described('aria-describedby').map(x=>x.textContent).join(' ')) || statement,
       group:clean(group?.querySelector('legend')?.textContent || group?.getAttribute('aria-label')), section:sections.join(' / ').slice(0,500),
       constraints:{read_only:!!el.readOnly, pattern:el.getAttribute('pattern'), max_length:el.getAttribute('maxlength'), min_length:el.getAttribute('minlength'),
         placeholder:el.getAttribute('placeholder'), input_mode:el.getAttribute('inputmode'), autocomplete:el.getAttribute('autocomplete')}});
@@ -1239,15 +1242,7 @@ class ApplicationBrowser:
         kind = field["kind"]
         if kind == "file":
             filename = upload_filename or ('cover-letter.pdf' if 'cover letter' in field['label'].casefold() else 'resume.pdf')
-            # Workday appends every upload as another attachment (Intel-34 Review listed resume.pdf
-            # three times). The same document already uploaded here and still shown is kept.
-            digest = hashlib.sha256(value).hexdigest() if isinstance(value, (bytes, bytearray)) else None
-            uploaded = getattr(self, '_uploaded_documents', set())
-            if digest and (filename, digest) in uploaded and filename in str(field.get('value') or ''):
-                return
             locator.set_input_files({"name": filename, "mimeType": "application/pdf", "buffer": value})
-            if digest:
-                self._uploaded_documents = uploaded | {(filename, digest)}
             upload = locator.locator('xpath=ancestor::*[@data-automation-id="attachments-FileUpload"][1]')
             if upload.count():
                 upload.locator('[data-automation-id="file-upload-successful"]').last.wait_for(state="visible", timeout=10000)
