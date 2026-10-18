@@ -52,3 +52,6 @@ On restricted Windows hosts, use `python tools/scripts/pytest_workspace.py ...`.
 It checks loopback before pytest starts: Windows asyncio uses a local TCP socketpair,
 and blocked loopback can hang TestClient before application startup. Run offline tests
 in an environment allowing loopback; retain the external-network guards in conftest.
+
+The opt-in Stage 4A/4B implementation and offline rollout limits are documented in
+[task memory](eregion/runtime/task_memory/README.md). It defaults to off.

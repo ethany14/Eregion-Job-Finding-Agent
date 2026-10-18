@@ -41,7 +41,7 @@ class TaskHost:
             self.loop.repository.append(self.task_id, role='assistant', text='I have saved the work so far. Send continue to allow more steps.')
             self.loop.repository.change(self.task_id, status='needs_input', model_activity=None)
             raise LoopStop('agent_limit')
-        self.loop.repository.change(self.task_id, status='running')
+        state = self.loop.repository.change(self.task_id, status='running')
         started = time.monotonic()
         observed = self.loop.harness.observe(state)
         self.loop._timing(self.task_id, 'observation', started, state['chat_revision'])

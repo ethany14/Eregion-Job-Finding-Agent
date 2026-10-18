@@ -127,6 +127,7 @@ class SessionRuntime:
     conversation_learning: ConversationLearningService | None = None
     resumes: ResumeDocumentRepository | None = None
     # One owner of background work for this process (unified loop M4/M5).
+    task_memory: Any | None = None
     execution: ExecutionService | None = None
 
     def capability_skills(self, profile: str) -> frozenset[str]:
@@ -190,6 +191,8 @@ def create_session_runtime(
         upgrade_database(database_url)
     else:
         require_current_database(database_url)
+    from eregion.runtime.task_memory.types import TaskMemoryConfig
+    task_memory_config = TaskMemoryConfig.from_env()
     database = create_database(database_url)
     sessions = SessionRepository(database.session_factory)
     tool_calls = ToolCallRepository(database.session_factory)
@@ -363,6 +366,8 @@ def create_session_runtime(
         resumes=resumes,
         execution=execution,
     )
+    from eregion.runtime.task_memory.service import TaskMemoryService
+    runtime.task_memory = TaskMemoryService(runtime, task_memory_config)
     register_workflow_tools(runtime)
     return runtime
 

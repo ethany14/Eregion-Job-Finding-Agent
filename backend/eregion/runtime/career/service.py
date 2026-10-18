@@ -16,7 +16,9 @@ TRASH_SWEEP_SECONDS = 24*60*60
 class CareerService:
     def __init__(self,runtime,applications,*,model_factory=None,harness=None,start_alert_scheduler=True,execution=None):
         self.runtime,self.applications = runtime,applications
-        self.repository = TaskRepository(runtime.database.session_factory)
+        task_memory = getattr(runtime, 'task_memory', None)
+        self.repository = TaskRepository(runtime.database.session_factory,
+            task_memory=task_memory.repository if task_memory else None)
         self.harness = harness or CareerHarness(runtime,applications,self.repository)
         from .alerts import AlertRepository
         from .alert_scheduler import AlertScheduler

@@ -39,8 +39,9 @@ def now():
 
 
 class TaskRepository:
-    def __init__(self, sessions):
+    def __init__(self, sessions, *, task_memory=None):
         self.sessions, self.lock = sessions, RLock()
+        self.task_memory = task_memory
 
     def create(self, text, key, *, visual_fallback=False, context=None):
         with self.lock, self.sessions.begin() as db:
@@ -64,8 +65,13 @@ class TaskRepository:
                 state['initial_context'] = context
                 state['messages'][0]['context'] = context
                 if context.get('application_id'):state['jobs'] = [context['application_id']]
+            if self.task_memory is not None and self.task_memory.config.mode != 'off':
+                state['task_memory_owner_id'] = self.task_memory.owner_id
             row = CareerTaskRow(task_id=state['task_id'],request_key=key,version=1,state_json=json.dumps(state))
             db.add(row)
+            if self.task_memory is not None:
+                db.flush()
+                self.task_memory.capture(db, state, 1)
             return {**state,'version':1}, True
 
     @staticmethod
@@ -105,12 +111,19 @@ class TaskRepository:
                                 policy=update_constraints(policy,message.get('text',''),message['id'])
                                 delta['user_turn_id']=message['id']
                         delta['search_constraints']=policy
+                    # Archive the old window before applying an already-trimmed delta.
+                    if self.task_memory is not None:
+                        self.task_memory.capture(db, state, version)
                     state.update(delta,updated_at=now())
                     state.pop('version',None)
                     changed=db.execute(update(CareerTaskRow).where(
                         CareerTaskRow.task_id==task_id,CareerTaskRow.version==version
                     ).values(version=version+1,state_json=json.dumps(state)))
-                    if changed.rowcount==1:return {**state,'version':version+1}
+                    if changed.rowcount==1:
+                        if self.task_memory is not None:
+                            self.task_memory.capture(db, state, version+1)
+                        return {**state,'version':version+1}
+                    db.rollback()  # do not commit source records from a failed CAS attempt
             raise RuntimeError('Conversation update could not acquire its current version.')
 
     def append(self, task_id, **message):

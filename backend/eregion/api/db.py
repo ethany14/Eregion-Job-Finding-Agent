@@ -53,6 +53,7 @@ class Database:
         import eregion.domain.workflow.models  # noqa: F401
         import eregion.runtime.auto_apply.models  # noqa: F401
         import eregion.runtime.career.repository  # noqa: F401
+        import eregion.runtime.task_memory.models  # noqa: F401
         import eregion.runtime.career.alerts  # noqa: F401
 
         Base.metadata.create_all(self.engine)

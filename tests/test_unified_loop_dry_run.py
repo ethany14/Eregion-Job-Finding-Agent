@@ -80,7 +80,7 @@ def test_restart_dry_run_covers_every_in_flight_object_and_keeps_history(source,
     second = dry.dry_run(source, tmp_path / 'run-2')
     assert first == second  # repeatable on fresh copies
     assert first['source_unchanged'] and first['history_unchanged'] and first['coverage_complete']
-    assert first['schema_head'] and first['schema_head'].startswith('0038')  # memory stage 2 migration
+    assert first['schema_head'] and first['schema_head'].startswith('0039')  # task memory pilot schema
     assert first['career_task']['expected'] == 2               # queued + running; paused is not resumed
     app = first['application_run']
     assert app['resume']['expected'] == 1 and _clean(app['resume'])             # hybrid running only
