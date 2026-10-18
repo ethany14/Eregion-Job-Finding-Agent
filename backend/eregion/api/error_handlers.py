@@ -32,6 +32,7 @@ from eregion.runtime.memory.errors import (
     MemoryAlreadyExistsError,
     MemoryConfirmationRequiredError,
     MemoryNotFoundError,
+    MemoryReplacementNotValidError,
     MemoryOwnerMismatchError,
     StaleMemoryError,
 )
@@ -304,6 +305,12 @@ def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(SkillValidationError)
     async def invalid_skill(_: Request, __: SkillValidationError) -> JSONResponse:
         return _response(422, "skill_validation_failed", "The Skill failed validation.")
+
+    @app.exception_handler(MemoryReplacementNotValidError)
+    async def replacement_not_valid(_: Request, __: MemoryReplacementNotValidError) -> JSONResponse:
+        return _response(409, "memory_replacement_not_valid",
+                         "The replacement is not currently valid. The current memory was kept; "
+                         "supersede only during the replacement's validity period.")
 
     @app.exception_handler(MemoryConfirmationRequiredError)
     async def confirmation_required(_: Request, __: MemoryConfirmationRequiredError) -> JSONResponse:

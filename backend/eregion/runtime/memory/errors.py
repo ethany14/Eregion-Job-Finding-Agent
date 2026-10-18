@@ -27,3 +27,7 @@ class MemoryConfirmationRequiredError(InvalidMemoryTransitionError):
 
 class MemoryOwnerMismatchError(MemoryRuntimeError):
     pass
+
+
+class MemoryReplacementNotValidError(InvalidMemoryTransitionError):
+    """The proposed replacement does not hold at the time of confirmation."""

@@ -51,7 +51,7 @@ def write_skill(
 @pytest.fixture
 def context_client(tmp_path):
     url = f"sqlite:///{(tmp_path / 'context-api.sqlite').as_posix()}"
-    runtime = create_session_runtime(database_url=url, model=object())
+    runtime = create_session_runtime(migrate_schema=True, database_url=url, model=object())
     app = create_app(run_service=object(), session_runtime=runtime)
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client, runtime, tmp_path

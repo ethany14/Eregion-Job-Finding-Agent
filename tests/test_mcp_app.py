@@ -97,7 +97,7 @@ def test_fastapi_lifecycle_health_effective_tools_and_snapshot(tmp_path):
     model = CapturingModel()
 
     def factory():
-        runtime = create_session_runtime(
+        runtime = create_session_runtime(migrate_schema=True,
             database_url=f"sqlite:///{(tmp_path / 'mcp-app.sqlite').as_posix()}",
             model=model,
             mcp_config=mcp_config(),
@@ -169,7 +169,7 @@ def test_mcp_is_error_is_returned_to_model_and_session_continues(tmp_path):
         tool_allowlist={"echo_text"},
         read_only_tools={"echo_text"},
     )])
-    runtime = create_session_runtime(
+    runtime = create_session_runtime(migrate_schema=True,
         database_url=f"sqlite:///{(tmp_path / 'mcp-error.sqlite').as_posix()}",
         model=model,
         mcp_config=config,
@@ -212,7 +212,7 @@ def test_mcp_is_error_is_returned_to_model_and_session_continues(tmp_path):
 
 
 def test_api_cannot_supply_mcp_configuration(tmp_path):
-    runtime = create_session_runtime(
+    runtime = create_session_runtime(migrate_schema=True,
         database_url=f"sqlite:///{(tmp_path / 'no-client-config.sqlite').as_posix()}",
         model=CapturingModel(),
         mcp_config=McpRuntimeConfig(),
@@ -235,7 +235,7 @@ def test_optional_failure_produces_sanitized_degraded_health(tmp_path):
         command="private-command --with-secret",
         required=False,
     )])
-    runtime = create_session_runtime(
+    runtime = create_session_runtime(migrate_schema=True,
         database_url=f"sqlite:///{(tmp_path / 'degraded.sqlite').as_posix()}",
         model=CapturingModel(),
         mcp_config=config,
@@ -282,7 +282,7 @@ def test_mcp_write_like_tool_still_requires_persisted_approval(tmp_path):
         command=sys.executable,
         tool_allowlist={"echo_text"},
     )])
-    runtime = create_session_runtime(
+    runtime = create_session_runtime(migrate_schema=True,
         database_url=f"sqlite:///{(tmp_path / 'approval.sqlite').as_posix()}",
         model=model,
         mcp_config=config,
@@ -318,7 +318,7 @@ def test_restarted_session_handles_unavailable_mcp_tool_safely(tmp_path):
         tool_allowlist={"echo_text"},
         read_only_tools={"echo_text"},
     )])
-    first = create_session_runtime(
+    first = create_session_runtime(migrate_schema=True,
         database_url=url,
         model=CapturingModel(),
         mcp_config=config,
@@ -339,7 +339,7 @@ def test_restarted_session_handles_unavailable_mcp_tool_safely(tmp_path):
         unavailable_call,
         AIMessage(content="That configured MCP tool is unavailable."),
     ])
-    restarted = create_session_runtime(
+    restarted = create_session_runtime(migrate_schema=True,
         database_url=url,
         model=model,
         mcp_config=McpRuntimeConfig(),
@@ -373,7 +373,7 @@ def test_restarted_session_handles_unavailable_mcp_tool_safely(tmp_path):
 
 
 def test_sync_session_execution_does_not_block_fastapi_event_loop(tmp_path):
-    runtime = create_session_runtime(
+    runtime = create_session_runtime(migrate_schema=True,
         database_url=f"sqlite:///{(tmp_path / 'event-loop.sqlite').as_posix()}",
         model=CapturingModel(),
         mcp_config=McpRuntimeConfig(),

@@ -61,7 +61,7 @@ def test_runtime_starts_for_each_combination_through_the_real_mcp_path(tmp_path,
     else:
         monkeypatch.delenv('MCP_CONFIG_PATH', raising=False)
     started = []
-    runtime = create_session_runtime(database_url=f"sqlite:///{(tmp_path / 'r.db').as_posix()}", model=object(),
+    runtime = create_session_runtime(migrate_schema=True, database_url=f"sqlite:///{(tmp_path / 'r.db').as_posix()}", model=object(),
                                      mcp_client_factory=lambda config: started.append(config.server_id) or FakeLinkedIn())
     try:
         health = runtime.mcp_health()

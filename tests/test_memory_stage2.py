@@ -34,7 +34,7 @@ class Clock:
 
 @pytest.fixture
 def stack(tmp_path):
-    runtime = create_session_runtime(database_url=f"sqlite:///{(tmp_path / 'stage2.sqlite').as_posix()}", model=object())
+    runtime = create_session_runtime(migrate_schema=True, database_url=f"sqlite:///{(tmp_path / 'stage2.sqlite').as_posix()}", model=object())
     app = create_app(run_service=object(), session_runtime=runtime)
     with TestClient(app, raise_server_exceptions=False):
         yield runtime
@@ -219,3 +219,18 @@ def test_migration_moves_legacy_application_exceptions_to_the_application_scope(
     assert (moved.scope, moved.scope_id) == (MemoryScope.APPLICATION, "app-9")
     assert effective(runtime, "app-9", task="application_materials")["resume.length"].memory_id == item.memory_id
     assert "resume.length" not in effective(runtime, "app-8", task="application_materials")
+
+
+def test_reasserted_expired_preference_keeps_new_dates_and_source(stack):
+    runtime = stack
+    turns = Turns(runtime)
+    turns.say("Only remote before October.", signal("job.location_mode", "remote", "Only remote before October",
+                                                   valid_to="2026-10-01"))
+    old = confirm(runtime, live(runtime, "job.location_mode")[0])
+    experience = turns.say("Remote again from October 17.", signal("job.location_mode", "remote",
+        "Remote again from October 17", valid_from="2026-10-17"))
+    new, = [i for i in live(runtime, "job.location_mode") if i.status == MemoryStatus.CANDIDATE]
+    assert new.valid_from == datetime(2026, 10, 17, tzinfo=UTC) and new.valid_to is None
+    assert new.content["replaces_memory_id"] == old.memory_id
+    assert new.provenance[0].source_id == experience.experience_id
+    assert runtime.memories.require(old.memory_id, owner_id=owner(runtime)) == old

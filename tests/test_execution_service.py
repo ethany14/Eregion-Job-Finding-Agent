@@ -71,7 +71,7 @@ def test_composition_root_shares_one_execution_service(tmp_path, monkeypatch):
     from eregion.api.session_dependencies import create_session_runtime
     from eregion.runtime.auto_apply.loop import ApplicationLoop
     from eregion.runtime.auto_apply.repository import ApplyRepository
-    runtime = create_session_runtime(database_url=f"sqlite:///{(tmp_path / 'r.db').as_posix()}",
+    runtime = create_session_runtime(migrate_schema=True, database_url=f"sqlite:///{(tmp_path / 'r.db').as_posix()}",
                                      model=object())
     try:
         assert runtime.agent_scheduler.execution is runtime.execution

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 from eregion.paths import PROJECT_ROOT
 
 from alembic import command
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
+from sqlalchemy.engine import make_url
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -66,7 +70,36 @@ def upgrade_database(database_url: str | None = None) -> None:
     config_path = PROJECT_ROOT / "alembic.ini"
     config = Config(str(config_path))
     config.set_main_option("sqlalchemy.url", resolve_database_url(database_url))
+    config.attributes["explicit_database_url"] = True
     command.upgrade(config, "head")
+
+
+class DatabaseSchemaError(RuntimeError):
+    """Startup cannot safely use this database without an explicit migration."""
+
+
+def require_current_database(database_url: str | None = None) -> None:
+    """Check schema without creating a SQLite file or changing database pragmas."""
+    config = Config(str(PROJECT_ROOT / "alembic.ini"))
+    expected = set(ScriptDirectory.from_config(config).get_heads())
+    url = make_url(resolve_database_url(database_url))
+    options = {}
+    if url.get_backend_name() == "sqlite":
+        if not url.database or url.database == ":memory:" or not Path(url.database).is_file():
+            raise DatabaseSchemaError("Database is not initialized. Run an explicit database migration before startup.")
+        uri = Path(url.database).resolve().as_uri() + "?mode=ro"
+        options["creator"] = lambda: sqlite3.connect(uri, uri=True)
+    engine = create_engine(url, **options)
+    try:
+        with engine.connect() as connection:
+            current = set(MigrationContext.configure(connection).get_current_heads())
+        if current != expected:
+            raise DatabaseSchemaError(
+                f"Database schema {sorted(current) or ['uninitialized']} does not match required "
+                f"{sorted(expected)}. Startup did not migrate it. Back up and explicitly migrate before restarting."
+            )
+    finally:
+        engine.dispose()
 
 
 def create_database(

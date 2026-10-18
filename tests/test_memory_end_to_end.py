@@ -25,7 +25,7 @@ from eregion.runtime.tools.messages import AgentMessage
 
 @pytest.fixture
 def stack(tmp_path):
-    runtime = create_session_runtime(database_url=f"sqlite:///{(tmp_path / 'memory-e2e.sqlite').as_posix()}", model=object())
+    runtime = create_session_runtime(migrate_schema=True, database_url=f"sqlite:///{(tmp_path / 'memory-e2e.sqlite').as_posix()}", model=object())
     app = create_app(run_service=object(), session_runtime=runtime)
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client, runtime
@@ -251,3 +251,20 @@ def test_migration_preview_is_read_only_apply_is_repeatable_and_conflicts_stay(s
     with pytest.raises(RuntimeError, match="changed after the preview"):
         apply(runtime.database.session_factory, plan)          # stale plan
     assert (moved.memory_id, moved.version) in material_memory(runtime)
+
+
+def test_future_supersede_api_returns_conflict_without_changing_memory(stack):
+    client, runtime = stack
+    old = confirmed(runtime, "job.location_mode", "remote")
+    new = runtime.memories.create_candidate(owner_id=owner(runtime), scope=MemoryScope.USER,
+        scope_id=owner(runtime), memory_key="job.location_mode", memory_type=MemoryType.PREFERENCE,
+        display_text="onsite", content={"value": "onsite"},
+        valid_from=datetime.now(UTC)+timedelta(days=30),
+        provenance=[MemoryProvenance(source_type="explicit_user", actor_type="user")])
+    response = client.post(f"/memories/{old.memory_id}/supersede", json={
+        "expected_version": old.version, "replacement_memory_id": new.memory_id,
+        "replacement_expected_version": new.version})
+    assert response.status_code == 409, response.text
+    assert "not currently valid" in response.text
+    assert runtime.memories.require(old.memory_id, owner_id=owner(runtime)) == old
+    assert runtime.memories.require(new.memory_id, owner_id=owner(runtime)) == new

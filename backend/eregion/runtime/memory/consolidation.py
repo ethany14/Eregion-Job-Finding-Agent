@@ -2,7 +2,7 @@
 
 | relation to existing records of the same concept | action                                  |
 |--------------------------------------------------|-----------------------------------------|
-| same scope, same key, same value                 | add the source to it (idempotent)       |
+| same scope, key, value and validity constraints   | add the source to it (idempotent)       |
 | same scope, same key, different confirmed value  | replacement candidate; old stays in use |
 | narrower scope than an existing broader value    | separate local record; global untouched |
 | otherwise                                        | new candidate                           |
@@ -42,13 +42,16 @@ def _value(item: MemoryItem):
 
 
 def classify(existing: list[MemoryItem], *, scope: MemoryScope, scope_id: str, key: str, value,
-             canonical_scope_id=lambda scope, scope_id: scope_id) -> Consolidation:
+             canonical_scope_id=lambda scope, scope_id: scope_id,
+             valid_from=None, valid_to=None, expires_at=None, applies_to=None) -> Consolidation:
     key, value = normalize_key(key), normalize_value(normalize_key(key), value)
     target = canonical_scope_id(scope, scope_id)
     live = [i for i in existing if i.memory_key == key and i.status in {MemoryStatus.CANDIDATE, MemoryStatus.CONFIRMED}]
     same_scope = [i for i in live if i.scope == scope and canonical_scope_id(i.scope, i.scope_id) == target]
     for item in same_scope:
-        if _value(item) == value:
+        if (_value(item) == value
+                and (item.valid_from, item.valid_to, item.expires_at, item.applies_to)
+                == (valid_from, valid_to, expires_at, applies_to or {})):
             return Consolidation(Relation.DUPLICATE, existing=item)
     confirmed = next((i for i in same_scope if i.status == MemoryStatus.CONFIRMED), None)
     if confirmed is not None:
@@ -69,7 +72,8 @@ def write_statement(repository, *, owner_id: str, scope: MemoryScope, scope_id: 
     key = normalize_key(key)
     value = normalize_value(key, value)
     existing = repository.list_items(owner_id=owner_id, statuses={MemoryStatus.CANDIDATE, MemoryStatus.CONFIRMED})
-    decision = classify(existing, scope=scope, scope_id=scope_id, key=key, value=value, canonical_scope_id=canonical)
+    decision = classify(existing, scope=scope, scope_id=scope_id, key=key, value=value, canonical_scope_id=canonical,
+                        valid_from=valid_from, valid_to=valid_to, expires_at=expires_at, applies_to=applies_to)
     if decision.relation == Relation.DUPLICATE:
         item = repository.add_provenance(decision.existing.memory_id, owner_id=owner_id,
                                          expected_version=decision.existing.version, provenance=provenance)

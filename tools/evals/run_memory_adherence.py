@@ -59,7 +59,7 @@ def run(*, live: bool) -> dict:
             getattr(model, "model_name", None) or getattr(model, "model", "unknown")
         )
         report["run_metadata"]["temperature"] = getattr(model, "temperature", 0)
-        runtime = create_session_runtime(database_url=database_url, model=model)
+        runtime = create_session_runtime(database_url=database_url, model=model, migrate_schema=True)
         try:
             owner_id = runtime.owner_resolver.resolve().owner_id
             candidate = runtime.memories.create_candidate(

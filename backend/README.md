@@ -35,3 +35,20 @@ the existing database filename remain stable to preserve user data/configuration
 Historical evidence also retains the names of the revision it measured.
 
 See the [runtime guide](eregion/runtime/README.md) and [documentation index](../docs/README.md).
+
+Startup checks the database schema and never migrates it by default. A missing or
+outdated schema stops startup with an explicit error before runtime resources open.
+Back up the intended database and run the Alembic migration as a separate, approved
+operation before restarting. Internal test/evaluation factories may opt in using
+`migrate_schema=True` together with an explicit temporary `database_url`; the URL
+wins over `JOB_AGENT_DATABASE_URL` for that migration.
+
+Memory replacements must be valid now. A future-dated replacement stays a candidate:
+retry the explicit supersede action when its validity period begins. The current
+confirmed preference remains active until then. Equal values with different validity
+intervals are distinct statements and require explicit replacement confirmation.
+
+On restricted Windows hosts, use `python tools/scripts/pytest_workspace.py ...`.
+It checks loopback before pytest starts: Windows asyncio uses a local TCP socketpair,
+and blocked loopback can hang TestClient before application startup. Run offline tests
+in an environment allowing loopback; retain the external-network guards in conftest.

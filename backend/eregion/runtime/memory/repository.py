@@ -16,6 +16,7 @@ from eregion.runtime.memory.errors import (
     MemoryAlreadyExistsError,
     MemoryConfirmationRequiredError,
     MemoryNotFoundError,
+    MemoryReplacementNotValidError,
     StaleMemoryError,
 )
 from eregion.runtime.memory.events import MemoryEvent, MemoryEventType
@@ -286,6 +287,16 @@ class MemoryRepository:
                 replacement.scope, self._canonical(replacement.scope, replacement.scope_id), replacement.memory_key
             ):
                 raise InvalidMemoryTransitionError("Supersession values must share owner, scope, and memory key.")
+            # Scheduled replacement is not supported: keep the current value active until
+            # the candidate actually holds. Reject before either row or its audit changes.
+            from eregion.runtime.memory.access import validity_reason
+            if validity_reason(replacement, now) or (
+                replacement.expires_at is not None and ensure_utc(replacement.expires_at) <= now
+            ):
+                raise MemoryReplacementNotValidError(
+                    "Replacement is not currently valid; keep it as a candidate and retry "
+                    "when its validity period begins."
+                )
             old_next = self._transition_item(current, status=MemoryStatus.SUPERSEDED, now=now,
                                              updates={"superseded_by_memory_id": replacement.memory_id})
             replacement_next = self._transition_item(

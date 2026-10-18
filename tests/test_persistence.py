@@ -11,7 +11,7 @@ from runtime_helpers import CompleteFakeHandler, FailingHandler, sqlite_url
 
 
 def new_service(tmp_path):
-    return create_run_service(database_url=sqlite_url(tmp_path / "runs.sqlite"),
+    return create_run_service(migrate_schema=True, database_url=sqlite_url(tmp_path / "runs.sqlite"),
                               custom_handler=CompleteFakeHandler())
 
 
@@ -154,7 +154,7 @@ def test_completed_run_cannot_be_reviewed_again_after_restart(tmp_path):
 
 
 def test_failed_status_is_persisted_without_internal_error_details(tmp_path):
-    service = create_run_service(
+    service = create_run_service(migrate_schema=True,
         database_url=sqlite_url(tmp_path / "runs.sqlite"),
         custom_handler=FailingHandler())
     run_id = asyncio.run(

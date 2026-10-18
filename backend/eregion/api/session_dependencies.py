@@ -67,7 +67,7 @@ from eregion.runtime.tools.workflow_tools import WORKFLOW_TOOLS, LOCAL_WORKFLOW_
 from eregion.runtime.tools.loop import ToolCallingLoop
 from eregion.runtime.tools.model_adapter import LangChainToolModelAdapter
 from eregion.runtime.tools.run_reader import SqlAlchemyRunReader
-from eregion.api.db import Database, create_database, upgrade_database
+from eregion.api.db import Database, create_database, upgrade_database, require_current_database
 from eregion.domain.model import create_model
 from eregion.runtime.model_runtime import model_timeout
 from eregion.runtime.semantics import SemanticDecisions
@@ -179,11 +179,17 @@ def create_session_runtime(
     *,
     database_url: str | None = None,
     model: Any | None = None,
+    migrate_schema: bool = False,
     mcp_config: McpRuntimeConfig | None = None,
     mcp_client_factory: Callable[[McpStdioServerConfig], McpClient] | None = None,
 ) -> SessionRuntime:
-    """Build the production runtime after applying its Alembic schema."""
-    upgrade_database(database_url)
+    """Build the runtime; schema changes require explicit opt-in."""
+    if migrate_schema:
+        if database_url is None:
+            raise ValueError("Explicit migration requires an explicit database URL.")
+        upgrade_database(database_url)
+    else:
+        require_current_database(database_url)
     database = create_database(database_url)
     sessions = SessionRepository(database.session_factory)
     tool_calls = ToolCallRepository(database.session_factory)

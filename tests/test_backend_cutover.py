@@ -19,7 +19,7 @@ def test_factory_only_creates_custom_runs_without_checkpoint_files(tmp_path, mon
     monkeypatch.setenv("JOB_AGENT_BACKEND", "langgraph")
     checkpoint = tmp_path / "unused.sqlite"
     monkeypatch.setenv("JOB_AGENT_CHECKPOINT_PATH", str(checkpoint))
-    service = create_run_service(database_url=sqlite_url(tmp_path / "runs.sqlite"),
+    service = create_run_service(migrate_schema=True, database_url=sqlite_url(tmp_path / "runs.sqlite"),
                                  custom_handler=CompleteFakeHandler())
     try:
         result = asyncio.run(service.create_run(CreateRunRequest(
@@ -34,7 +34,7 @@ def test_factory_only_creates_custom_runs_without_checkpoint_files(tmp_path, mon
 @pytest.mark.parametrize("backend", ["langgraph", "unknown"])
 def test_historical_results_are_readable_but_review_is_rejected(tmp_path, backend):
     url = sqlite_url(tmp_path / "runs.sqlite")
-    service = create_run_service(database_url=url, custom_handler=CompleteFakeHandler())
+    service = create_run_service(migrate_schema=True, database_url=url, custom_handler=CompleteFakeHandler())
     database = create_database(url)
     repository = RunRepository(database.session_factory)
     repository.create(run_id="historical", thread_id="historical", resume_text="R",

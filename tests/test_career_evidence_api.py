@@ -5,7 +5,7 @@ from eregion.api.session_dependencies import create_session_runtime
 
 
 def test_evidence_api_local_lifecycle_and_safe_projection(tmp_path):
-    runtime = create_session_runtime(
+    runtime = create_session_runtime(migrate_schema=True,
         database_url=f"sqlite:///{(tmp_path / 'evidence-api.db').as_posix()}",
         model=object(),
     )
@@ -43,7 +43,7 @@ def test_evidence_api_local_lifecycle_and_safe_projection(tmp_path):
 
 
 def test_application_evidence_link_api_requires_confirmed_version(tmp_path):
-    runtime = create_session_runtime(
+    runtime = create_session_runtime(migrate_schema=True,
         database_url=f"sqlite:///{(tmp_path / 'evidence-link-api.db').as_posix()}",
         model=object(),
     )
