@@ -28,11 +28,11 @@ Eregion is a job-search agent that runs on your computer. Tell it what you are
 looking for and it searches company job boards and LinkedIn, reads each posting
 in full, and comes back with jobs sorted by how well they fit your resume. Each
 job lists its gaps and what you still need to confirm. It also tailors your
-resume and cover letter, fills in application forms in Chrome, and helps you
-practise for interviews.
+resume and cover letter, fills in application forms in Chrome up to the review
+page, and helps you practise for interviews.
 
 Everything stays in a local database. Model work uses the API key you provide,
-and nothing is submitted without your approval.
+and **nothing is ever submitted without you**.
 
 ## A workspace for the whole search
 
@@ -92,7 +92,8 @@ for my resume.”* The agent:
    asked for senior, or a city you ruled out. A near miss is kept, with the
    difference stated.
 3. **Scores fit** against your resume, using your main model or optional
-   [Jev](#-faster-fit-scores-with-jev).
+   [Jev](#-faster-fit-scores-with-jev). Scoring that runs under a budget is
+   saved in small batches, so a budget stop keeps every finished score.
 4. **Sorts the results into three tiers**, each with evidence quoted from the
    posting:
 
@@ -102,9 +103,11 @@ for my resume.”* The agent:
 | **Worth trying** | Relevant, but a core skill or experience isn't on your resume. Each gap is listed with how much it matters. |
 | **Needs your confirmation** | Something only you can answer: GPA, work authorization, start date, or a level or location the posting doesn't make clear. |
 
-There is no quota and no padding with weak matches. The agent decides when
-further searching is unlikely to help. The reply then says what was searched,
-what failed, and what is left, and you can reply *“search more”* to continue.
+There is no quota and no padding with weak matches. Only jobs the agent saved as
+recommendations can appear under a tier; jobs that were not scored, or were
+scored and set aside, are listed separately as such. The reply says what was
+searched, what failed and what is left, and you can reply *“search more”* to
+continue.
 
 ## One road, from first sight to offer
 
@@ -127,11 +130,28 @@ flowchart LR
 | :-- | :-- |
 | **Sighted** | Searches boards and LinkedIn on request or on a schedule, and returns tiered recommendations with gaps and items to confirm. |
 | **Prepared** | Shows the fit score with evidence. Drafts a tailored resume, cover letter and answers, and checks every claim against your resume. |
-| **Sent** | Navigates the application in your Chrome, fills in known details, uploads approved documents, and asks you in chat for anything missing. |
+| **Sent** | Works through the application in Chrome page by page up to the review page: fills in known details, uploads approved documents once, and asks you in chat for anything missing. |
 | **In interview** | Practises questions for the specific job, with feedback and a final report. |
 
 You can correct, pause or take over at any time. **Approving materials and the
 final submit are always yours.**
+
+### Applying on real sites
+
+Applications have been tested on real employer sites, with the owner's own
+details and sign-in, always stopping at the review page:
+
+- **Workday** (Adobe and Intel tenants) reached the review page with every
+  answer matching the applicant's facts. Sign-in goes through a secure account
+  form; your password never enters the chat or the model.
+- Postings at **Figma, Palantir, Notion, Ampersand and Veeva** reached the review
+  page in earlier pilots.
+- A resume is uploaded once and checked on the page; a file already shown, or one
+  the agent did not upload, is left for you to decide.
+- When a site asks for a **CAPTCHA, one-time code or access check**, the agent
+  stops, tells you, and waits while you handle it in the same browser. It
+  continues only when the application form is back, and never reads or stores
+  your codes. Automatic CAPTCHA solving is not part of Eregion.
 
 <a id="where-jobs-come-from"></a>
 ## Where jobs come from
@@ -140,8 +160,8 @@ final submit are always yours.**
 | :-- | :-- | :-- |
 | **Company boards** (Greenhouse, Lever, Ashby, Workday) | None | A directory of 118 boards, each verified through its public API. |
 | **LinkedIn**, through a local MCP server | One-time sign-in in a separate browser profile | On by default once configured. Calls are budgeted, and the source stops on sign-in or rate-limit problems. See [default sources](docs/configuration.md#default-job-sources). |
+| **JobSpy** (optional) | A separate Python with `python-jobspy` installed, set as `JOB_AGENT_JOBSPY_PYTHON` | Indeed and LinkedIn cards with full descriptions; Indeed answers a search in one request. Off by default, requests per task are capped. In a one-sample side-by-side test it was fast and complete on text but produced fewer recommendations under the same budget, so boards and LinkedIn stay the default ([details](docs/evaluation-report.md#2--job-sources)). |
 | **Treg** (optional) | Your own Treg key; you pay Treg directly | LinkedIn search and page extraction, with spend capped per call ($0.01), per task ($0.10) and per day ($0.50). Off by default. See [configuration](docs/configuration.md#optional-treg-job-sources). |
-| **JobSpy** (optional) | A separate Python with `python-jobspy` installed, set as `JOB_AGENT_JOBSPY_PYTHON` | Indeed (one request per search, full descriptions) and LinkedIn cards. Off by default; requests per task are capped. |
 | **A posting you paste or open** | None | Share a link or job text in chat, or use the **Eregion Lens** Chrome extension on any job page. |
 
 Indeed's MCP server only accepts allow-listed clients, so Eregion does not use it.
@@ -182,8 +202,8 @@ TYPESAFE_DEFAULT_MODEL=jev-latest
 TYPESAFE_ENABLED=true
 ```
 
-- Up to 16 jobs are scored per batch, and decisions are cached locally for 24
-  hours.
+- Up to 16 jobs are scored per batch, and decisions are cached locally, so a
+  scoring batch cut short never pays twice for the same decision.
 - A requirement Jev can't decide stays *unresolved*, and the score is shown as a
   range.
 - There is no fallback to the main model: if Typesafe is unreachable, scoring
@@ -195,25 +215,28 @@ files, screenshots and passwords never leave your machine. Every setting is in
 
 ## How well it works
 
-Eregion is tested with four synthetic applicants: a junior data analyst in New
-York, a senior backend engineer for remote US, an ML intern in California, and
-a junior UX designer in Austin. Live runs have fixed budgets, and a person
-reviewed one full set of results by hand.
+Search is tested with four synthetic applicants (a junior data analyst in New
+York, a senior backend engineer for remote US, an ML intern in California and a
+junior UX designer in Austin); applications are tested on real employer sites.
+Every live run has fixed call and token budgets, and nothing is submitted.
 
-- **Results:** across the latest four-scenario runs, 123 jobs were shown with 0
-  structural errors. In the human review, 0 of 23 shown jobs were wrong.
-- **What to show:** for 28 of 29 labelled postings, the show or hide decision
-  matched the reviewer.
+- **Search results:** in the latest four-scenario runs, 123 jobs were shown with
+  0 structural errors. In a human review, 0 of 23 shown jobs were wrong, and 28
+  of 29 labelled postings were shown or hidden the way the reviewer wanted.
 - **Tiers:** about two in three match the reviewer; most misses are one tier
   apart.
-- **Replies:** every audited reply stated accurately what failed and what was
-  left.
+- **Applications:** Workday applications at Adobe and Intel reached the review
+  page with correct answers, in 53–59 model calls per application.
+- **Honest replies:** replies state what failed and what is left; under a tight
+  budget, unscored jobs are listed as unscored, never as recommendations.
 
 Known limits:
 
 - The agent often stops searching early, and says so with an offer to continue.
 - Verdicts can vary slightly between runs.
 - Scoring accuracy has not been measured against human labels yet.
+- Long Workday pages can use their whole per-page budget; the run then pauses
+  with everything filled so far kept.
 
 The full summary, including what failed along the way, is in the
 **[evaluation report](docs/evaluation-report.md)**.
@@ -291,12 +314,23 @@ with selectable text, check **Your details**, and ask for what you want:
 
 Keep the server running while the agent works or scheduled searches are due.
 
+### Optional switches
+
+All are off by default; add them to `.env` and restart.
+
+| Setting | Effect |
+| :-- | :-- |
+| `JOB_AGENT_JOBSPY_PYTHON=path\to\python` | Enables JobSpy as an extra source the agent may choose. `JOB_AGENT_JOBSPY_SITES=indeed,linkedin` picks the sites (default `indeed`). |
+| `JOB_AGENT_BROWSER_DRIVER=patchright` | Runs applications with Patchright (included in `requirements.txt`) instead of the default Playwright. |
+| `JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS`, `JOB_AGENT_TASK_MAX_INPUT_TOKENS` | Hard limits per conversation, counted before each request is sent. |
+| `JOB_AGENT_TASK_MEMORY_MODE=on` | Experimental recovery summaries for long application conversations. |
+
 ## Good to know
 
 | | |
 | :-- | :-- |
 | 🔒 **Local, single-user** | The server listens on your machine only. It is not a hosted service. |
-| 🧩 **Some sites need you** | Login walls, unusual widgets, MFA and CAPTCHA pause the agent until you step in. |
+| 🧩 **Some steps are yours** | Sign-in, MFA, CAPTCHA and one-time codes pause the agent until you handle them in the same browser; it then checks that the form is back before continuing. |
 | 📊 **Scores describe evidence** | A score reflects what your resume shows, not an employer's decision. |
 | ✅ **Review before you send** | Materials are checked against your resume, but read them before use. |
 | 📄 **Text PDFs** | Resumes need selectable text; scanned files need text extraction first. |
@@ -325,6 +359,11 @@ Code lives in `backend/` (one Python namespace: `eregion.runtime`,
 python -m pytest -q
 node --test "tests/*.mjs"
 ```
+
+Real-Chrome tests are opt-in: set `JOB_AGENT_BROWSER_TESTS=1` (and
+`JOB_AGENT_BROWSER_DRIVER=patchright` to repeat them with Patchright). Tests
+that load the CAPTCHA providers' official test widgets also need
+`JOB_AGENT_OFFICIAL_WIDGETS=1`.
 
 The running server also serves [API docs](http://localhost:8000/docs) and a
 [health check](http://localhost:8000/health).
