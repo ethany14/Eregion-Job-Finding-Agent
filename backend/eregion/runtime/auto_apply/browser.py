@@ -343,7 +343,15 @@ VERIFICATION_MESSAGES = {
             "and complete any available verification, then send continue here. No application was submitted."),
     'unknown': ("The page could not be checked for a verification step (it may still be changing). Look at it in Control "
                 "browser; the application continues once the form is back, or send continue here."),
+    'widget': ("A verification widget on this page has not completed or did not load correctly. Check it in Control browser; "
+               "nothing is filled meanwhile, and the application continues once it is complete or gone, or send continue here."),
+    'rejected': ("The site says its verification was not accepted. Check it in Control browser and redo it if the site asks; "
+                 "nothing is filled or submitted meanwhile. Then send continue here."),
 }
+# Site notices that a completed widget was rejected or expired (alert-like elements only, not page text).
+REJECTION_NOTICES = '[role="alert"], [aria-live], .error, .errors, .alert, [class*="error" i]'
+VERIFICATION_REJECTED = re.compile(r"\b(?:verification|captcha|security check|challenge)\s+(?:has\s+)?(?:failed|expired|was not (?:accepted|successful)|error)\b|"
+                                   r"\b(?:invalid|expired)\s+(?:captcha|verification)\b|please (?:complete|retry|redo) the (?:captcha|verification|security check)", re.I)
 
 
 def safe_location(url):
@@ -1334,33 +1342,46 @@ class ApplicationBrowser:
             # Provider widgets (Turnstile renders in a closed shadow root; frames are still reachable):
             # a visible widget without a completed response needs the person; a completed one does not.
             # Only the presence of a response is read, never its value.
-            pending, completed, rendered = [], [], False
+            # Each provider widget, as observed: a response is only evidence that the widget finished,
+            # not that the site accepted it (that is decided by the site; resuming still needs the
+            # application page back). Invisible is not "no challenge": an invisible widget without a
+            # response may be idle until submit, still running, or never loaded.
+            widgets = []
             for frame in frames:
                 provider = widget_provider(frame.url)
                 if not provider or frame == self.page.main_frame:
                     continue
-                rendered = True
                 try:
                     shown = frame.frame_element().is_visible()
                 except Exception:
                     continue  # detached between listing and checking; the next observation decides
-                if shown:
-                    (completed if self.page.evaluate(RESPONSE_PRESENT, WIDGET_RESPONSES[provider]) else pending).append(provider)
+                widgets.append({'provider': provider, 'rendered': True, 'visible': shown,
+                                'response': bool(self.page.evaluate(RESPONSE_PRESENT, WIDGET_RESPONSES[provider]))})
+            responded = any(self.page.evaluate(RESPONSE_PRESENT, name) for name in WIDGET_RESPONSES.values())
+            if not widgets and self.page.locator(WIDGET_CONTAINERS).count():
+                # The widget's place is on the page but no provider frame: still loading, or failed to load.
+                widgets.append({'provider': None, 'rendered': False, 'visible': False, 'response': responded})
+            if widgets and self.page.locator(REJECTION_NOTICES).filter(has_text=VERIFICATION_REJECTED).count():
+                return found('captcha', 'active', ['the site reports the verification was not accepted'], widgets=widgets)
+            pending = sorted({w['provider'] for w in widgets if w['visible'] and not w['response']})
             if pending:
-                return found('captcha', 'active', [f'unfinished {name} verification widget' for name in sorted(set(pending))])
-            if not rendered and self.page.locator(WIDGET_CONTAINERS).count() and not any(
-                    self.page.evaluate(RESPONSE_PRESENT, name) for name in WIDGET_RESPONSES.values()):
-                # The widget's place is on the page but its frame has not rendered yet.
-                return found('captcha', 'active', ['unfinished verification widget (loading)'])
+                return found('captcha', 'active', [f'unfinished {name} verification widget' for name in pending], widgets=widgets)
+            if any(not w['rendered'] and not w['response'] for w in widgets):
+                return found('captcha', 'active', ['unfinished verification widget (not rendered: loading or failed to load)'],
+                             widgets=widgets)
+            completed = sorted({w['provider'] for w in widgets if w['response']})
+            background = sorted({w['provider'] for w in widgets if w['rendered'] and not w['visible'] and not w['response']})
             if self.page.locator(CHALLENGE_FRAMES).count():
                 return found('captcha', 'active', ['visible challenge frame'])
             heading = ' '.join(self.page.locator('h1:visible').all_text_contents())[:200]
             if CHALLENGE_PAGE.search(self.page.title()) or CHALLENGE_PAGE.search(heading):
                 return found('waf', 'active', ['challenge or access-check page'])
             passive = self.page.locator(PASSIVE_WIDGETS).count()
-            if passive or completed:
-                return found('captcha', 'passive', [f'completed {name} verification widget' for name in sorted(set(completed))] +
-                             ([f'{passive} inactive verification widget(s) or script(s)'] if passive else []))
+            if passive or widgets:
+                return found('captcha', 'passive', [f'completed {name} verification widget (response present; not proof the site accepts it)'
+                                                    for name in completed] +
+                             [f'invisible {name} widget without a response (idle until submit, or still running)' for name in background] +
+                             ([f'{passive} inactive verification widget(s) or script(s)'] if passive else []), widgets=widgets)
             return state
         except Exception as exc:
             # A detached frame, a destroyed context or a page mid-navigation could not be checked.
@@ -1379,6 +1400,12 @@ class ApplicationBrowser:
                and time.monotonic() < deadline):
             time.sleep(0.5)
             state = self.verification_state()
+        if state['status'] == 'active' and any(e.startswith('unfinished ') for e in state['evidence']):
+            # The wait only decides when to hand back: the widget is unfinished or failed to load. It is
+            # never treated as passed, and the message does not claim the person must solve anything.
+            return VERIFICATION_MESSAGES['widget']
+        if state['status'] == 'active' and 'the site reports the verification was not accepted' in state['evidence']:
+            return VERIFICATION_MESSAGES['rejected']
         if state['status'] not in {'active', 'unknown'}:
             return None
         channel = {'email': ' sent by email', 'sms': ' sent by text message'}.get(state.get('channel'), '')
@@ -1415,10 +1442,10 @@ class ApplicationBrowser:
             fields = self.observe()
             page = self.page_state(fields)
             text = (page.get('text') or '').strip()
-            if not fields and not page.get('controls') and len(text) < 40:
-                return {'ready': False, 'reason': 'blank_page'}
             if ERROR_PAGE.search(' '.join([self.page.title(), page.get('heading') or ''])):
                 return {'ready': False, 'reason': 'error_page'}
+            if not fields and not page.get('controls') and len(text) < 40:
+                return {'ready': False, 'reason': 'blank_page'}
             if not identity or identity != expected.get('posting'):
                 seen = set(expected.get('field_keys') or [])
                 if host != expected.get('host') or not seen or not seen & {f['key'] for f in fields}:

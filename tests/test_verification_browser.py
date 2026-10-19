@@ -160,3 +160,71 @@ def database(tmp_path):
     db = create_database(f"sqlite:///{(tmp_path / 'applications.sqlite').as_posix()}", create_schema_for_tests=True)
     yield db
     db.close()
+
+
+@pytest.mark.parametrize('scene,status,widgets', [
+    ('widget_completed', 'passive', [{'provider': 'turnstile', 'rendered': True, 'visible': True, 'response': True}]),
+    ('widget_invisible_completed', 'passive', [{'provider': 'turnstile', 'rendered': True, 'visible': False, 'response': True}]),
+    ('widget_invisible_idle', 'passive', [{'provider': 'turnstile', 'rendered': True, 'visible': False, 'response': False}]),
+    ('widget_unfinished', 'active', [{'provider': 'turnstile', 'rendered': True, 'visible': True, 'response': False}]),
+    ('widget_rejected', 'active', [{'provider': 'turnstile', 'rendered': True, 'visible': True, 'response': True}]),
+    ('widget_load_failed', 'active', [{'provider': None, 'rendered': False, 'visible': False, 'response': False}]),
+])
+def test_each_widget_is_reported_with_what_was_observed(scene, status, widgets):
+    b = ScenarioBrowser(scene=scene)
+    try:
+        state = b.verification_state()
+        assert state['status'] == status and state['widgets'] == widgets
+        assert 'dummy-response' not in json.dumps(state)  # presence only, never the value
+        if scene == 'widget_completed':
+            assert any('not proof the site accepts it' in e for e in state['evidence'])
+        if scene == 'widget_invisible_idle':
+            assert any('idle until submit, or still running' in e for e in state['evidence'])
+    finally:
+        b.close()
+
+
+@pytest.mark.parametrize('scene', ['widget_unfinished', 'widget_load_failed'])
+def test_the_six_second_wait_only_hands_back_and_never_passes(scene):
+    b = ScenarioBrowser(scene=scene)
+    try:
+        started = time.monotonic()
+        message = b.verification_barrier()
+        assert 5.5 <= time.monotonic() - started < 12
+        assert message and 'has not completed or did not load correctly' in message
+        assert 'Complete the verification challenge' not in message  # it does not claim there is a puzzle to solve
+        assert b.verification_state()['status'] == 'active' and not b.resume_readiness(EXPECTED)['ready']
+    finally:
+        b.close()
+
+
+def test_a_completed_widget_that_expires_is_unfinished_again():
+    b = ScenarioBrowser(scene='widget_completed')
+    try:
+        assert b.verification_state()['status'] == 'passive'
+        b.page.evaluate("document.querySelector('[name=cf-turnstile-response]').value = ''")  # the response expired
+        assert b.verification_state()['status'] == 'active' and not b.resume_readiness(EXPECTED)['ready']
+    finally:
+        b.close()
+
+
+def test_a_response_the_site_rejected_is_not_a_cleared_verification():
+    b = ScenarioBrowser(scene='widget_rejected')
+    try:
+        assert 'not accepted' in b.verification_barrier()
+        assert b.resume_readiness(EXPECTED) ['reason'] == 'verification_active'
+    finally:
+        b.close()
+
+
+def test_a_response_alone_does_not_resume_without_the_application_form():
+    b = ScenarioBrowser(scene='widget_completed_error')
+    try:
+        assert b.verification_state()['status'] == 'passive'  # the widget finished...
+        assert b.resume_readiness(EXPECTED) == {'ready': False, 'reason': 'error_page'}  # ...but the form is not back
+        b.show('widget_completed', OTHER_JOB)
+        assert b.resume_readiness(EXPECTED)['reason'] == 'different_application'
+        b.show('widget_completed')
+        assert b.resume_readiness(EXPECTED)['ready']  # one observation; the loop still needs two in a row
+    finally:
+        b.close()

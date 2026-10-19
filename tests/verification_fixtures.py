@@ -115,3 +115,26 @@ class OfficialWidgetBrowser(ScenarioBrowser):
             route.continue_()
         else:
             super()._guard_request(route)
+
+
+# Provider-widget boundaries without the network: a Turnstile-shaped frame served by the local route.
+PROVIDER_FRAME_URL = 'https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/test'
+FRAMES[PROVIDER_FRAME_URL] = '<p>widget</p>'
+
+
+def widget(response='', *, visible=True, frame=True, notice=''):
+    shown = 'width:300px;height:65px' if visible else 'display:none'
+    return (f'<div class="cf-turnstile">' + (f'<iframe src="{PROVIDER_FRAME_URL}" style="{shown}"></iframe>' if frame else '') +
+            f'<input type="hidden" name="cf-turnstile-response" value="{response}"></div>' + notice)
+
+
+WITH_WIDGET = lambda body, **kw: page(FORM.replace('<button type="button"', widget(**kw) + '<button type="button"', 1) + body)
+PAGES.update({
+    'widget_completed': WITH_WIDGET('', response='dummy-response'),
+    'widget_unfinished': WITH_WIDGET(''),                       # interactive, or an error callback left it empty
+    'widget_rejected': WITH_WIDGET('', response='dummy-response', notice='<div role="alert">Verification failed. Please try again.</div>'),
+    'widget_invisible_idle': WITH_WIDGET('', visible=False),
+    'widget_invisible_completed': WITH_WIDGET('', visible=False, response='dummy-response'),
+    'widget_load_failed': WITH_WIDGET('', frame=False),       # the provider script never rendered a frame
+    'widget_completed_error': page('<h1>Something went wrong</h1>' + widget(response='dummy-response'), title='Error'),
+})
