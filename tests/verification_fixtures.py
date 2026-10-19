@@ -85,3 +85,33 @@ class ScenarioBrowser(ApplicationBrowser):
 
     def counters(self):
         return self.page.evaluate('({writes: window.writes || 0, nexts: window.nexts || 0, uploads: window.uploads || 0, submits: window.submits || 0})')
+
+
+# V4: the providers' published test keys (no real challenge; tokens are dummies that real sites reject).
+# Turnstile: https://developers.cloudflare.com/turnstile/troubleshooting/testing/
+# reCAPTCHA: https://developers.google.com/recaptcha/docs/faq   hCaptcha: https://docs.hcaptcha.com/#integration-testing-test-keys
+TURNSTILE = '<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script><div class="cf-turnstile" data-sitekey="{key}"></div>'
+OFFICIAL = {
+    'turnstile_pass': TURNSTILE.format(key='1x00000000000000000000AA'),
+    'turnstile_fail': TURNSTILE.format(key='2x00000000000000000000AB'),
+    'turnstile_invisible_pass': TURNSTILE.format(key='1x00000000000000000000BB'),
+    'turnstile_interactive': TURNSTILE.format(key='3x00000000000000000000FF'),
+    'hcaptcha_test': '<script src="https://js.hcaptcha.com/1/api.js" async defer></script><div class="h-captcha" data-sitekey="10000000-ffff-ffff-ffff-000000000001"></div>',
+    'recaptcha_test': '<script src="https://www.google.com/recaptcha/api.js" async defer></script><div class="g-recaptcha" data-sitekey="6LeIxAcTAAAAAJcZVRqyHh71UMIEGNQ_MXjiZKhI"></div>',
+}
+for name, widget in OFFICIAL.items():
+    PAGES[name] = page(FORM.replace('<button type="button"', widget + '<button type="button"', 1))
+WIDGET_HOSTS = ('challenges.cloudflare.com', 'hcaptcha.com', 'www.google.com', 'www.gstatic.com', 'www.recaptcha.net')
+
+
+class OfficialWidgetBrowser(ScenarioBrowser):
+    """As ScenarioBrowser, but the official widget providers' own hosts load from the network (V4 only)."""
+    requests = []
+
+    def _guard_request(self, route):
+        host = (route.request.url.split('/')[2] if '://' in route.request.url else '').split(':')[0]
+        if any(host == h or host.endswith('.' + h) for h in WIDGET_HOSTS):
+            type(self).requests.append(host)
+            route.continue_()
+        else:
+            super()._guard_request(route)

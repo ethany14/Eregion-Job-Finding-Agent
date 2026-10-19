@@ -309,6 +309,24 @@ ERROR_PAGE = re.compile(r"\b(?:something went wrong|page not found|404|internal 
 PASSIVE_WIDGETS = ('script[src*="recaptcha" i], script[src*="hcaptcha" i], script[src*="turnstile" i], '
                    'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="challenges.cloudflare.com" i], '
                    '.g-recaptcha, .h-captcha, .cf-turnstile')
+# Provider widget frames and the hidden field each fills when it is completed.
+WIDGET_HOSTS = (('turnstile', 'challenges.cloudflare.com', ''), ('hcaptcha', 'hcaptcha.com', ''),
+                ('recaptcha', 'www.google.com', '/recaptcha/'), ('recaptcha', 'www.recaptcha.net', '/recaptcha/'))
+WIDGET_RESPONSES = {'turnstile': 'cf-turnstile-response', 'hcaptcha': 'h-captcha-response', 'recaptcha': 'g-recaptcha-response'}
+WIDGET_CONTAINERS = '.cf-turnstile, .h-captcha, .g-recaptcha'  # an empty container has no size before it renders
+RESPONSE_PRESENT = r"""name => [...document.querySelectorAll(`[name="${name}"]`)].some(e => (e.value || '').length > 0)"""
+# Challenge frames other than the provider widgets above (those are judged by their response).
+CHALLENGE_FRAMES = ':is(iframe[title*="challenge" i], iframe[title*="verification" i]):visible' + ''.join(
+    f':not([src*="{host}"])' for host in ('challenges.cloudflare.com', 'hcaptcha.com', 'google.com/recaptcha', 'recaptcha.net'))
+
+
+def widget_provider(url):
+    parts = urlsplit(url or '')
+    host = parts.hostname or ''
+    return next((name for name, domain, path in WIDGET_HOSTS
+                 if (host == domain or host.endswith('.' + domain)) and parts.path.startswith(path)), None)
+
+
 SPLIT_CODE = r"""() => [...document.querySelectorAll('input[maxlength="1"]')].some(el => el.parentElement &&
   el.parentElement.querySelectorAll('input[maxlength="1"]').length >= 4 && el.getClientRects().length)"""
 LABELLED_CODE = r"""() => [...document.querySelectorAll('input:not([type=hidden]):not([type=password])')].some(el => {
@@ -1313,14 +1331,36 @@ class ApplicationBrowser:
                 if ((location.hostname or '').endswith('.captcha-delivery.com') and location.path.startswith('/captcha/')
                         and frame.parent_frame and frame.frame_element().is_visible()):
                     return found('waf', 'active', ['access restriction frame (captcha-delivery)'])
-            if self.page.locator('iframe[title*="challenge" i]:visible, iframe[title*="verification" i]:visible').count():
+            # Provider widgets (Turnstile renders in a closed shadow root; frames are still reachable):
+            # a visible widget without a completed response needs the person; a completed one does not.
+            # Only the presence of a response is read, never its value.
+            pending, completed, rendered = [], [], False
+            for frame in frames:
+                provider = widget_provider(frame.url)
+                if not provider or frame == self.page.main_frame:
+                    continue
+                rendered = True
+                try:
+                    shown = frame.frame_element().is_visible()
+                except Exception:
+                    continue  # detached between listing and checking; the next observation decides
+                if shown:
+                    (completed if self.page.evaluate(RESPONSE_PRESENT, WIDGET_RESPONSES[provider]) else pending).append(provider)
+            if pending:
+                return found('captcha', 'active', [f'unfinished {name} verification widget' for name in sorted(set(pending))])
+            if not rendered and self.page.locator(WIDGET_CONTAINERS).count() and not any(
+                    self.page.evaluate(RESPONSE_PRESENT, name) for name in WIDGET_RESPONSES.values()):
+                # The widget's place is on the page but its frame has not rendered yet.
+                return found('captcha', 'active', ['unfinished verification widget (loading)'])
+            if self.page.locator(CHALLENGE_FRAMES).count():
                 return found('captcha', 'active', ['visible challenge frame'])
             heading = ' '.join(self.page.locator('h1:visible').all_text_contents())[:200]
             if CHALLENGE_PAGE.search(self.page.title()) or CHALLENGE_PAGE.search(heading):
                 return found('waf', 'active', ['challenge or access-check page'])
             passive = self.page.locator(PASSIVE_WIDGETS).count()
-            if passive:
-                return found('captcha', 'passive', [f'{passive} inactive verification widget(s) or script(s)'])
+            if passive or completed:
+                return found('captcha', 'passive', [f'completed {name} verification widget' for name in sorted(set(completed))] +
+                             ([f'{passive} inactive verification widget(s) or script(s)'] if passive else []))
             return state
         except Exception as exc:
             # A detached frame, a destroyed context or a page mid-navigation could not be checked.
@@ -1331,6 +1371,13 @@ class ApplicationBrowser:
         state = self.verification_state()
         if state['status'] == 'unknown':
             time.sleep(0.5)  # one bounded recheck; a page mid-navigation usually settles
+            state = self.verification_state()
+        # A provider widget that completes on its own (Turnstile managed/invisible) needs a moment
+        # after load; wait a bounded time before handing a person something that resolves itself.
+        deadline = time.monotonic() + 6
+        while (state['status'] == 'active' and any(e.startswith('unfinished ') for e in state['evidence'])
+               and time.monotonic() < deadline):
+            time.sleep(0.5)
             state = self.verification_state()
         if state['status'] not in {'active', 'unknown'}:
             return None
