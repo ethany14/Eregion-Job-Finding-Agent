@@ -28,8 +28,7 @@ The same dialog's **Features** section turns optional parts on and off and
 stores them in `.env`: Jev fit scoring (`TYPESAFE_ENABLED`, `TYPESAFE_API_KEY`,
 `TYPESAFE_CAREER_ENABLED`, `TYPESAFE_FIT_RESOLVE_UNKNOWNS`), job sources
 (`JOB_AGENT_JOB_API_FIRST`, `JOB_AGENT_JOBSPY_ENABLED` with
-`JOB_AGENT_JOBSPY_PYTHON` and `JOB_AGENT_JOBSPY_SITES`, `JOB_AGENT_TREG_ENABLED`
-with `TREG_TOKEN` and `JOB_AGENT_TREG_SEARCH_PROVIDER`), applications
+`JOB_AGENT_JOBSPY_PYTHON` and `JOB_AGENT_JOBSPY_SITES`), applications
 (`JOB_AGENT_TASK_MEMORY_MODE` on or off, `JOB_AGENT_HIDDEN_BROWSER`) and
 materials (`JOB_AGENT_ANALYSIS_WARMUP`, `JOB_AGENT_OPT_MATERIAL_PATCHES`).
 On/off settings are switches; a setting that belongs to a switch, such as a
@@ -386,34 +385,14 @@ preserve granular error codes and `next` guidance; internal/validation failures
 also include `fallback` guidance to use the granular tools. Source restrictions,
 execution masks, no-progress protection and provider budgets still apply.
 
-## Optional Treg job sources
+## Source order
 
-Your own Treg account and key. Nothing is hosted, proxied or billed by the project. Loading order: **process environment > project-root `.env` > defaults**. The project root is fixed (independent of the working directory). An explicitly empty process variable means "not configured" and does not fall back to `.env`. A placeholder token counts as missing. Settings are read into a mapping; `os.environ` is not modified. Invalid values block Treg only.
-
-| Setting | Default | Meaning |
-|---|---|---|
-| `TREG_TOKEN` | empty | Your Treg key. Sent only as `X-Treg-Token` to `https://treg.to/call/...`; never logged, shown or returned by tools |
-| `TREG_ORG` | empty | Team slug, only for identity tokens (`X-Treg-Org`) |
-| `JOB_AGENT_TREG_ENABLED` | `0` | Allows Treg calls. A configured key alone never spends |
-| `JOB_AGENT_JOB_API_FIRST` | `1` | API-first job search over existing company boards; independent of Treg |
-| `JOB_AGENT_TREG_SEARCH_PROVIDER` | empty | `anyapi` or `crawl4ai`. Empty refuses paid LinkedIn search. The model cannot change it |
-| `JOB_AGENT_TREG_CRAWL4AI_SCRAPE_ENABLED` | `0` | Separately allows `crawl4ai.web.scrape` for page text |
-| `JOB_AGENT_TREG_TASK_MAX_COST_USD` | `0.10` | Cumulative per task (persisted; new turns or restarts do not reset it) |
-| `JOB_AGENT_TREG_DAILY_MAX_COST_USD` | `0.50` | Per UTC day for this deployment's database (all tasks and workers); does not limit the Treg account elsewhere |
-| `JOB_AGENT_TREG_CALL_MAX_COST_USD` | `0.01` | Per-call cap, sent as `X-Treg-Route-Max-Cost` (Treg refuses with 402, nothing charged) and reserved locally |
-| `JOB_AGENT_TREG_MAX_ATTEMPTS` | `20` | All gateway attempts per task, including retries and status queries |
-| `JOB_AGENT_TREG_MAX_RESULTS` / `MAX_PAGES` | `10` / `2` | Per logical search |
-| `JOB_AGENT_TREG_MAX_CONCURRENCY` | `2` | In-process concurrent Treg requests (budgets are enforced in the database) |
-| `JOB_AGENT_TREG_LIVE_API_TEST` | `0` | Explicit opt-in for the isolated live API smoke/comparison only |
-
-Spend records (`external_tool_operations`, migration `0037`) are kept separately from model usage and in integer micro-USD:
-- The charge is taken from `X-Treg-Cost-Micro`.
-- Replays count 0, with the original cost stored separately.
-- Timeouts, lost responses and a 2xx without a cost header are `unknown` and keep their reservation.
-- Retries reuse the same `Idempotency-Key` (network error, 409, 429, saturated 503) at most once, within a deadline.
-- Responses served through Treg's overflow relay (`X-Treg-Served-Via: overflow:*`) are recorded and quarantined.
-
-The contract record is kept with the maintainers’ local test reports.
+`JOB_AGENT_JOB_API_FIRST` (default `1`) makes `search_jobs` over verified
+company-board APIs and LinkedIn MCP the primary discovery path; `0` restores the
+browser-first order. Loading order: **process environment > project-root `.env` >
+default**, and an explicitly empty process value counts as off. Treg, an earlier
+optional paid source, was removed on 2026-10-19; its usage table
+(`external_tool_operations`, migration `0037`) stays for existing records.
 
 ## Integrated optimization switches
 
@@ -425,7 +404,7 @@ overwrite an existing `.env` when adding configuration.
 |---|---|---|
 | `JOB_AGENT_OPT_BOARD_RESPONSE_CACHE` | Reuse bounded Ashby board responses within the existing TTL | Set 0; subsequent reads use existing network path |
 | `JOB_AGENT_OPT_CANDIDATE_BATCHES` | Bound the actionable candidate batch | Set 0; durable candidates remain |
-| `JOB_AGENT_JOB_API_FIRST` | Existing company-board API priority; Treg separately controlled | Set 0; retain source evidence |
+| `JOB_AGENT_JOB_API_FIRST` | Existing company-board API priority (default on; see [Source order](#source-order)) | Set 0; retain source evidence |
 | `JOB_AGENT_OPT_SCOPED_CONTEXT` | Search router receives versioned long-resume reference and preview | Set 0; rebuild full current observation |
 | `JOB_AGENT_OPT_STATE_DELTAS` | Complete checkpoint plus bounded verified request-side deltas | Set 0; discard only disposable projection, retain evidence/events |
 | `JOB_AGENT_OPT_HISTORY_POLICY` | `structured_checkpoint` aligns trim boundaries and marks authoritative state; `aligned`/`checkpoint` remain available | Set `current`; no raw-input cap increase |
@@ -433,10 +412,8 @@ overwrite an existing `.env` when adding configuration.
 | `JOB_AGENT_OPT_SNAPSHOT_REFS`, `JOB_AGENT_OPT_STABLE_TOOLS`, `JOB_AGENT_OPT_PROMPT_TRIM`, `JOB_AGENT_OPT_VERIFY_AND_SCORE` | Existing Stage 2/4 experiments, independently selected | Set each 0 |
 
 There is no new prompt cache key or automatic model compaction. No patch submits an
-application or bypasses review. Treg remains separately disabled, requires the user's
-own token and explicit provider selection, and retains unknown spend reservations on
-failures. Missing credentials, account access or budget prevents a paid operation;
-existing free source paths remain available. See the final report
+application or bypasses review. Missing credentials, account access or budget
+prevents a paid operation; existing free source paths remain available. See the final report
 for evidence and pending networked validation.
 
 The R1 adoption decisions retain
@@ -451,7 +428,7 @@ increase any budget. See the R2 gate.
 
 ## Default job sources
 
-Default research uses public company-board APIs and an explicitly configured LinkedIn MCP server (`server_id: linkedin`). No paid search key is required. Without that server, company boards remain usable and LinkedIn is reported unavailable. A LinkedIn-only request never silently searches other boards. Treg is disabled by default; users may separately enable it with their own key. Set JOB_AGENT_JOB_API_FIRST=0 explicitly only to retain the legacy browser route. Existing explicit environment values take precedence over defaults.
+Default research uses public company-board APIs and an explicitly configured LinkedIn MCP server (`server_id: linkedin`). No paid search key is required. Without that server, company boards remain usable and LinkedIn is reported unavailable. A LinkedIn-only request never silently searches other boards. Set JOB_AGENT_JOB_API_FIRST=0 explicitly only to retain the legacy browser route. Existing explicit environment values take precedence over defaults.
 
 Configure the existing MCP manager using an absolute MCP_CONFIG_PATH in the **backend process environment or project .env** (process values, including an explicitly empty value, take precedence). Copy `docs/examples/linkedin-mcp.json` and adjust executable/profile paths. Install pinned mcp-server-linkedin==4.27.0 in an isolated environment. Log in interactively once using its --login mode with the same --user-data-dir; never use a daily browser profile as that directory. Windows automatic session import may fail even when Chrome is logged in. The --chrome-path option can use an installed Chrome binary; it still uses the isolated profile. Normal server startup uses --no-auto-import, so it never imports another account silently.
 

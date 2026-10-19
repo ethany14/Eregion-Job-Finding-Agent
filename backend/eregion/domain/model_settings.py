@@ -6,7 +6,7 @@ without a restart. A variable set in the server's process environment takes prio
 over `.env`; such a field is reported as locked and cannot be changed here. The API key
 is never returned: only whether one is set, where it comes from and its last characters.
 
-Feature switches (Jev, Treg, JobSpy and others) are stored the same way. Some
+Feature switches (Jev, JobSpy and others) are stored the same way. Some
 are read through `.env` on each use; the others are read from the process environment, so a
 saved value is also set in this process and loaded from `.env` when the server starts.
 """
@@ -66,11 +66,6 @@ SWITCHES = [
             parent='JOB_AGENT_JOBSPY_ENABLED'),
     _switch('JOB_AGENT_JOBSPY_SITES', 'Job sources', 'JobSpy sites', 'choice', default='indeed', process=True,
             options=('indeed', 'linkedin', 'indeed,linkedin'), parent='JOB_AGENT_JOBSPY_ENABLED'),
-    _switch('JOB_AGENT_TREG_ENABLED', 'Job sources', 'Treg paid search', default='0', values=OFF,
-            requires=('TREG_TOKEN',), help='Spends money on your Treg account, within the configured caps.'),
-    _switch('TREG_TOKEN', 'Job sources', 'Treg token', 'secret', parent='JOB_AGENT_TREG_ENABLED'),
-    _switch('JOB_AGENT_TREG_SEARCH_PROVIDER', 'Job sources', 'Treg LinkedIn search provider', 'choice',
-            options=('', 'anyapi', 'crawl4ai'), parent='JOB_AGENT_TREG_ENABLED', help='None refuses paid LinkedIn search.'),
     _switch('JOB_AGENT_TASK_MEMORY_MODE', 'Applications', 'Task memory', default='off', values=('on', 'off'),
             process=True, restart=True, help='Recovery summaries for long applications.'),
     _switch('JOB_AGENT_HIDDEN_BROWSER', 'Applications', 'Background browser', 'choice', default='offscreen',
@@ -125,8 +120,8 @@ def _locked(item, environ):
     value = environ.get(item['key'])
     if value is None or (item['process'] and _from_file.get(item['key']) == value):
         return False
-    # Treg settings honour an explicitly empty environment value too.
-    return bool(str(value).strip()) or item['key'].startswith(('TREG', 'JOB_AGENT_TREG', 'JOB_AGENT_JOB_API'))
+    # The source-order switch honours an explicitly empty environment value too.
+    return bool(str(value).strip()) or item['key'] == 'JOB_AGENT_JOB_API_FIRST'
 
 
 def _raw(item, environ, file):

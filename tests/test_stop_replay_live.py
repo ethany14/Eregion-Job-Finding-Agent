@@ -19,8 +19,7 @@ import pytest
 WORK_TOOLS = {'search_jobs', 'screen_jobs', 'read_job', 'import_job', 'verify_and_score', 'verify_and_score_jobs',
               'score_job', 'score_jobs'}
 MAX_MODEL_CALLS = 4
-LIMITS = {'JOB_AGENT_JOB_API_FIRST': '1', 'JOB_AGENT_TREG_ENABLED': '0',
-          'JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS': '100', 'JOB_AGENT_TASK_MAX_INPUT_TOKENS': '1500000',
+LIMITS = {'JOB_AGENT_JOB_API_FIRST': '1', 'JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS': '100', 'JOB_AGENT_TASK_MAX_INPUT_TOKENS': '1500000',
           'JOB_AGENT_LINKEDIN_MAX_CALLS': '100', 'JOB_AGENT_ANALYSIS_WARMUP': '0'}
 
 

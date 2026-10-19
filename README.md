@@ -161,7 +161,6 @@ details and sign-in, always stopping at the review page:
 | **Company boards** (Greenhouse, Lever, Ashby, Workday) | None | A directory of 118 boards, each verified through its public API. |
 | **LinkedIn**, through a local MCP server | One-time sign-in in a separate browser profile | On by default once configured. Calls are budgeted, and the source stops on sign-in or rate-limit problems. See [default sources](docs/configuration.md#default-job-sources). |
 | **JobSpy** (optional) | A separate Python with `python-jobspy` installed, set as `JOB_AGENT_JOBSPY_PYTHON` | Indeed and LinkedIn cards with full descriptions; Indeed answers a search in one request. Off by default, requests per task are capped. In a one-sample side-by-side test it was fast and complete on text but produced fewer recommendations under the same budget, so boards and LinkedIn stay the default ([details](docs/evaluation-report.md#2--job-sources)). |
-| **Treg** (optional) | Your own Treg key; you pay Treg directly | LinkedIn search and page extraction, with spend capped per call ($0.01), per task ($0.10) and per day ($0.50). Off by default. See [configuration](docs/configuration.md#optional-treg-job-sources). |
 | **A posting you paste or open** | None | Share a link or job text in chat, or use the **Eregion Lens** Chrome extension on any job page. |
 
 Indeed's MCP server only accepts allow-listed clients, so Eregion does not use it.
@@ -340,7 +339,7 @@ All are off by default; add them to `.env` and restart.
 | Guide | Covers |
 | :-- | :-- |
 | 📘 [Using Eregion](docs/usage.md) | Daily workflow, approvals, saved answers, alerts and recovery |
-| ⚙️ [Configuration](docs/configuration.md) | Model, job sources, LinkedIn MCP, Treg, Jev, browser and local data |
+| ⚙️ [Configuration](docs/configuration.md) | Model, job sources, LinkedIn MCP, Jev, browser and local data |
 | 🧭 [Architecture](docs/agent-loop.md) | The single agent loop, evidence, context and browser workers |
 | 📈 [Evaluation report](docs/evaluation-report.md) | How Eregion was tested and what the results showed |
 | ⚡ [Jev and performance](docs/jev-benchmark.md) | Fast scoring, recorded measurements and how to reproduce them |

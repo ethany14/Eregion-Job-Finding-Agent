@@ -20,7 +20,7 @@ no bill was available; "one sample" means the number is a single run, not an ave
 | Area | Where it stands | Key numbers |
 | :-- | :-- | :-- |
 | Agent architecture | One autonomous loop for chat, applications and sessions, accepted offline; structural checks pass in CI. | 7 migration stages; full suite 2,242 passed / 0 failed at acceptance. |
-| Job sources | Company boards and LinkedIn MCP by default; Treg and JobSpy optional. | 118 verified boards (from 4); remote-US matching fixed on 22 of 23 boards that returned nothing. |
+| Job sources | Company boards and LinkedIn MCP by default; JobSpy optional. Treg was removed on October 19. | 118 verified boards (from 4); remote-US matching fixed on 22 of 23 boards that returned nothing. |
 | Search and recommendations | Tiered results with a saved-state check on every final reply. | 0 structural errors across 148 shown jobs; 0 of 23 shown jobs wrong in human review. |
 | Fit scoring with Jev | Fast and cached; accuracy not yet measured. | 3 jobs in 2.0 s cold, 0.15 s cached; 150 live postings at 0.39 s each, 0 failed of 317 requests. |
 | Applications on real sites | Workday at Adobe and Intel reached the review page; nothing submitted. | 53–59 attempts per pass (from 523 cumulative in the stalled first attempt); 0 submissions in every run. |
@@ -90,7 +90,7 @@ may be imported.
 | :-- | :-- |
 | **Company boards** (Greenhouse, Lever, Ashby, Workday) | The directory grew from 4 to 118 boards, each verified through its public API. Before the 2026-10-14 matching fix, 22 of 23 boards returned nothing for a remote-US request; the fix accepts every way boards write a remote-US location. |
 | **LinkedIn MCP** (local, user-signed-in) | Default source since 2026-10-12. Calls are budgeted, and the source stops on sign-in or rate-limit problems. |
-| **Treg** (optional, paid by the user) | 15 API calls cost $0.004 as reported by Treg, with zero unknown charges. Spend is capped per call, per task and per day. Off by default. |
+| **Treg** (removed October 19) | Was an optional paid source: 15 API calls cost $0.004 as reported by Treg, with zero unknown charges. Removed as unnecessary; company boards and LinkedIn MCP cover the default route. |
 | **JobSpy** (optional, out of process) | Runs `python-jobspy` 1.2.0 in a separate interpreter with a request cap per task (default 80). Off by default. Comparison below. |
 | **Indeed MCP** | Sign-in worked, but the server returns 403 “Client not allowed”: only allow-listed clients are accepted. Not used. |
 

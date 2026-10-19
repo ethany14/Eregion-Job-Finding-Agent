@@ -323,7 +323,7 @@ class CareerService:
 
     def close(self):
         """Stop producers, drain career and interview work, then close the resources
-        (discovery, Treg, browser) that work uses. Returns False, keeping those
+        (discovery, browser) that work uses. Returns False, keeping those
         resources open, if interview work is still running after its bounded wait;
         calling close again finishes the shutdown once that work has exited."""
         if scheduler:=getattr(self,'alert_scheduler',None):scheduler.close()

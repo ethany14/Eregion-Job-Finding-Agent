@@ -24,7 +24,7 @@ def test_offline_precheck_runs_both_routes_with_zero_network_and_zero_model_call
         guards = snapshot['guards']
         assert guards['valid'] and guards['model_attempts'] == 0 and guards['blocked_sockets'] == 0
         assert guards['blocked_subprocesses'] == 0 and guards['refused_hosts'] == []
-        # Each route contains only its own sources: no cross-route fallback, no Treg or browser search.
+        # Each route contains only its own sources: no cross-route fallback, no browser search.
         assert all(set(q['sources']) == allowed for q in snapshot['queries'])
         assert [q['id'] for q in snapshot['queries']] == [q['id'] for q in experiment.MANIFEST['queries']]
     metrics = json.loads((out / 'metrics.json').read_text(encoding='utf-8'))

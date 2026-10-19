@@ -19,7 +19,7 @@ def test_real_cards_are_bound_and_ambiguous_fields_stay_unknown():
 
 
 def setup(c,monkeypatch,script):
-    monkeypatch.setenv('JOB_AGENT_JOB_API_FIRST','1');monkeypatch.setenv('JOB_AGENT_TREG_ENABLED','0')
+    monkeypatch.setenv('JOB_AGENT_JOB_API_FIRST','1')
     c.harness.discovery=Discovery(directory=[{'url':'https://boards.greenhouse.io/x/jobs/1','title':'Junior Data Analyst'}])
     fake=FakeLinkedIn(script);manager=manager_with(fake);c.runtime.mcp_manager=manager
     return fake,manager
@@ -34,7 +34,7 @@ def test_default_combines_sources_reuses_reads_and_never_spends(career,monkeypat
         ask(c,'Find junior data analyst jobs in New York')
         found=execute(c,'search_jobs',query='junior data analyst',location='New York')
         assert any(j['source']=='linkedin_mcp' for j in found['jobs'] if 'source' in j)
-        assert c.harness.discovery.calls[0][0]=='directory' and c.harness._treg() is None
+        assert c.harness.discovery.calls[0][0]=='directory'
         url=DETAIL['url'];first=execute(c,'read_job',url=url);second=execute(c,'read_job',url=url)
         assert first['source']=='linkedin_mcp' and first['title']=='Junior Data Analyst'
         assert second['cached'] and second['no_new_evidence']
@@ -43,7 +43,7 @@ def test_default_combines_sources_reuses_reads_and_never_spends(career,monkeypat
     finally:manager.stop()
 
 
-def test_auth_stop_persists_and_does_not_use_browser_or_treg(career,monkeypatch):
+def test_auth_stop_persists_and_does_not_use_browser(career,monkeypatch):
     c=career;fake,manager=setup(c,monkeypatch,{'search_jobs':result(error='Sign in required')})
     try:
         ask(c,'Only search LinkedIn for junior data analyst jobs')

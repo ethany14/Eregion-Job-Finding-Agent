@@ -1,9 +1,28 @@
 """One source-order decision for the career prompt, snapshot and tool descriptions.
 
-JOB_AGENT_JOB_API_FIRST (read through treg_config) selects the order. When it is
-off, every output here is the unchanged browser-first text, byte for byte.
+JOB_AGENT_JOB_API_FIRST selects the order (default on). When it is off, every
+output here is the unchanged browser-first text, byte for byte.
 """
+import os
+
+from eregion.paths import PROJECT_ROOT
+
 from .prompt import SYSTEM, TRIMMED_SYSTEM
+
+
+def api_first_enabled(environ=None, env_path=PROJECT_ROOT / '.env'):
+    """JOB_AGENT_JOB_API_FIRST from the environment (an explicit empty value counts), else `.env`, else on."""
+    environment = os.environ if environ is None else environ
+    if 'JOB_AGENT_JOB_API_FIRST' in environment:
+        value = environment['JOB_AGENT_JOB_API_FIRST']
+    else:
+        from dotenv import dotenv_values
+        try:
+            value = dotenv_values(env_path).get('JOB_AGENT_JOB_API_FIRST') if env_path.is_file() else None
+        except OSError:
+            value = None
+        value = '1' if value is None else value
+    return str(value).strip().lower() in {'1', 'true', 'yes', 'on'}
 
 # (browser-first text, API-first text); each must occur exactly once in its prompt.
 FULL_PROMPT_EDITS = (
@@ -32,7 +51,7 @@ TRIMMED_PROMPT_EDITS = (
 )
 TOOL_DESCRIPTIONS = {
     'search_jobs': 'Primary discovery: search verified company-board APIs (the board directory by '
-        'default) and configured LinkedIn MCP, without a paid key. Treg is optional. A LinkedIn-only request uses LinkedIn only. Returns observed '
+        'default) and configured LinkedIn MCP, without a paid key. A LinkedIn-only request uses LinkedIn only. Returns observed '
         'posting links; read, qualify, import, score and recommend them. Optional boards contain '
         'platform and company board token.',
     'read_job': 'Read a posting by URL through the job API/HTTP first; the browser is used only with '
@@ -40,7 +59,7 @@ TOOL_DESCRIPTIONS = {
         'region_ref and observation_id to exclude other jobs.',
 }
 SNAPSHOT_INSTRUCTION = (
-    'Search verified company-board APIs and configured LinkedIn MCP with search_jobs. Treg is optional and disabled by default. '
+    'Search verified company-board APIs and configured LinkedIn MCP with search_jobs. '
     'A LinkedIn-only request uses the configured LinkedIn source, never other boards. Use the browser '
     'only for an explicit page check or missing/conflicting evidence; an already-open page does not '
     'require a browser read.')

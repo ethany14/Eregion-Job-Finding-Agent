@@ -1,13 +1,18 @@
-"""Read-only MCP half of filter_source_compare; requires explicit established-session opt-in."""
+"""Read-only LinkedIn MCP filter comparison; requires explicit established-session opt-in."""
 import json,os,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
-from filter_source_compare import QUERIES,size
 from eregion.runtime.career.linkedin_source import LinkedInMcpSource,LinkedInSourceStopped
 from eregion.runtime.mcp.config import McpRuntimeConfig,McpStdioServerConfig
 from eregion.runtime.mcp.manager import McpToolManager
 from eregion.runtime.registry import ToolRegistry
+
+QUERIES=[('junior data analyst','New York, NY','entry'),('graduate data analyst','New York, NY','entry'),('software engineer intern','New York, NY','internship')]
+def size(value):
+    text=json.dumps(value,ensure_ascii=False,separators=(',',':'))
+    return {'chars':len(text),'utf8_bytes':len(text.encode()),'token_estimate_chars_div4':round(len(text)/4),
+            'token_estimator':'rough chars/4; not model-specific or billed usage'}
 
 def main():
     if os.getenv('JOB_AGENT_LINKEDIN_COMPARISON_LIVE')!='1':raise SystemExit('Explicit established-session opt-in required')

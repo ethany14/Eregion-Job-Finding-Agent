@@ -49,8 +49,7 @@ SCENARIOS = {
 SCENARIO = os.getenv('JOB_AGENT_LIVE_SCENARIO', 'analyst')
 OPEN_VERSIONS = {'tiered-recommendations-v2', 'tiered-recommendations-v3', 'tiered-recommendations-v4', 'tiered-recommendations-v5', 'tiered-recommendations-v6', 'tiered-recommendations-v7'}
 GOAL = {'tiered-recommendations-v7': open_goal(SCENARIOS[SCENARIO]['search']), 'tiered-recommendations-v6': open_goal(SCENARIOS[SCENARIO]['search']), 'tiered-recommendations-v5': open_goal(SCENARIOS[SCENARIO]['search']), 'tiered-recommendations-v4': OPEN_GOAL, 'tiered-recommendations-v3': OPEN_GOAL, 'tiered-recommendations-v2': OPEN_GOAL, 'tiered-recommendations-v1': TIERED_GOAL}.get(ACCEPTANCE_VERSION, LEGACY_GOAL)
-FLAGS = {'JOB_AGENT_JOB_API_FIRST': '1', 'JOB_AGENT_TREG_ENABLED': '0',
-         'JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS': '60',
+FLAGS = {'JOB_AGENT_JOB_API_FIRST': '1', 'JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS': '60',
          'JOB_AGENT_TASK_MAX_INPUT_TOKENS': '1000000'}
 # Explicit experiment profiles. "expanded" is the user-approved one-off experiment
 # (2026-10-13): LinkedIn 100, provider 100, input 1.5M, 1500 s; audit budget unchanged.
@@ -141,7 +140,7 @@ def test_default_route_search(career, monkeypatch):
             state = service.repository.get(task['run_id'])
             ledger = ExternalToolLedger(c.repository.sessions).summary(task['run_id'])
             (output/'sources.json').write_text(json.dumps({
-                'linkedin':state.get('linkedin_mcp_state'), 'treg':ledger},indent=2,default=str),encoding='utf-8')
+                'linkedin':state.get('linkedin_mcp_state'), 'external_tools':ledger},indent=2,default=str),encoding='utf-8')
             # Preserve the isolated test DB before pytest retention removes it.
             import sqlite3
             source=Path(c.repository.sessions.kw['bind'].url.database)

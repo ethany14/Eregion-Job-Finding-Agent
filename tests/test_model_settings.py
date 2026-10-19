@@ -139,7 +139,7 @@ def test_feature_switches_reach_their_readers_and_secrets_stay_write_only(tmp_pa
     python = tmp_path / 'python.exe'
     python.write_text('')
     view = settings.save_settings({'features': {'TYPESAFE_API_KEY': KEY, 'TYPESAFE_ENABLED': True,
-        'JOB_AGENT_TREG_ENABLED': False, 'JOB_AGENT_JOBSPY_ENABLED': True, 'JOB_AGENT_JOBSPY_PYTHON': str(python),
+        'JOB_AGENT_JOB_API_FIRST': False, 'JOB_AGENT_JOBSPY_ENABLED': True, 'JOB_AGENT_JOBSPY_PYTHON': str(python),
         'JOB_AGENT_JOBSPY_SITES': 'indeed,linkedin', 'JOB_AGENT_TASK_MEMORY_MODE': True}}, env_path=path, environ=process_env)
     assert KEY not in json.dumps(view)
     features = {f['key']: f for f in view['features']}
@@ -150,7 +150,7 @@ def test_feature_switches_reach_their_readers_and_secrets_stay_write_only(tmp_pa
     assert 'JOB_AGENT_BROWSER_DRIVER' not in features
     # Read through .env on each use.
     stored = dotenv_values(path)
-    assert stored['TYPESAFE_ENABLED'] == 'true' and stored['TYPESAFE_API_KEY'] == KEY and stored['JOB_AGENT_TREG_ENABLED'] == '0'
+    assert stored['TYPESAFE_ENABLED'] == 'true' and stored['TYPESAFE_API_KEY'] == KEY and stored['JOB_AGENT_JOB_API_FIRST'] == '0'
     # Read from the process environment on each use: applied without a restart.
     assert JobSpyConfig.from_env().enabled and JobSpyConfig.from_env().sites == ('indeed', 'linkedin')
     assert process_env['JOB_AGENT_TASK_MEMORY_MODE'] == 'on'
@@ -168,12 +168,11 @@ def test_feature_requirements_locks_validation_and_startup_loading(tmp_path, pro
         settings.save_settings({'features': {'TYPESAFE_ENABLED': True}}, env_path=path, environ={})
     with pytest.raises(ValueError, match='needs Score job fit with Jev'):
         settings.save_settings({'features': {'TYPESAFE_CAREER_ENABLED': True}}, env_path=path, environ={})
-    with pytest.raises(ValueError, match='needs Treg token'):
-        settings.save_settings({'features': {'JOB_AGENT_TREG_ENABLED': True}}, env_path=path, environ={})
     with pytest.raises(ValueError, match='needs JobSpy Python interpreter'):
         settings.save_settings({'features': {'JOB_AGENT_JOBSPY_ENABLED': True}}, env_path=path, environ={})
     for features, message in [({'JOB_AGENT_HIDDEN_BROWSER': 'firefox'}, 'choose one of'),
                               ({'JOB_AGENT_BROWSER_DRIVER': 'patchright'}, 'not a setting'),
+                              ({'JOB_AGENT_TREG_ENABLED': True}, 'not a setting'),
                               ({'TYPESAFE_ENABLED': 'yes'}, 'on or off'),
                               ({'JOB_AGENT_JOBSPY_PYTHON': str(tmp_path / 'missing.exe')}, 'no file'),
                               ({'LLM_SECRET_THING': True}, 'not a setting')]:

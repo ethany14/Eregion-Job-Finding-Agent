@@ -15,8 +15,8 @@ DETAIL_LIMIT = 20
 
 
 def enabled():
-    from .treg_config import settings
-    default = str(settings()['JOB_AGENT_JOB_API_FIRST']).strip().lower() in {'1','true','yes','on'}
+    from .source_mode import api_first_enabled
+    default = api_first_enabled()
     return os.getenv('JOB_AGENT_OPT_CANDIDATE_BATCHES', '1' if default else '0') == '1'
 
 

@@ -15,7 +15,7 @@ flowchart TD
     Task --> Loop[Shared AgentLoop]
     Loop --> Model[Configured model]
     Loop --> Career[CareerHarness tools]
-    Career --> Search[Public board APIs + LinkedIn MCP; optional Treg]
+    Career --> Search[Public board APIs + LinkedIn MCP; optional JobSpy]
     Career --> Fit[Evidence extraction and fit scoring]
     Career --> Materials[Versioned material generation and review]
     Career --> Interview[Interview practice]

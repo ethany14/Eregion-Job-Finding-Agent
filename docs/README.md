@@ -3,7 +3,7 @@
 ## Using Eregion
 
 - [User guide](usage.md): daily workflow, approvals, saved answers, alerts and recovery
-- [Configuration](configuration.md): model, job sources (company boards, LinkedIn MCP, Treg), Jev, browser and local data
+- [Configuration](configuration.md): model, job sources (company boards, LinkedIn MCP, JobSpy), Jev, browser and local data
 - [Evaluation report](evaluation-report.md): how Eregion was tested and what the results showed
 
 ## Building on Eregion

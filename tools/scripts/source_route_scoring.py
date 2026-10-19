@@ -2,7 +2,7 @@
 
 Each route's snapshot is scored in its own fresh database, analysis cache and ledger, with the same
 model route, prompt, resume, scorer and caps. No network search: job sources are not configured
-(no MCP, no JobSpy, no Treg), the board client refuses every host, and network tools are refused
+(no MCP, no JobSpy), the board client refuses every host, and network tools are refused
 with a structured error. A posting without a description stays unscorable; nothing is borrowed
 from the other route.
 
@@ -112,7 +112,7 @@ def build(snapshot_path, out, *, model_factory=None, allow_synthetic=False):
     if db.exists():
         raise SystemExit(f'{db} exists: each build uses a fresh database.')
     # No optional sources; the Jev decision cache defaults to <database>.jev-fit.sqlite3, one per route.
-    for key in ('JOB_AGENT_JOBSPY_PYTHON', 'TYPESAFE_FIT_CACHE_PATH', *[k for k in os.environ if 'TREG' in k.upper()]):
+    for key in ('JOB_AGENT_JOBSPY_PYTHON', 'TYPESAFE_FIT_CACHE_PATH'):
         os.environ.pop(key, None)
     # Cold caches: no decision cache next to the new database, and (below) an empty analysis cache.
     jev_cache = db.with_suffix('.jev-fit.sqlite3')
@@ -148,7 +148,6 @@ def build(snapshot_path, out, *, model_factory=None, allow_synthetic=False):
                             **({'model_factory': model_factory} if model_factory else {}))
     blocked = []
     service.harness.discovery = JobDiscovery(transport=deny_all_transport(blocked))
-    service.harness._treg = lambda: None  # no Treg supplement or fallback in this comparison
     original = service.harness.execute
     def execute(task_id, name, args, **kwargs):
         if name in NETWORK_TOOLS or name.startswith('browser_'):
@@ -172,7 +171,7 @@ def build(snapshot_path, out, *, model_factory=None, allow_synthetic=False):
                 'included': [{k: v for k, v in j.items() if k != 'description'} for j in included],
                 'excluded': excluded, 'imported': len(imported), 'unscorable_missing_jd': sum(j['jd'] == 'missing_jd' for j in included),
                 'task_id': task['task_id'], 'database': str(db), 'caps': CAPS, 'instruction': INSTRUCTION,
-                'isolation': {'mcp_servers': 0, 'jobspy': 'unset', 'treg': 'unset', 'board_hosts_refused': blocked,
+                'isolation': {'mcp_servers': 0, 'jobspy': 'unset', 'board_hosts_refused': blocked,
                               'refused_tools': sorted(NETWORK_TOOLS)},
                 'cold_start': {'database_new': True, 'jev_cache_existed': False, 'analysis_cache_rows': analysis_rows,
                                'jev_cache_path': str(jev_cache)},

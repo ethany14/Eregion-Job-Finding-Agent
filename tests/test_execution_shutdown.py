@@ -29,7 +29,7 @@ class BlockingHarness(Harness):
         return super().execute(task_id, name, args, **kwargs)
 
     def close(self):
-        self.events.append('resource_close')  # discovery / Treg / browser in production
+        self.events.append('resource_close')  # discovery / browser in production
 
 
 @pytest.fixture

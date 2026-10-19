@@ -1,14 +1,11 @@
 """R8: credential combinations, offline (no paid call, no install, no login).
 
 What this proves, precisely (review R8-EVIDENCE-001):
-- career routing for the two Treg settings (off / on): free boards always, Treg only when
-  configured and enabled, no crash without credentials;
-- runtime startup for the four combinations with the REAL MCP path: an MCP config file
+- career routing with API-first off and on: free boards always, no crash without credentials;
+- runtime startup with and without LinkedIn MCP through the REAL MCP path: an MCP config file
   loaded from MCP_CONFIG_PATH by the real loader, the real create_session_runtime and
   McpToolManager, and a fake LinkedIn client in place of the upstream process;
-- LinkedIn MCP is not wired into career routing (R7 T1/T2 deferred), so the MCP
-  combinations route like their Treg counterpart. A real upstream process and account
-  are not exercised here.
+- a real upstream process and account are not exercised here.
 """
 import json
 
@@ -16,28 +13,24 @@ import pytest
 
 from eregion.runtime.career.linkedin_source import BUSINESS_TOOLS
 from test_career_flow import career, execute  # noqa: F401
-from test_integrated_p3 import CRAWL_ROWS, Discovery, install_treg, ok
+from test_integrated_p3 import Discovery
 from test_linkedin_mcp_t0 import FakeLinkedIn
 from test_remaining_search_completion import prepare
 
 GH = {'url': 'https://job-boards.greenhouse.io/acme/jobs/1', 'title': 'Junior Data Analyst', 'company': 'Acme',
       'location': 'New York, NY'}
-NONE = {'TREG_TOKEN': '', 'JOB_AGENT_TREG_ENABLED': '0', 'JOB_AGENT_JOB_API_FIRST': '0'}
-TREG = {'TREG_TOKEN': 'fake-test-token', 'JOB_AGENT_TREG_ENABLED': '1', 'JOB_AGENT_JOB_API_FIRST': '1',
-        'JOB_AGENT_TREG_SEARCH_PROVIDER': 'crawl4ai'}
+NONE = {'JOB_AGENT_JOB_API_FIRST': '0'}
+API_FIRST = {'JOB_AGENT_JOB_API_FIRST': '1'}
 
 
-@pytest.mark.parametrize('name,env,treg_calls', [('treg_off', NONE, 0), ('treg_on', TREG, 1)])
-def test_career_routing_for_each_treg_setting(career, monkeypatch, name, env, treg_calls):
+@pytest.mark.parametrize('name,env', [('browser_first', NONE), ('api_first', API_FIRST)])
+def test_career_routing_for_each_source_order(career, monkeypatch, name, env):
     for key, value in env.items():
         monkeypatch.setenv(key, value)
     c = career; prepare(c)
-    seen = install_treg(c, lambda r: ok(CRAWL_ROWS)) if env['TREG_TOKEN'] else []
     c.harness.discovery = Discovery(directory=[GH])
     result = execute(c, 'search_jobs', query='junior data analyst', location='New York, NY', use_directory=True)
     assert 'error' not in result
-    assert len(seen) == treg_calls
-    assert (c.harness._treg() is None) == (treg_calls == 0)
     assert any(j['url'] == GH['url'] for j in result['jobs'])
 
 
@@ -50,8 +43,8 @@ def _mcp_file(tmp_path):
     return path
 
 
-@pytest.mark.parametrize('name,env,mcp', [('none', NONE, False), ('treg_only', TREG, False),
-                                          ('linkedin_mcp_only', NONE, True), ('both', TREG, True)])
+@pytest.mark.parametrize('name,env,mcp', [('none', NONE, False), ('api_first', API_FIRST, False),
+                                          ('linkedin_mcp_only', NONE, True), ('both', API_FIRST, True)])
 def test_runtime_starts_for_each_combination_through_the_real_mcp_path(tmp_path, monkeypatch, name, env, mcp):
     from eregion.api.session_dependencies import create_session_runtime
     for key, value in env.items():

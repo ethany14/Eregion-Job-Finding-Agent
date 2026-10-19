@@ -101,8 +101,6 @@ TOOLS = [
 from . import source_mode
 from .decisions import TOOL as DECIDE_JOB_TOOL
 
-# API-first: a directory result with fewer jobs than this gets one Treg LinkedIn supplement.
-TREG_SUPPLEMENT_BELOW = 3
 TOOLS.append(DECIDE_JOB_TOOL)
 
 
@@ -220,31 +218,12 @@ class CareerHarness:
 
     def api_first(self):
         """The single source-order switch for prompt, snapshot, tools and routing."""
-        from .treg_config import settings
-        return str(settings()['JOB_AGENT_JOB_API_FIRST']).strip().lower() in {'1','true','yes','on'}
-
-    def _treg_config(self):
-        from .treg_config import TregConfigError, load
-        try:
-            return load()
-        except TregConfigError:
-            return None  # invalid Treg settings block Treg only
+        return source_mode.api_first_enabled()
 
     def _source_scope(self,state):
         from .search_policy import source_scope
         latest=next((m.get('text','') for m in reversed(state.get('messages',[])) if m.get('role')=='user'),state.get('goal',''))
         return source_scope(latest)
-
-    def _treg(self):
-        """Lazily built fixed-endpoint client; None when Treg cannot be used (other sources keep working)."""
-        cfg=self._treg_config()
-        if not cfg or cfg.usable():
-            return None
-        if getattr(self,'_treg_client',None) is None:
-            from .external_tool_usage import ExternalToolLedger
-            from .treg_client import TregClient
-            self._treg_client=TregClient(cfg,ExternalToolLedger(self.repository.sessions))
-        return self._treg_client
 
     def _jobspy_search(self,task_id,state,args,filters,cancelled):
         """Optional JobSpy sites chosen by the model. Disabled sends nothing; one site's failure
@@ -276,90 +255,6 @@ class CareerHarness:
                 'local_filter':local,'note':'JobSpy cards are candidates only. A stored full description is reused when '
                 'the posting is read; it does not prove the job is open or that the user qualifies. Library-inferred '
                 'fields (remote, some salaries) are not evidence.'}
-
-    def _treg_search(self,task_id,state,args):
-        from .treg_jobs import SEARCH_ENDPOINTS, normalize_search, search_body
-        from .treg_client import TregUnavailable
-        client=self._treg()
-        provider=client.config.search_provider if client else None
-        if not client or not provider:
-            return {'jobs':[],'error':'LinkedIn search through Treg is not enabled or no provider is selected.',
-                'error_code':'treg_unavailable','no_new_evidence':True,
-                'next':'Disclose the limitation, or use the browser on LinkedIn if the user allows it.'}
-        filters=effective_filters(state,args)
-        body=search_body(provider,str(args['query']),args.get('location') or None, **filters,
-            limit=min(args.get('limit',10),client.config.max_results))
-        from .source_health import user_turn
-        turn=user_turn(state)
-        cache_key=hashlib.sha256(json.dumps([provider,body],sort_keys=True).encode()).hexdigest()
-        cache=state.get('treg_search_cache',{})
-        cached=cache.get('results',{}).get(cache_key) if turn and cache.get('user_turn_id')==turn else None
-        if cached is not None:
-            return {**cached,'no_new_evidence':True,'cached':True}
-        try:
-            call=client.call(SEARCH_ENDPOINTS[provider],body,scope=task_id,task_id=task_id,
-                revision=str(state.get('chat_revision')))
-        except TregUnavailable as exc:
-            return {'jobs':[],'error':f'Treg is unavailable: {exc.reason}.','error_code':'treg_unavailable','no_new_evidence':True}
-        info={'provider':provider,'endpoint':SEARCH_ENDPOINTS[provider],'outcome':call.outcome,
-              'charged_micro':call.charged_micro,'cache':call.cache,
-              'applied_filters':{k:v for k,v in filters.items() if provider=='anyapi' or k=='posted'},
-              'unapplied_filters':[k for k in filters if provider=='crawl4ai' and k!='posted']}
-        if call.outcome!='succeeded' or call.quarantined:
-            return {'jobs':[],'treg':info,'error':'Treg search did not return usable results.','error_code':'treg_failed',
-                'no_new_evidence':True}
-        cfg=client.config
-        jobs,detail=normalize_search(provider,call.body,max_results=min(args.get('limit',10),cfg.max_results))
-        jobs,detail['local_filter']=filter_cards(jobs,state)
-        if detail.get('source_blocked') and not jobs:
-            return {'jobs':[],'treg':{**info,**detail},'error':'The LinkedIn source reported it was blocked.',
-                'error_code':'treg_source_blocked','no_new_evidence':True,
-                'next':'Treat LinkedIn as a blocked source this turn; use other sources and disclose the limitation.'}
-        note='LinkedIn search cards are candidates only: read each posting before qualifying, importing or scoring it.'
-        if detail.get('partial') or detail.get('source_blocked'):
-            note+=' The provider reported partial or blocked coverage; disclose it and do not treat these results as complete.'
-        result={'jobs':jobs,'treg':{**info,**detail},'note':note}
-        def remember(s):
-            candidates={job_key(j['url']):j for j in s.get('search_candidates',{}).values() if j.get('url')}
-            candidates.update({job_key(j['url']):j for j in jobs})
-            old=s.get('treg_search_cache',{})
-            results=old.get('results',{}) if old.get('user_turn_id')==turn else {}
-            return {'search_candidates':dict(list(candidates.items())[-60:]),
-                'treg_search_cache':{'user_turn_id':turn,'results':dict(list({**results,cache_key:result}.items())[-16:])}}
-        self.repository.change(task_id,remember)
-        return result
-
-    def _treg_scrape(self,task_id,state,url):
-        """Complete JD text through Treg for a public non-ATS URL, or None to use the existing path."""
-        from urllib.parse import urlsplit
-        host=(urlsplit(url).hostname or '').lower()
-        ats=('greenhouse.io','lever.co','ashbyhq.com','myworkdayjobs.com')
-        client=self._treg()
-        if not client or not client.config.scrape_enabled or any(host==h or host.endswith('.'+h) for h in ats):
-            return None
-        from .treg_jobs import SCRAPE_ENDPOINT, assess_scrape
-        from .treg_client import TregUnavailable
-        candidate=next((c for c in state.get('search_candidates',{}).values() if c.get('url') and job_key(c['url'])==job_key(url)),{})
-        try:
-            call=client.call(SCRAPE_ENDPOINT,{'url':url,'format':'md'},scope=task_id,task_id=task_id,
-                revision=str(state.get('chat_revision')))
-        except TregUnavailable:
-            return None
-        if call.outcome!='succeeded' or call.quarantined:
-            return None
-        verdict=assess_scrape(candidate,call.body)
-        # Keep why a paid scrape was or was not accepted (B6 run-2 could not be attributed).
-        record={'url':url,'status':verdict['status'],'failed_checks':sorted(k for k,v in verdict['checks'].items() if not v),
-                'text_len':verdict['text_len'],'raw_len':verdict['raw_len'],'operation_id':call.operation_id}
-        self.repository.change(task_id,lambda s:{'treg_scrape_verdicts':[*s.get('treg_scrape_verdicts',[]),record][-20:]})
-        if verdict.get('closed_signal'):
-            # The posting says it is closed: report that instead of re-reading it elsewhere.
-            return {'closed':True,'url':url,'source':'treg:crawl4ai.web.scrape'}
-        if not verdict['complete']:
-            return None  # not proven to be this complete JD: keep the existing read path
-        return {'url':url,'title':candidate.get('title'),'company':candidate.get('company') or '',
-            'location':candidate.get('location') or '','description':verdict['description_text'],
-            'source':'treg:crawl4ai.web.scrape','content_hash':verdict['content_hash']}
 
     def terminal_delivery(self,state):
         from .decisions import terminal_delivery
@@ -399,10 +294,9 @@ class CareerHarness:
     def close(self):
         # Idempotent; one failing resource must not leave the others open. The
         # browser manager closes its pages on its own worker thread.
-        treg, self._treg_client = getattr(self, '_treg_client', None), None
         browsing = self._browsing
         for close in (getattr(self.discovery, 'close', None), self.interview_inputs.close,
-                      treg.close if treg else None, browsing.close if browsing else None):
+                      browsing.close if browsing else None):
             if close is None:continue
             try:close()
             except Exception:logging.getLogger(__name__).warning('Career resource close failed.',exc_info=True)
@@ -1065,15 +959,12 @@ class CareerHarness:
             if blocked_hosts:search_args['excluded_hosts']=blocked_hosts
             use_directory = search_args.pop('use_directory', False)
             if use_directory and args.get('boards'): raise ValueError('Choose directory selection or explicit boards.')
-            treg_cfg,source_restriction=self._treg_config(),self._source_scope(state)
+            source_restriction=self._source_scope(state)
             api_first=self.api_first()
             if api_first and source_restriction=='linkedin':
                 # The user asked for LinkedIn only: never traverse other boards.
                 from .linkedin_runtime import search as linkedin_search
-                linked=linkedin_search(self,task_id,state,args)
-                if linked.get('status')=='unavailable' and self._treg():
-                    return self._treg_search(task_id,state,args)
-                return linked
+                return linkedin_search(self,task_id,state,args)
             if api_first and not args.get('boards') and not use_directory:
                 use_directory=True  # API first: verified company boards before any browser attempt
             if use_directory: search_args.pop('boards', None)
@@ -1138,18 +1029,6 @@ class CareerHarness:
                 result['jobs']=[*result.get('jobs',[]),*linked.get('jobs',[])]
                 result['linkedin_mcp']={k:v for k,v in linked.items() if k!='jobs'}
             if blocked_hosts:result['excluded_blocked_hosts']=blocked_hosts
-            # API-first: thin directory coverage (fewer than TREG_SUPPLEMENT_BELOW jobs) gets one
-            # Treg LinkedIn supplement per query/location per user turn, merged and deduped.
-            supplement_key=json.dumps([str(args['query']).strip().casefold(),str(args.get('location','')).strip().casefold(),filters],sort_keys=True)
-            supplemented=list(health.get('treg_supplemented',[])) if health.get('user_turn_id')==turn else []
-            if (api_first and use_directory and len(result.get('jobs') or [])<TREG_SUPPLEMENT_BELOW
-                    and source_restriction!='no_linkedin' and self._treg()
-                    and result.get('linkedin_mcp',{}).get('status')!='blocked' and supplement_key not in supplemented):
-                supplement=self._treg_search(task_id,state,args)
-                supplemented.append(supplement_key)
-                if supplement.get('jobs'):
-                    result['jobs']=[*(result.get('jobs') or []),*supplement['jobs']]
-                result['treg_supplement']={k:v for k,v in supplement.items() if k!='jobs'}
             if args.get('extra_sources'):
                 result['jobspy']=self._jobspy_search(task_id,state,args,filters,cancelled)
                 result['jobs']=[*(result.get('jobs') or []),*result['jobspy'].pop('jobs',[])]
@@ -1181,7 +1060,7 @@ class CareerHarness:
             if use_directory:
                 progress={**progress,directory_key:list(dict.fromkeys([*searched,*result.get('directory_searched',[])]))}
             health={'revision':state['chat_revision'],'user_turn_id':turn,'sources':sources,'history':history,
-                    'directory_searched':progress,'treg_supplemented':supplemented}
+                    'directory_searched':progress}
             attempts[request_key]={'limit':args.get('limit',10),'query':args['query'],'location':args.get('location'),'result':result}
             def remember_search(s):
                 # Preserve navigation URLs but key storage by posting identity;
@@ -1219,14 +1098,13 @@ class CareerHarness:
             from eregion.runtime.auto_apply.contracts import public_https_url
             url=public_https_url(args['url'])
             same_job=bool(observed and job_key(url)==job_key(observed['url']))
-            treg_cfg=self._treg_config()
             api_first=self.api_first()
             from .source_health import user_turn
             turn=user_turn(state)
             cached=next((j for j in state.get('retrieved_jobs',{}).values()
                 if j.get('url') and job_key(j['url'])==job_key(url)),None)
             if (api_first and not args.get('region_ref') and turn and cached
-                and cached.get('source') in {'treg:crawl4ai.web.scrape','linkedin_mcp'}
+                and cached.get('source')=='linkedin_mcp'
                 and state.get('successful_read_turns',{}).get(job_key(url))==turn):
                 from .posting_brief import with_brief
                 return {**with_brief(cached),'cached':True,'no_new_evidence':True}
@@ -1288,10 +1166,6 @@ class CareerHarness:
                          'discovery_card':{k:candidate.get(k) for k in ('title','company','location')},
                          'description':detail['description'],'source':'linkedin_mcp',
                          'raw_posting':detail.get('raw_posting'),'posting_scope':detail.get('posting_scope')}
-                if job is None:job=self._treg_scrape(task_id,state,url) if api_first else None
-                if job and job.get('closed'):
-                    raise ValueError('This posting reports it is closed or no longer accepting applications; '
-                                     'do not import or recommend it.')
                 if job is None:job = self.discovery.job(args['url'])
             from .candidate_health import validate_and_record
             validate_and_record(self.repository,task_id,job,observed)
@@ -1299,7 +1173,7 @@ class CareerHarness:
             # Verification time for the recommendation record (not part of the body hash).
             job={**job,'read_at':job.get('read_at') or datetime.now(UTC).isoformat()}
             self.repository.change(task_id,lambda s:{'retrieved_jobs':dict(list({**s.get('retrieved_jobs',{}),job['url']:job,args['url']:job}.items())[-100:])})
-            if job.get('source') in {'treg:crawl4ai.web.scrape','linkedin_mcp'} and turn:
+            if job.get('source')=='linkedin_mcp' and turn:
                 self.repository.change(task_id,lambda s:{'successful_read_turns':dict(list({
                     **s.get('successful_read_turns',{}),job_key(url):turn}.items())[-100:])})
             from .posting_brief import with_brief

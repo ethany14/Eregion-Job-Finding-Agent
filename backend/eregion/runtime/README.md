@@ -23,7 +23,7 @@ not additional execution owners.
 ## Adding a feature
 
 1. Put source retrieval in `career/` through the existing MCP/browser transports.
-   Public company boards and configured LinkedIn MCP are the default; Treg is opt-in.
+   Public company boards and configured LinkedIn MCP are the default; JobSpy is opt-in.
 2. Expose a bounded domain capability through an existing Host. For genuinely new
    observations or lifecycle requirements, implement the `core/host_protocol.py`
    contract and reuse AgentLoop.

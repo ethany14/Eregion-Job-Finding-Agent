@@ -3,7 +3,7 @@
 Two mutually exclusive routes, an experiment configuration only (product defaults unchanged):
   A  original: company board APIs from the verified directory + LinkedIn MCP.
   B  JobSpy:   JobSpy Indeed + JobSpy LinkedIn (counted separately).
-Neither route may use Treg, browser search, public search engines, the other route, or any
+Neither route may use browser search, public search engines, the other route, or any
 fallback. Collection goes through the adapters' deterministic entry points
 (JobDiscovery.search_directory / .job, LinkedInMcpSource.search / .details,
 jobspy_source.search), never through search_jobs, which screens cards with a model.
@@ -42,9 +42,9 @@ MANIFEST = {
     'product_defaults_changed': False,
     'routes': {
         'A': {'name': 'original', 'allowed_sources': ['boards', 'linkedin_mcp'],
-              'forbidden': ['jobspy', 'treg', 'browser_search', 'public_search_engines', 'cross_route_fallback']},
+              'forbidden': ['jobspy', 'browser_search', 'public_search_engines', 'cross_route_fallback']},
         'B': {'name': 'jobspy', 'allowed_sources': ['jobspy_indeed', 'jobspy_linkedin'],
-              'forbidden': ['boards', 'linkedin_mcp', 'treg', 'browser_search', 'public_search_engines', 'cross_route_fallback']},
+              'forbidden': ['boards', 'linkedin_mcp', 'browser_search', 'public_search_engines', 'cross_route_fallback']},
     },
     # Pre-registered from the D2 intents; same text, place and window for both routes. Filters a
     # source cannot apply are reported as unapplied, never treated as applied.

@@ -1,4 +1,5 @@
-"""Durable spend records for external paid tools (Treg) in this deployment (P4c).
+"""Durable spend records for external paid tools in this deployment (P4c). No tool writes them since
+Treg was removed; the table and reader stay for existing records.
 
 Separate from the model usage ledger, joined by task/run/revision for reporting. Amounts
 are integer micro-USD. A logical operation is reserved atomically against the task cap,
