@@ -1,5 +1,6 @@
 """Popups, cross-site redirects, identity providers, confirmations, review stability and handoff resume."""
 import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -176,6 +177,31 @@ def test_offscreen_window_is_shown_without_reloading(monkeypatch):
         assert browser.page.evaluate("window.marker") == "kept"  # Same page, no relaunch.
         browser.set_visible(False)
         assert browser.headless and bounds()["left"] < -10000
+    finally:
+        browser.close()
+
+
+@chrome
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows foreground activation")
+def test_offscreen_window_hands_the_os_foreground_back(monkeypatch):
+    # 2026-10-19: each new off-screen window became the OS foreground, so the person's own
+    # typing (Pinyin "o'f") went into the year the agent was typing: '2o0o'f2o'fa6'.
+    from eregion.runtime.auto_apply.browser import _holds_hidden_foreground, _user32, _window_pid
+    from test_auto_apply_browser import FixtureBrowser
+    monkeypatch.setenv("JOB_AGENT_HIDDEN_BROWSER", "offscreen")
+    user32 = _user32()
+    before = user32.GetForegroundWindow()
+    if not before or not user32.MonitorFromWindow(before, 0):
+        pytest.skip("No window on a display holds the foreground to hand it back to.")
+    browser = FixtureBrowser("https://job-boards.greenhouse.io/example/jobs/123")
+    try:
+        pid = browser._browser_pid[1]
+        assert _window_pid(user32, before) != pid
+        assert not _holds_hidden_foreground(user32, pid)
+        browser.set_visible(True)
+        browser.set_visible(False)  # Back off-screen after a hand-off.
+        assert not _holds_hidden_foreground(user32, pid)
+        assert browser.page.evaluate("document.visibilityState") == "visible"
     finally:
         browser.close()
 

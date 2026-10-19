@@ -12,6 +12,7 @@ import logging
 import os
 import re
 import socket
+import sys
 import time
 from threading import local
 from urllib.parse import parse_qs, urlsplit
@@ -395,6 +396,43 @@ def hidden_mode():
     return mode if mode in {"offscreen", "headless"} else "offscreen"
 
 
+def _user32():
+    import ctypes
+    from ctypes import wintypes
+    user32 = ctypes.WinDLL('user32')  # A private handle keeps these argtypes local.
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.MonitorFromWindow.argtypes, user32.MonitorFromWindow.restype = [wintypes.HWND, wintypes.DWORD], wintypes.HANDLE
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.EnumWindows.argtypes = [ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM), wintypes.LPARAM]
+    return user32
+
+
+def _window_pid(user32, hwnd):
+    import ctypes
+    from ctypes import wintypes
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+def _holds_hidden_foreground(user32, browser_pid):
+    """The foreground window belongs to this Chrome and is on no display."""
+    hwnd = user32.GetForegroundWindow()
+    return bool(hwnd) and _window_pid(user32, hwnd) == browser_pid and not user32.MonitorFromWindow(hwnd, 0)  # MONITOR_DEFAULTTONULL
+
+
+def _minimized_windows(user32, browser_pid):
+    found = set()
+    def visit(hwnd, _):
+        if user32.IsIconic(hwnd) and _window_pid(user32, hwnd) == browser_pid:found.add(hwnd)
+        return True
+    enum_proc = user32.EnumWindows.argtypes[0]  # WNDENUMPROC
+    user32.EnumWindows(enum_proc(visit), 0)
+    return found
+
+
 def context_options():
     """Pin the page language instead of inheriting the OS locale.
 
@@ -501,6 +539,7 @@ class ApplicationBrowser:
             self.context.set_default_timeout(8000)
             self.context.route("**/*", self._guard_request)
             self.page = self.context.new_page()
+            self._release_foreground()
             self._anchor = self.page  # The application tab; popups fall back to it.
             self.context.on("page", self._popup)
             try:self.page.goto(self.url, wait_until="domcontentloaded", timeout=30_000)
@@ -528,6 +567,44 @@ class ApplicationBrowser:
     def _popup(self, page):
         self.page = page
         self.option_cache.clear()
+        self._release_foreground()
+
+    def _release_foreground(self):
+        """Windows activates every new Chrome window, even one placed off-screen. While that
+        invisible window holds the foreground, the person's own typing reaches whatever field
+        the agent focused (2026-10-19: Pinyin composition text "o'f" landed inside a typed
+        year). Agent input is unaffected: it is dispatched to the page, not through the OS.
+
+        This process cannot take the foreground back (Windows refuses SetForegroundWindow,
+        and a hidden or minimized window stays foreground). Chrome holds it, so Chrome's own
+        minimize hands it to the window beneath, the one the person was using. Restoring
+        through Chrome would activate the window again; restore it without activation."""
+        if not self._offscreen or sys.platform != 'win32':
+            return
+        try:
+            if getattr(self, '_browser_pid', (None, None))[0] is not self.browser:
+                cdp = self.browser.new_browser_cdp_session()
+                try:
+                    processes = cdp.send('SystemInfo.getProcessInfo')['processInfo']
+                finally:
+                    cdp.detach()
+                self._browser_pid = (self.browser, next(p['id'] for p in processes if p['type'] == 'browser'))
+            pid, user32 = self._browser_pid[1], _user32()
+            if not _holds_hidden_foreground(user32, pid):
+                return
+            minimized = _minimized_windows(user32, pid)
+            cdp = self.context.new_cdp_session(self.page)
+            try:
+                window = cdp.send('Browser.getWindowForTarget')['windowId']
+                cdp.send('Browser.setWindowBounds', {'windowId': window, 'bounds': {'windowState': 'minimized'}})
+            finally:
+                cdp.detach()
+            for hwnd in _minimized_windows(user32, pid) - minimized:
+                user32.ShowWindow(hwnd, 4)  # SW_SHOWNOACTIVATE
+            if _holds_hidden_foreground(user32, pid):
+                _warn_once('The off-screen browser window still holds the OS foreground; typing elsewhere may reach it.')
+        except Exception:
+            _warn_once('Could not return the OS foreground from the off-screen browser window.')
 
     def _launch(self, headless):
         channel = os.getenv('JOB_AGENT_BROWSER_CHANNEL','chrome')
@@ -555,6 +632,7 @@ class ApplicationBrowser:
         finally:
             try:cdp.detach()
             except Exception:pass
+        if not visible:self._release_foreground()
 
     def set_visible(self, visible):
         """User-only handoff. Move an off-screen window, or relaunch a headless one.
