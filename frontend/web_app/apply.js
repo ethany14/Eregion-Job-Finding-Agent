@@ -1,6 +1,7 @@
 import {createBrowserControl} from './browser-control.js';
 import {careerRoute,renderCareerResults,placeCareerResults} from './career-chat.js';
 import {renderMarkdown} from './chat-markdown.js';
+import {reveal,finishReveals,thinking,enter,isFresh} from './chat-motion.js';
 import {usageText,renderUsage} from './model-usage.js';
 import {api,organise,createGroup,renameGroup,deleteGroup,sidebarSections,collapsedGroups,toggleGroup,
   openMenu,closeMenu,toast,confirmDialog,nameDialog} from './conversations.js';
@@ -398,8 +399,10 @@ function renderChronicle(){
 }
 function render(){
   const preferenceScope=current?.run_id||draft.id;
-  const scroll=$('#chat-scroll'),follow=renderedScope!==preferenceScope||scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<120;
+  const scroll=$('#chat-scroll'),opened=renderedScope!==preferenceScope,follow=opened||scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<120;
   renderedScope=preferenceScope;
+  // Motion is for what arrives while a conversation is open; opening one shows it as saved.
+  const animate=!opened&&!restoring;if(opened)finishReveals();
   if(preferenceScope!==visualPreferenceRun){
     $('#visual-fallback').checked=current?Boolean(current.visual_fallback):defaultVisualFallback;
     visualPreferenceRun=preferenceScope;
@@ -418,12 +421,17 @@ function render(){
       if(previous?.dataset.text===m.text&&previous.dataset.role===m.role)continue;
       const bubble=el('div','',`message ${m.role}`);bubble.dataset.messageId=m.id;bubble.dataset.text=m.text;bubble.dataset.role=m.role;
       bubble.append(el('span',m.role==='user'?'You':'Eregion','speaker'));
-      const body=m.role==='assistant'?renderMarkdown(m.text):el('p',m.text);bubble.append(body);
+      const body=m.role==='assistant'?renderMarkdown(m.text):el('p',m.text);bubble.append(body);let revealing=null;
       if(m.role==='assistant'){
-        const copy=button('Copy',async()=>{try{await navigator.clipboard.writeText(body.innerText);copy.textContent='Copied';}catch{copy.textContent='Select text to copy';}setTimeout(()=>{copy.textContent='Copy';},1800);},'message-copy');
+        const copy=button('Copy',async()=>{revealing?.finish();try{await navigator.clipboard.writeText(body.innerText);copy.textContent='Copied';}catch{copy.textContent='Select text to copy';}setTimeout(()=>{copy.textContent='Copy';},1800);},'message-copy');
         copy.setAttribute('aria-label','Copy reply');bubble.append(copy);
       }
       if(previous)previous.replaceWith(bubble);else log.append(bubble);
+      if(animate&&!previous){
+        enter(bubble);
+        // A new reply is written out progressively, following the bottom while the reader is there.
+        if(m.role==='assistant'&&isFresh(m))revealing=reveal(body,{onStep:()=>{if(scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<160)bottom();}});
+      }
     }
   }
   renderHeader(messages);
@@ -442,7 +450,7 @@ function render(){
     careerCards=[...results.children];
     for(const card of careerCards){
       const old=previous.get(card.dataset.resultKey);
-      if(!old)continue;
+      if(!old){if(animate)enter(card);continue;}
       if(card.tagName==='DETAILS'&&old.tagName==='DETAILS')card.open=old.open;
       [...card.querySelectorAll('details')].forEach((detail,i)=>{detail.open=old.querySelectorAll('details')[i]?.open||false;});
     }
@@ -464,12 +472,12 @@ function decisions(){
     const retry=button('Try again',()=>send('continue'));retry.disabled=chatBusy||actionBusy;box.append(retry);container.append(box);
     if(!item.application_run_id)return;
   }
-  if(item.career&&item.status==='completed'){container.append(el('p','You can keep working on these jobs or send a new request.','status-line'));return;}
+  if(item.career&&item.status==='completed'){container.append(chatBusy?thinking('Thinking'):el('p','You can keep working on these jobs or send a new request.','status-line'));return;}
   // The agent's decisions to leave optional questions empty are shown as soon as they are made.
   const leftEmpty=Object.entries(item.field_decisions||{}).filter(([,d])=>d?.mode==='leave_empty');
   if(leftEmpty.length&&!terminal.has(item.status)){const note=el('div','','decision left-empty');note.append(el('p',`Left empty by the agent (${leftEmpty.length})`,'eyebrow'));for(const [key,d] of leftEmpty){const field=(item.fields||[]).find(f=>f.key===key);note.append(el('p',`${field?.label||d.field?.label||key}: ${d.reason}`));}container.append(note);}
   if(!terminal.has(item.status)&&renderPendingQuestion({item,container,drafts:answerDrafts,busy:chatBusy||actionBusy,reply:body=>act('reply',body,id),el,button,renderText:renderMarkdown}))return;
-  if(['running','queued','waiting','submitting'].includes(item.status)){container.append(el('p',item.message,'status-line'));return;}
+  if(['running','queued','waiting','submitting'].includes(item.status)){container.append(thinking(item.message));return;}
   if(terminal.has(item.status)){const box=el('div','','decision');box.append(el('h3',statuses[item.status]),el('p',item.confirmation?.text||item.message));if(item.can_reopen){const resumeButton=button('Resume application',()=>act('resume',{},id),'primary-button');resumeButton.disabled=chatBusy||actionBusy;box.append(resumeButton);}box.append(button('Next application',()=>reset()));container.append(box);return;}
   if(item.status==='awaiting_review'){
     const answers=new Map((item.review_fields||[]).map(f=>[f.key,f]));for(const f of item.fields||[])answers.set(f.key,f);

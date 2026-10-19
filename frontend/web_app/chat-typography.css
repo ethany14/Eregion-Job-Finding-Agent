@@ -65,4 +65,13 @@
   .message { margin-bottom: 28px; }
   .message-table th, .message-table td { padding: 9px 12px 9px 0; }
 }
-@media (prefers-reduced-motion: reduce) { .message-copy { transition: none; } }
+/* A new reply is written out progressively; blocks appear as their text reaches them. */
+.message-body .reveal-pending { display: none !important; }
+.reveal-caret {
+  display: inline-block; width: 6px; height: 6px; margin-left: 4px; border-radius: 50%;
+  background: var(--holly); vertical-align: middle; animation: reveal-caret 1s ease-in-out infinite;
+}
+@keyframes reveal-caret { 50% { opacity: .35; } }
+.message-body.revealing + .message-copy { visibility: hidden; }
+
+@media (prefers-reduced-motion: reduce) { .message-copy { transition: none; } .reveal-caret { animation: none; } }

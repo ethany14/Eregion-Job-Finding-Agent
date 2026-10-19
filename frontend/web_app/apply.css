@@ -172,6 +172,23 @@ svg.i { width: 17px; height: 17px; flex: none; fill: none; stroke: currentColor;
 .decision > button { margin: 14px 18px 0 0; }
 .decision > button.secondary-button { margin-right: 14px; }
 .status-line { margin: 0 0 22px; font-size: 13.5px; color: var(--muted); }
+.status-line.thinking { display: flex; align-items: center; gap: 10px; animation: fade-in .3s ease-out both; }
+.thinking-dots { display: inline-flex; gap: 4px; flex: none; }
+.thinking-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--holly); animation: thinking-dot 1.2s ease-in-out infinite; }
+.thinking-dots i:nth-child(2) { animation-delay: .15s; }
+.thinking-dots i:nth-child(3) { animation-delay: .3s; }
+/* A soft highlight passes over the status text while the agent works. */
+.thinking-text {
+  background: linear-gradient(90deg, var(--muted) 40%, var(--ink) 50%, var(--muted) 60%) 0 0 / 250% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: thinking-sheen 2.4s linear infinite;
+}
+@keyframes thinking-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+@keyframes thinking-sheen { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+/* New messages and result cards ease in once. */
+.entering { animation: rise-in .38s cubic-bezier(.2, .7, .2, 1) both; }
+@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .model-error { box-shadow: 0 0 0 1px var(--signal); }
 .model-error p { color: var(--ink); }
 
@@ -414,6 +431,9 @@ dialog input:focus { box-shadow: 0 0 0 1.5px var(--ink); background: var(--raise
   .chat-scroll { scroll-behavior: auto; }
   .history { transition: none; }
   .attempt .busy { animation: none; }
+  .status-line.thinking, .thinking-dots i, .thinking-text, .entering { animation: none; }
+  .thinking-dots i { opacity: .6; }
+  .thinking-text { background: none; color: var(--muted); }
 }
 
 /* ---------- Sidebar navigation and organisation ---------- */
