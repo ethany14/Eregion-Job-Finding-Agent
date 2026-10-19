@@ -6,7 +6,7 @@ without a restart. A variable set in the server's process environment takes prio
 over `.env`; such a field is reported as locked and cannot be changed here. The API key
 is never returned: only whether one is set, where it comes from and its last characters.
 
-Feature switches (Jev, Treg, JobSpy, browser driver and others) are stored the same way. Some
+Feature switches (Jev, Treg, JobSpy and others) are stored the same way. Some
 are read through `.env` on each use; the others are read from the process environment, so a
 saved value is also set in this process and loaded from `.env` when the server starts.
 """
@@ -40,37 +40,41 @@ TRUE = {'1', 'true', 'yes', 'on'}
 
 
 def _switch(key, group, label, kind='bool', *, default='', values=ON, options=(), process=False, restart=False,
-            requires=(), help=''):
+            requires=(), parent=None, help=''):
     return {'key': key, 'group': group, 'label': label, 'kind': kind, 'default': default, 'values': values,
-            'options': options, 'process': process, 'restart': restart, 'requires': requires, 'help': help}
+            'options': options, 'process': process, 'restart': restart, 'requires': requires, 'parent': parent,
+            'help': help}
 
 
 # kind: bool (stored as values[0] / values[1]), choice (one of options), secret (write-only), path.
 # process: read from the process environment only. restart: read once when the server starts.
+# parent: the on/off switch this setting belongs to; the page shows it only while that switch is on.
+# The browser driver is not listed: applications use Playwright unless the operator's environment says otherwise.
 SWITCHES = [
     _switch('TYPESAFE_ENABLED', 'Jev fit scoring', 'Score job fit with Jev', default='false',
             requires=('TYPESAFE_API_KEY',), help='Fast, cached fit scores. Needs a TypeSafe API key.'),
-    _switch('TYPESAFE_API_KEY', 'Jev fit scoring', 'TypeSafe API key', 'secret'),
+    _switch('TYPESAFE_API_KEY', 'Jev fit scoring', 'TypeSafe API key', 'secret', parent='TYPESAFE_ENABLED'),
     _switch('TYPESAFE_CAREER_ENABLED', 'Jev fit scoring', 'Also use Jev for memory, question and evidence helpers',
-            default='false', requires=('TYPESAFE_ENABLED',)),
+            default='false', requires=('TYPESAFE_ENABLED',), parent='TYPESAFE_ENABLED'),
     _switch('TYPESAFE_FIT_RESOLVE_UNKNOWNS', 'Jev fit scoring', 'Ask the main model about requirements Jev is unsure of',
-            default='false', help='Off by default: it made scores less consistent in testing.'),
+            default='false', parent='TYPESAFE_ENABLED', help='Off by default: it made scores less consistent in testing.'),
     _switch('JOB_AGENT_JOB_API_FIRST', 'Job sources', 'Search company job boards first', default='1', values=OFF),
+    _switch('JOB_AGENT_JOBSPY_ENABLED', 'Job sources', 'JobSpy (Indeed and LinkedIn)', default='1', values=OFF,
+            process=True, requires=('JOB_AGENT_JOBSPY_PYTHON',),
+            help='An extra source the agent may choose. Needs a separate Python with python-jobspy installed.'),
+    _switch('JOB_AGENT_JOBSPY_PYTHON', 'Job sources', 'JobSpy Python interpreter', 'path', process=True,
+            parent='JOB_AGENT_JOBSPY_ENABLED'),
+    _switch('JOB_AGENT_JOBSPY_SITES', 'Job sources', 'JobSpy sites', 'choice', default='indeed', process=True,
+            options=('indeed', 'linkedin', 'indeed,linkedin'), parent='JOB_AGENT_JOBSPY_ENABLED'),
     _switch('JOB_AGENT_TREG_ENABLED', 'Job sources', 'Treg paid search', default='0', values=OFF,
             requires=('TREG_TOKEN',), help='Spends money on your Treg account, within the configured caps.'),
-    _switch('TREG_TOKEN', 'Job sources', 'Treg token', 'secret'),
+    _switch('TREG_TOKEN', 'Job sources', 'Treg token', 'secret', parent='JOB_AGENT_TREG_ENABLED'),
     _switch('JOB_AGENT_TREG_SEARCH_PROVIDER', 'Job sources', 'Treg LinkedIn search provider', 'choice',
-            options=('', 'anyapi', 'crawl4ai'), help='None refuses paid LinkedIn search.'),
-    _switch('JOB_AGENT_JOBSPY_PYTHON', 'Job sources', 'JobSpy Python interpreter', 'path', process=True,
-            help='The separate Python that has python-jobspy installed. Empty turns JobSpy off.'),
-    _switch('JOB_AGENT_JOBSPY_SITES', 'Job sources', 'JobSpy sites', 'choice', default='indeed', process=True,
-            options=('indeed', 'linkedin', 'indeed,linkedin')),
-    _switch('JOB_AGENT_BROWSER_DRIVER', 'Applications', 'Browser driver', 'choice', default='playwright', process=True,
-            options=('playwright', 'patchright'), help='Patchright is optional and must be installed.'),
+            options=('', 'anyapi', 'crawl4ai'), parent='JOB_AGENT_TREG_ENABLED', help='None refuses paid LinkedIn search.'),
+    _switch('JOB_AGENT_TASK_MEMORY_MODE', 'Applications', 'Task memory', default='off', values=('on', 'off'),
+            process=True, restart=True, help='Recovery summaries for long applications.'),
     _switch('JOB_AGENT_HIDDEN_BROWSER', 'Applications', 'Background browser', 'choice', default='offscreen',
             process=True, options=('offscreen', 'headless')),
-    _switch('JOB_AGENT_TASK_MEMORY_MODE', 'Applications', 'Task memory', 'choice', default='off', process=True,
-            restart=True, options=('off', 'shadow', 'on'), help='Recovery summaries for long applications.'),
     _switch('JOB_AGENT_ANALYSIS_WARMUP', 'Resume and materials', 'Analyse an uploaded resume right away',
             default='1', values=OFF, process=True, help='Uses model tokens when a resume is uploaded.'),
     _switch('JOB_AGENT_OPT_MATERIAL_PATCHES', 'Resume and materials', 'Revise cover letters paragraph by paragraph',
@@ -132,15 +136,21 @@ def _raw(item, environ, file):
     return str(file.get(key) or '').strip()
 
 
+def _on(item, environ, file):
+    raw = _raw(item, environ, file)
+    return (raw or item['default']).lower() in TRUE if item['kind'] == 'bool' else bool(raw)
+
+
 def _feature(item, environ, file):
     raw = _raw(item, environ, file)
-    view = {k: item[k] for k in ('key', 'group', 'label', 'kind', 'help')}
+    view = {k: item[k] for k in ('key', 'group', 'label', 'kind', 'help', 'parent')}
     view.update(locked=_locked(item, environ), options=list(item['options']),
                 applies='after restart' if item['restart'] else 'now')
     if item['kind'] == 'secret':
         view['set'], view['hint'] = bool(raw), raw[-4:] if len(raw) >= 12 else ''
     elif item['kind'] == 'bool':
-        view['value'] = (raw or item['default']).lower() in TRUE
+        # A switch is shown on only when it is in effect: on, with what it needs present.
+        view['value'] = _on(item, environ, file) and all(_on(SWITCH[need], environ, file) for need in item['requires'])
     else:
         view['value'] = raw or item['default']
     return view

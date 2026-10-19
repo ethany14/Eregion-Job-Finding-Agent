@@ -65,10 +65,11 @@ class JobSpyConfig:
     results_per_site: int = 20
     timeout_seconds: int = 60
     max_requests_per_task: int = 80
+    switched_on: bool = True
 
     @property
     def enabled(self):
-        return bool(self.python) and Path(self.python).exists() and bool(self.sites)
+        return self.switched_on and bool(self.python) and Path(self.python).exists() and bool(self.sites)
 
     @classmethod
     def from_env(cls):
@@ -78,7 +79,9 @@ class JobSpyConfig:
         return cls(python=(os.getenv('JOB_AGENT_JOBSPY_PYTHON') or '').strip() or None, sites=sites,
                    results_per_site=number('JOB_AGENT_JOBSPY_RESULTS', 20, 1, 50),
                    timeout_seconds=number('JOB_AGENT_JOBSPY_TIMEOUT', 60, 10, 300),
-                   max_requests_per_task=number('JOB_AGENT_JOBSPY_MAX_REQUESTS', 80, 1, 1000))
+                   max_requests_per_task=number('JOB_AGENT_JOBSPY_MAX_REQUESTS', 80, 1, 1000),
+                   # Unset keeps the earlier behaviour: a configured interpreter turns JobSpy on.
+                   switched_on=os.getenv('JOB_AGENT_JOBSPY_ENABLED', '1').strip().lower() not in {'0', 'false', 'no', 'off'})
 
     def describe(self):
         """Short model-visible capability metadata (what each site actually honours)."""

@@ -103,20 +103,26 @@ function openDialog(settings){
 
 // On/off switches and options, grouped as the server lists them. Only changed values are sent.
 function renderFeatures(list){
-  const section=el('section','','model-features'),inputs=[];
+  const section=el('section','','model-features'),controls=new Map();
   section.append(el('h3','Features'),el('p','Optional parts of Eregion. Saved in the same .env file.','field-note'));
   const groups=new Map();
   for(const item of list){if(!groups.has(item.group))groups.set(item.group,[]);groups.get(item.group).push(item);}
+  const noteFor=item=>item.locked?'Set by the server environment. Change it there and restart the server.':
+    [item.help,item.applies==='after restart'?'Applies after the server restarts.':''].filter(Boolean).join(' ');
+  // Settings that belong to a switch are shown only while that switch is on.
+  const sync=()=>{for(const {item,row} of controls.values())if(item.parent)row.hidden=controls.get(item.parent)?.input.getAttribute('aria-checked')!=='true';};
   for(const [name,items] of groups){
     const group=el('fieldset','','feature-group');group.append(el('legend',name));
     for(const item of items){
-      const note=item.locked?'Set by the server environment. Change it there and restart the server.':
-        [item.help,item.applies==='after restart'?'Applies after the server restarts.':''].filter(Boolean).join(' ');
-      let row,input,remove=null;
+      const note=noteFor(item);let row,input,remove=null;
       if(item.kind==='bool'){
-        row=el('label','','check-row feature-switch');input=el('input');input.type='checkbox';input.checked=item.value;
-        const text=el('span');text.append(el('span',item.label,'feature-label'));if(note)text.append(el('span',note,'field-note'));
-        row.append(input,text);
+        row=el('div','','feature-switch');
+        const text=el('div','','feature-text'),label=el('span',item.label,'feature-label');label.id=`feature-${item.key}`;
+        text.append(label);if(note)text.append(el('span',note,'field-note'));
+        input=el('button','','toggle');input.type='button';input.setAttribute('role','switch');
+        input.setAttribute('aria-checked',String(item.value));input.setAttribute('aria-labelledby',label.id);
+        input.addEventListener('click',()=>{input.setAttribute('aria-checked',String(input.getAttribute('aria-checked')!=='true'));sync();});
+        row.append(text,input);
       }else{
         row=el('label',item.label,'feature-field');
         if(item.kind==='choice'){
@@ -126,26 +132,28 @@ function renderFeatures(list){
         }else{
           input=el('input');input.type=item.kind==='secret'?'password':'text';input.autocomplete='off';input.spellcheck=false;
           if(item.kind==='secret')input.placeholder=item.set?(item.hint?`Saved, ending in ${item.hint}`:'Saved'):'Not set';
-          else{input.value=item.value;input.placeholder='Not set';}
+          else{input.value=item.value;input.placeholder=item.kind==='path'?'Path to python.exe':'Not set';}
         }
         row.append(input);if(note)row.append(el('span',note,'field-note'));
         if(item.kind==='secret'&&item.set&&!item.locked){
-          remove=button('Remove');let removing=false;
-          remove.addEventListener('click',()=>{removing=!removing;remove.textContent=removing?'Keep':'Remove';
-            input.disabled=removing;input.value='';remove.dataset.removing=String(removing);});
+          remove=button('Remove');
+          remove.addEventListener('click',()=>{const removing=remove.dataset.removing!=='true';remove.dataset.removing=String(removing);
+            remove.textContent=removing?'Keep':'Remove';input.disabled=removing;input.value='';});
           row.append(remove);
         }
       }
+      if(item.parent)row.classList.add('feature-child');
       input.name=item.key;input.disabled=item.locked;
-      group.append(row);inputs.push({item,input,remove});
+      group.append(row);controls.set(item.key,{item,input,remove,row});
     }
     section.append(group);
   }
+  sync();
   return {section,changes(){
     const changed={};
-    for(const {item,input,remove} of inputs){
+    for(const {item,input,remove} of controls.values()){
       if(item.locked)continue;
-      if(item.kind==='bool'){if(input.checked!==item.value)changed[item.key]=input.checked;}
+      if(item.kind==='bool'){const on=input.getAttribute('aria-checked')==='true';if(on!==item.value)changed[item.key]=on;}
       else if(item.kind==='secret'){if(remove?.dataset.removing==='true')changed[item.key]='';else if(input.value.trim())changed[item.key]=input.value.trim();}
       else if(input.value.trim()!==item.value)changed[item.key]=input.value.trim();
     }

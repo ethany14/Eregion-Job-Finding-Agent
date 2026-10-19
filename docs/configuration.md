@@ -27,12 +27,18 @@ reachable on a fresh install.
 The same dialog's **Features** section turns optional parts on and off and
 stores them in `.env`: Jev fit scoring (`TYPESAFE_ENABLED`, `TYPESAFE_API_KEY`,
 `TYPESAFE_CAREER_ENABLED`, `TYPESAFE_FIT_RESOLVE_UNKNOWNS`), job sources
-(`JOB_AGENT_JOB_API_FIRST`, `JOB_AGENT_TREG_ENABLED`, `TREG_TOKEN`,
-`JOB_AGENT_TREG_SEARCH_PROVIDER`, `JOB_AGENT_JOBSPY_PYTHON`,
-`JOB_AGENT_JOBSPY_SITES`), applications (`JOB_AGENT_BROWSER_DRIVER`,
-`JOB_AGENT_HIDDEN_BROWSER`, `JOB_AGENT_TASK_MEMORY_MODE`) and materials
-(`JOB_AGENT_ANALYSIS_WARMUP`, `JOB_AGENT_OPT_MATERIAL_PATCHES`). A switch that
-needs a key or another switch cannot be turned on without it. Settings whose
+(`JOB_AGENT_JOB_API_FIRST`, `JOB_AGENT_JOBSPY_ENABLED` with
+`JOB_AGENT_JOBSPY_PYTHON` and `JOB_AGENT_JOBSPY_SITES`, `JOB_AGENT_TREG_ENABLED`
+with `TREG_TOKEN` and `JOB_AGENT_TREG_SEARCH_PROVIDER`), applications
+(`JOB_AGENT_TASK_MEMORY_MODE` on or off, `JOB_AGENT_HIDDEN_BROWSER`) and
+materials (`JOB_AGENT_ANALYSIS_WARMUP`, `JOB_AGENT_OPT_MATERIAL_PATCHES`).
+On/off settings are switches; a setting that belongs to a switch, such as a
+key or the JobSpy interpreter, is shown while that switch is on, and a switch
+that needs one cannot be turned on without it. Turning JobSpy off keeps its
+interpreter path; when `JOB_AGENT_JOBSPY_ENABLED` is unset, a configured
+interpreter turns JobSpy on as before. Applications use Playwright; the
+optional Patchright driver is not offered here and stays an operator setting
+(`JOB_AGENT_BROWSER_DRIVER`). Settings whose
 readers use the process environment are also set in the running server and are
 loaded from `.env` when it starts; task memory applies after a restart. Values
 set in the server's own environment win and are shown as locked.

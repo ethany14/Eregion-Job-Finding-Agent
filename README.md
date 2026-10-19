@@ -320,7 +320,7 @@ All are off by default; add them to `.env` and restart.
 
 | Setting | Effect |
 | :-- | :-- |
-| `JOB_AGENT_JOBSPY_PYTHON=path\to\python` | Enables JobSpy as an extra source the agent may choose. `JOB_AGENT_JOBSPY_SITES=indeed,linkedin` picks the sites (default `indeed`). |
+| `JOB_AGENT_JOBSPY_PYTHON=path\to\python` | Enables JobSpy as an extra source the agent may choose. `JOB_AGENT_JOBSPY_SITES=indeed,linkedin` picks the sites (default `indeed`). It can also be switched on and off in the app under **Model and API key → Features**. |
 | `JOB_AGENT_BROWSER_DRIVER=patchright` | Runs applications with Patchright (included in `requirements.txt`) instead of the default Playwright. |
 | `JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS`, `JOB_AGENT_TASK_MAX_INPUT_TOKENS` | Hard limits per conversation, counted before each request is sent. |
 | `JOB_AGENT_TASK_MEMORY_MODE=on` | Experimental recovery summaries for long application conversations. |

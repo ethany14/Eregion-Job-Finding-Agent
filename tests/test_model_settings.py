@@ -134,28 +134,32 @@ def process_env(monkeypatch):
 
 def test_feature_switches_reach_their_readers_and_secrets_stay_write_only(tmp_path, process_env):
     from dotenv import dotenv_values
-    from eregion.runtime.auto_apply.driver import driver_name
     from eregion.runtime.career.jobspy_source import JobSpyConfig
     path = tmp_path / '.env'
     python = tmp_path / 'python.exe'
     python.write_text('')
     view = settings.save_settings({'features': {'TYPESAFE_API_KEY': KEY, 'TYPESAFE_ENABLED': True,
-        'JOB_AGENT_TREG_ENABLED': False, 'JOB_AGENT_JOBSPY_PYTHON': str(python), 'JOB_AGENT_JOBSPY_SITES': 'indeed,linkedin',
-        'JOB_AGENT_BROWSER_DRIVER': 'patchright'}}, env_path=path, environ=process_env)
+        'JOB_AGENT_TREG_ENABLED': False, 'JOB_AGENT_JOBSPY_ENABLED': True, 'JOB_AGENT_JOBSPY_PYTHON': str(python),
+        'JOB_AGENT_JOBSPY_SITES': 'indeed,linkedin', 'JOB_AGENT_TASK_MEMORY_MODE': True}}, env_path=path, environ=process_env)
     assert KEY not in json.dumps(view)
     features = {f['key']: f for f in view['features']}
     assert features['TYPESAFE_ENABLED']['value'] is True and features['TYPESAFE_API_KEY'] == {**features['TYPESAFE_API_KEY'], 'set': True, 'hint': 'WXYZ'}
-    assert features['JOB_AGENT_TASK_MEMORY_MODE']['applies'] == 'after restart' and not features['JOB_AGENT_BROWSER_DRIVER']['locked']
+    assert features['JOB_AGENT_TASK_MEMORY_MODE'] == {**features['JOB_AGENT_TASK_MEMORY_MODE'], 'value': True, 'applies': 'after restart'}
+    assert features['JOB_AGENT_JOBSPY_ENABLED']['value'] is True and features['JOB_AGENT_JOBSPY_PYTHON']['parent'] == 'JOB_AGENT_JOBSPY_ENABLED'
+    # The browser driver is not a workspace setting: applications use Playwright.
+    assert 'JOB_AGENT_BROWSER_DRIVER' not in features
     # Read through .env on each use.
     stored = dotenv_values(path)
     assert stored['TYPESAFE_ENABLED'] == 'true' and stored['TYPESAFE_API_KEY'] == KEY and stored['JOB_AGENT_TREG_ENABLED'] == '0'
     # Read from the process environment on each use: applied without a restart.
     assert JobSpyConfig.from_env().enabled and JobSpyConfig.from_env().sites == ('indeed', 'linkedin')
-    assert driver_name() == 'patchright'
-    settings.save_settings({'features': {'JOB_AGENT_JOBSPY_PYTHON': '', 'JOB_AGENT_BROWSER_DRIVER': 'playwright'}},
-                           env_path=path, environ=process_env)
-    assert not JobSpyConfig.from_env().enabled and driver_name() == 'playwright'
-    assert 'JOB_AGENT_JOBSPY_PYTHON' not in dotenv_values(path)
+    assert process_env['JOB_AGENT_TASK_MEMORY_MODE'] == 'on'
+    # The JobSpy switch turns it off while keeping the interpreter path for later.
+    view = settings.save_settings({'features': {'JOB_AGENT_JOBSPY_ENABLED': False}}, env_path=path, environ=process_env)
+    assert not JobSpyConfig.from_env().enabled and dotenv_values(path)['JOB_AGENT_JOBSPY_PYTHON'] == str(python)
+    assert {f['key']: f['value'] for f in view['features'] if f['kind'] == 'bool'}['JOB_AGENT_JOBSPY_ENABLED'] is False
+    settings.save_settings({'features': {'JOB_AGENT_JOBSPY_ENABLED': True}}, env_path=path, environ=process_env)
+    assert JobSpyConfig.from_env().enabled
 
 
 def test_feature_requirements_locks_validation_and_startup_loading(tmp_path, process_env):
@@ -166,7 +170,10 @@ def test_feature_requirements_locks_validation_and_startup_loading(tmp_path, pro
         settings.save_settings({'features': {'TYPESAFE_CAREER_ENABLED': True}}, env_path=path, environ={})
     with pytest.raises(ValueError, match='needs Treg token'):
         settings.save_settings({'features': {'JOB_AGENT_TREG_ENABLED': True}}, env_path=path, environ={})
-    for features, message in [({'JOB_AGENT_BROWSER_DRIVER': 'firefox'}, 'choose one of'),
+    with pytest.raises(ValueError, match='needs JobSpy Python interpreter'):
+        settings.save_settings({'features': {'JOB_AGENT_JOBSPY_ENABLED': True}}, env_path=path, environ={})
+    for features, message in [({'JOB_AGENT_HIDDEN_BROWSER': 'firefox'}, 'choose one of'),
+                              ({'JOB_AGENT_BROWSER_DRIVER': 'patchright'}, 'not a setting'),
                               ({'TYPESAFE_ENABLED': 'yes'}, 'on or off'),
                               ({'JOB_AGENT_JOBSPY_PYTHON': str(tmp_path / 'missing.exe')}, 'no file'),
                               ({'LLM_SECRET_THING': True}, 'not a setting')]:
