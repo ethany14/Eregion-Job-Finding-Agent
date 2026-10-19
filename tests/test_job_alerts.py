@@ -62,16 +62,21 @@ def test_verified_recommendations_deduplicate_tracking_urls_and_apply_threshold(
     assert job_key('https://linkedin.com/jobs/search-results/?currentJobId=123&trackingId=x')==job_key('https://www.linkedin.com/jobs/view/title-123')
 
 
+SEARCH_STEPS=['search_jobs','read_job','import_job','score_job','recommend_job']
+
+
 def search_decision(s):
-    history=[h['tool'] for h in s['history']]
+    # Progress is the furthest step this task has reached, as a model would read its replayed turns:
+    # the snapshot's history is a bounded window that drops its oldest rows near its size budget.
+    reached=max((SEARCH_STEPS.index(h['tool']) for h in s['history'] if h['tool'] in SEARCH_STEPS),default=-1)
     url='https://jobs.lever.co/example/abc123'
-    if 'search_jobs' not in history:return 'search_jobs',{'query':'Python engineer'}
-    if 'read_job' not in history:return 'read_job',{'url':url}
-    if not s['jobs']:return 'import_job',{'url':url}
+    if reached<0:return 'search_jobs',{'query':'Python engineer'}
+    if reached<1:return 'read_job',{'url':url}
+    if reached<2 or not s['jobs']:return 'import_job',{'url':url}
     job=s['jobs'][0]
-    if 'score_job' not in history:return 'score_job',{'application_id':job['application_id']}
+    if reached<3:return 'score_job',{'application_id':job['application_id']}
     # The scripted posting's role and location are unconfirmed for the request: to_confirm, never priority.
-    if 'recommend_job' not in history:return 'recommend_job',{'application_id':job['application_id'],'tier':'to_confirm',
+    if reached<4:return 'recommend_job',{'application_id':job['application_id'],'tier':'to_confirm',
         'reason':'Your resume shows Python API experience.','evidence':[job['title']],'gaps':[],'to_confirm':['Role and location fit the request.'],
         'next_steps':['Apply with the saved resume.'],'caveats':'Confirm location and sponsorship.'}
     score=next((r.get('match_score') for r in s.get('recommendations',[])),job.get('match_score'))

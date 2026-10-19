@@ -335,7 +335,7 @@ LABELLED_CODE = r"""() => [...document.querySelectorAll('input:not([type=hidden]
   return /verification code|security code|one[- ]?time (?:code|pass(?:code|word))|passcode|\botp\b|验证码|código de verificación|bestätigungscode|code de vérification/i.test(named);
 })"""
 VERIFICATION_MESSAGES = {
-    'otp': ("The site is asking for a one-time code{channel}. Enter it yourself in Control browser (Agent activity); "
+    'otp': ("The site is asking for a one-time verification code{channel}. Enter it yourself in Control browser (Agent activity); "
             "the agent does not read or keep it. Then send continue here."),
     'email_verification': "Complete the site's email verification, then send continue here. Your application will resume in this browser.",
     'captcha': "Complete the verification challenge in the open browser, then continue.",

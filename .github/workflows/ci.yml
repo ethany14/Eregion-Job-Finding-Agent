@@ -39,10 +39,14 @@ jobs:
 
   browser:
     # Real Chrome against offline fixture pages. Windows matches the supported
-    # desktop setup, including its encrypted login-state store.
+    # desktop setup, including its encrypted login-state store. The ordinary suite
+    # runs in the job above; these shards run only the real-Chrome test files.
     runs-on: windows-latest
-    # The full suite plus real-Chrome tests takes over 30 minutes on the hosted runner.
-    timeout-minutes: 60
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
 
     steps:
       - name: Check out source
@@ -57,7 +61,8 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
 
-      - name: Run the suite including real-Chrome tests
+      - name: Run real-Chrome tests (shard ${{ matrix.shard }} of 3)
+        shell: bash
         env:
           JOB_AGENT_BROWSER_TESTS: "1"
-        run: python -m pytest -q
+        run: python -m pytest -q $(python tools/scripts/browser_test_files.py ${{ matrix.shard }} 3)

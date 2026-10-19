@@ -34,6 +34,7 @@ SAMPLE_PER_QUERY = 8
 FULL_JD = 500
 CAPS = {'provider_attempts': 40, 'input_tokens': 800000, 'seconds': 1800}
 PROFILE_SOURCE = ROOT / '.codex-runs' / 'apply-test-07' / 'eregion-apply-test.sqlite3'
+SYNTHETIC_PROFILE = {'first_name': 'Synthetic', 'last_name': 'Candidate', 'email': 'synthetic@example.com'}
 INSTRUCTION = ('Assess the saved jobs in this conversation against my saved resume and recommend the best matches with '
                'the evidence for each, saying what is missing. Use only these saved jobs: do not search for new jobs, '
                'do not read other sources and do not apply to anything.')
@@ -96,7 +97,7 @@ class NetworkToolRefused(ValueError):
                                 'next': 'Assess and recommend from the saved jobs; a missing description stays missing.'}
 
 
-def build(snapshot_path, out, *, model_factory=None):
+def build(snapshot_path, out, *, model_factory=None, allow_synthetic=False):
     from eregion.api.db import upgrade_database
     from eregion.api.session_dependencies import create_session_runtime
     from eregion.runtime.mcp.config import McpRuntimeConfig
@@ -131,9 +132,18 @@ def build(snapshot_path, out, *, model_factory=None):
         raise SystemExit('The new database already holds cached analyses.')
     runtime = create_session_runtime(database_url=url, mcp_config=McpRuntimeConfig(servers=[]))
     repo = ApplyRepository(runtime.database.session_factory)
-    with sqlite3.connect(PROFILE_SOURCE.as_uri() + '?mode=ro', uri=True) as source:
-        state_json, resume = source.execute('select state_json, resume_bytes from auto_applications limit 1').fetchone()
-    repo.save_candidate(json.loads(state_json)['profile'], resume=resume, name='resume.pdf', extracted=True)
+    if PROFILE_SOURCE.exists():
+        with sqlite3.connect(PROFILE_SOURCE.as_uri() + '?mode=ro', uri=True) as source:
+            state_json, resume = source.execute('select state_json, resume_bytes from auto_applications limit 1').fetchone()
+        profile, profile_kind = json.loads(state_json)['profile'], 'saved'
+    elif allow_synthetic:
+        # Offline builds (CI, dry runs, prechecks) have no saved profile: a synthetic one, recorded as such.
+        from eregion.domain.pdf_rendering import render_letter_pdf
+        profile, profile_kind = SYNTHETIC_PROFILE, 'synthetic'
+        resume = render_letter_pdf('Synthetic Candidate\nsynthetic@example.com\nEXPERIENCE\nBuilt Python APIs and data pipelines.')
+    else:
+        raise SystemExit(f'{PROFILE_SOURCE} is missing: a paid run needs the saved profile; it never uses a synthetic one.')
+    repo.save_candidate(profile, resume=resume, name='resume.pdf', extracted=True)
     service = CareerService(runtime, ApplicationLoop(repo), start_alert_scheduler=False,
                             **({'model_factory': model_factory} if model_factory else {}))
     blocked = []
@@ -166,7 +176,7 @@ def build(snapshot_path, out, *, model_factory=None):
                               'refused_tools': sorted(NETWORK_TOOLS)},
                 'cold_start': {'database_new': True, 'jev_cache_existed': False, 'analysis_cache_rows': analysis_rows,
                                'jev_cache_path': str(jev_cache)},
-                'code_tree_sha256': code['tree_sha256']}
+                'code_tree_sha256': code['tree_sha256'], 'profile': profile_kind}
     (out / f"layer2-{snapshot['route']}.json").write_text(json.dumps(manifest, indent=1, ensure_ascii=False), encoding='utf-8')
     return service, runtime, task['task_id'], manifest, blocked
 
@@ -198,7 +208,8 @@ def main():
         if args.command == 'run':
             with (out / f'paid-started-{route}.lock').open('x') as lock:  # one paid execution per route and folder
                 lock.write(time.strftime('%Y-%m-%dT%H:%M:%S'))
-        service, runtime, task_id, manifest, blocked = build(args.snapshot, out, model_factory=model_factory)
+        service, runtime, task_id, manifest, blocked = build(args.snapshot, out, model_factory=model_factory,
+                                                             allow_synthetic=args.command != 'run')
         run['closers'] += [('career_service', service.close), ('applications', service.applications.close), ('runtime', runtime.close)]
         run['result'] = {'manifest': {k: manifest[k] for k in ('route', 'imported', 'unscorable_missing_jd', 'task_id')}}
         if args.command == 'build':

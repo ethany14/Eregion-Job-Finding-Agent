@@ -14,7 +14,7 @@ been re-scored under a later rule. Related published docs:
 
 | Area | Where it stands |
 | :-- | :-- |
-| Agent architecture | One autonomous loop for chat, applications and sessions, accepted offline. Three structural checks currently fail and are tracked (see §9). |
+| Agent architecture | One autonomous loop for chat, applications and sessions, accepted offline; its structural checks pass in CI. |
 | Job sources | Company boards (118 verified) and LinkedIn through a local MCP server by default. Treg and JobSpy optional. In a one-sample comparison JobSpy produced fewer recommendations under the same budget, so it stays optional. |
 | Search and recommendations | Tiered results. Latest scenario runs: 0 structural errors across 123 shown jobs. Under a tight budget, unscored jobs are listed as unscored and never placed in a tier. |
 | Fit scoring with Jev | Three jobs scored in 2.0 s cold and 0.15 s cached. In live route runs Jev took about 5 s of 150–250 s; the main model took the rest. Accuracy against human labels not yet measured. |
@@ -57,8 +57,9 @@ itself: only the accounted layer may call a model provider, and no legacy loop
 may be imported.
 
 - All stages were accepted offline, and the full suite was green at `10a07ae`.
-- Three of these structural checks now fail on the current tree. They concern
-  work in progress outside the changes in this report and are tracked as open.
+- The structural checks pass on a clean checkout (CI). On a working copy they can
+  fail when unrelated, untracked experimental files are present; those files are
+  not part of the repository.
 - Not done: deployment.
 
 ## 2 · Job sources
@@ -329,14 +330,28 @@ piloted in replays of saved conversations with a real model.
 
 | Suite | Result |
 | :-- | :-- |
-| Python suite (tracked tests) | 2,863 passed, 257 skipped (opt-in browser tests), **5 failed** |
+| Python suite, clean checkout | All tests pass after the fixes below |
+| Real Chrome, all opt-in browser files (three CI shards) | All pass after the fixes below |
 | Real Chrome, Playwright (application and verification suites) | 643 passed |
 | Real Chrome, Patchright (same suites) | 636 passed, **7 failed** |
 | Official CAPTCHA test widgets | 8 of 8 under each driver |
 
-The five Python failures are two job-alert scheduler tests and the three
-architecture checks in §1. All five predate the changes in this report and are
-tracked separately.
+Corrections from this round:
+
+- Two job-alert tests had failed since October 17. A change that day made the
+  system prompt slightly longer, so a scripted test conversation hit the request
+  size budget. Under that budget the observation keeps only the last rows of its
+  history, and the scripted model, which read its progress from those rows, went
+  in circles. The production behaviour is intended; the test's script now reads
+  progress from the furthest step it has reached, which survives the trimmed history.
+- Three route-comparison tests read a local, untracked profile file and failed
+  in CI. Offline builds now use a synthetic profile; a paid run still requires
+  the saved one.
+- Two browser tests expected the word "verification" in the one-time-code
+  message, which the hand-off rework had dropped. The message says "one-time
+  verification code" again.
+- The real-Chrome CI job had timed out at 60 minutes on every run since
+  October 15. It now runs in three shards of about 5–8 minutes each.
 
 The seven Patchright failures also occur on the code before these changes:
 
@@ -355,6 +370,6 @@ passing on both drivers.
 2. Human review of the fit-label set, which would give the first accuracy
    figure for scoring.
 3. Human style review of generated materials.
-4. The five failing Python tests and the seven Patchright-only failures.
+4. The seven Patchright-only test failures.
 5. Long Workday pages that use their whole page budget.
 6. The early-stop habit in search, accepted as a known limit.
