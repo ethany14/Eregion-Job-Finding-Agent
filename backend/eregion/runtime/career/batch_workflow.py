@@ -104,7 +104,7 @@ def run(harness,task_id,args,call_id):
                     save(pending=None)
                 except (ValueError,LookupError) as exc:
                     item.update(status='import_failed',error=str(exc)[:400]);save(pending=None)
-            scored,unscored,interrupted,notes=[],[],[],[]
+            scored,unscored,interrupted,notes,unscored_entries=[],[],[],[],[]
             for start in range(0,len(apps),16):
                 group=apps[start:start+16]
                 result=invoke('score_jobs',{'application_ids':group})
@@ -119,10 +119,14 @@ def run(harness,task_id,args,call_id):
                 scored.extend(result['jobs'])
                 unscored.extend(result.get('unscored_for_budget') or [])
                 interrupted.extend(result.get('interrupted_chunk') or [])
+                unscored_entries.extend(result.get('unscored') or [])
                 if result.get('budget_note'):notes.append(result['budget_note'])
                 if not result.get('no_new_evidence'):changed=True
             save(pending=None,completed=True,failure=None)
             return {'jobs':scored,'candidates':items,'qualified_count':len(apps),
+                    'scoring':{'scored':len(scored),'unscored_for_budget':len(unscored),'interrupted':len(interrupted),
+                               'note':'jobs lists scored jobs only; unscored lists the rest. Scores are not recommendations.'},
+                    **({'unscored':unscored_entries} if unscored_entries else {}),
                     **({'already_processed':skipped} if skipped else {}),
                     **({'unscored_for_budget':unscored,'budget_note':notes[-1] if notes else 'Imported and qualified but not '
                         'scored: the remaining budget could not finish them. Not recommendations.'} if unscored else {}),

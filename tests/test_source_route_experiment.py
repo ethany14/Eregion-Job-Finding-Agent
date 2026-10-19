@@ -107,3 +107,19 @@ def test_layer2_refuses_a_warm_cache_or_a_different_code_version(tmp_path):
     (out / 'code-fingerprint.json').write_text(json.dumps({'tree_sha256': 'other', 'files': 0}), encoding='utf-8')
     changed = run(script('source_route_scoring.py'), 'build', '--snapshot', snapshot('B'), '--out', str(out))
     assert changed.returncode != 0 and 'same version' in detail(out, 'B')
+
+
+def test_cost_breakdown_reads_a_run_without_provider_calls(tmp_path):
+    script = lambda name: str(ROOT / 'tools/scripts' / name)
+    run = lambda *args: subprocess.run([sys.executable, *args], capture_output=True, text=True, encoding='utf-8',
+                                       errors='replace', timeout=300)
+    layer1, out = tmp_path / 'layer1', tmp_path / 'layer2'
+    assert run(script('source_route_experiment.py'), 'precheck', '--out', str(layer1)).returncode == 0
+    assert run(script('source_route_scoring.py'), 'dry', '--snapshot', str(layer1 / 'snapshot-A.json'), '--out', str(out)).returncode == 0
+    report_path = tmp_path / 'cost.json'
+    done = run(script('scoring_cost_breakdown.py'), str(out), 'A', '--out', str(report_path))
+    assert done.returncode == 0, done.stderr[-2000:]
+    report = json.loads(report_path.read_text(encoding='utf-8'))['A']
+    # Nothing was paid or scored: no chunks, every sampled job unscored, its description length still reported.
+    assert report['chunks'] == [] and report['jobs'] == [] and report['main_model_turns']['count'] == 0
+    assert len(report['unscored']) == 16 and all(u['description_chars'] > 0 for u in report['unscored'])

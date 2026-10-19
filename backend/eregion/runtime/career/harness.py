@@ -881,6 +881,17 @@ class CareerHarness:
         inputs = [resume_text,snapshot_id,self.analysis.cache_signature(),self.fit_facts()]
         return hashlib.sha256(json.dumps(inputs).encode()).hexdigest()
 
+    def scored_entry(self,application_id,evidence):
+        """One scored job as score_jobs returns it: score, gaps, decision brief, posting conditions and how to read more."""
+        summary=self.job_summary(application_id)
+        entry={k:summary[k] for k in ('application_id','title','company','url','location','match_score','score_range',
+                                       'requirement_counts','gaps','decision_brief','analysis_status','score_algorithm',
+                                       'score_valid_until') if k in summary}
+        return {**entry,'scoring_status':'scored',
+                **{k:evidence[k] for k in ('qualification_evidence','posting_conditions','request_near_misses') if k in evidence},
+                'detail':'inspect_job(application_id) returns the full match report and posting; '
+                         'inspect_job(application_id, requirement_ids=[...]) returns exact requirements with resume evidence.'}
+
     def save_scored_evidence(self,task_id,identifiers):
         results={identifier:{k:v for k,v in self.job_summary(identifier).items() if k in {
             'application_id','title','company','url','location','match_score','score_range','qualification_evidence','decision_brief'}}
@@ -1434,10 +1445,16 @@ class CareerHarness:
             if interrupted:
                 note+=(' A chunk was stopped at the reply reserve; its paid scorer decisions are cached, so a retry pays only '
                        'for what is left.')
-            return {'jobs':[{**self.job_summary(a,detail=True),'posting_conditions':evidence.get(a,{}).get('posting_conditions',[]),
-                             'request_near_misses':evidence.get(a,{}).get('request_near_misses',[])}
-                            for a in scored],
-                    **({'unscored_for_budget':queue,'budget_note':note} if queue else {}),
+            # Compact by default: what a recommendation decision needs, and every job's scoring status. The full
+            # report and posting stay one inspect_job away (layer-2 A: 10 detail views, 384k characters, were
+            # archived and the unscored list sat behind a truncated preview).
+            unscored=[{**{k:v for k,v in self.job_summary(a).items() if k in ('application_id','title','company','url')},
+                       'scoring_status':'interrupted' if a in interrupted else 'unscored_for_budget','reason':note}
+                      for a in queue]
+            return {'jobs':[self.scored_entry(a,evidence.get(a,{})) for a in scored],
+                    'scoring':{'scored':len(scored),'unscored_for_budget':len(queue),'interrupted':len(interrupted),
+                               'note':'jobs lists scored jobs only; unscored lists the rest. Scores are not recommendations.'},
+                    **({'unscored':unscored,'unscored_for_budget':queue,'budget_note':note} if queue else {}),
                     **({'interrupted_chunk':interrupted} if interrupted else {}),
                     **({'measured_cost_per_job':{'requests':round(observed['calls']/observed['jobs'],2),
                         'input_tokens':round(observed['tokens']/observed['jobs'])}} if observed else {}),

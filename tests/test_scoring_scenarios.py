@@ -229,3 +229,37 @@ def test_finished_chunks_persist_and_measured_cost_sizes_the_next_chunk(career, 
     assert usage['calls'] == 37 and usage['refused_before_send'] == 0 and 'interrupted_chunk' not in result
     state = scoring_state(c.harness, c.state['task_id'], list(c.repository.get(c.state['task_id'])['jobs']))
     assert state['counts']['persisted_score'] == 7 and state['counts']['recommended'] == 0
+
+
+def test_score_results_are_compact_with_every_jobs_status_and_survive_archiving(career, monkeypatch):
+    """Layer-2 run 2: ten full detail views (384k characters) were archived and the unscored list sat behind a
+    truncated preview. score_jobs now returns what a decision needs; the full report stays one inspect_job away."""
+    from eregion.runtime.request_context import ContextArchive
+    import json
+    c = career
+    jobs = [posting(i) for i in range(6)]
+    prepare(c, monkeypatch, jobs)
+    monkeypatch.setattr(c.harness.analysis, 'uses_jev', lambda: True)
+    original = c.harness.analysis._fit_service.analyze_many
+    async def jev_like(**kwargs):
+        for _ in range(8 + 2 * len(kwargs['jobs'])):
+            with usage_scope(purpose='jev:fit:stage'), provider_call('jev-fixture', input_token_reservation=10) as d:
+                d.update(input_tokens=10, output_tokens=1)
+        return await original(**kwargs)
+    monkeypatch.setattr(c.harness.analysis._fit_service, 'analyze_many', jev_like)
+    monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS', '23')  # room 20: chunk of 4 costs 16, 4 left -> 2 unscored
+    with usage_scope(ledger=UsageLedger(c.repository.sessions), task_id=c.state['task_id']):
+        result = execute(c, 'verify_and_score_jobs', urls=[j['url'] for j in jobs])
+    scored, unscored = result['jobs'], result.get('unscored') or []
+    assert scored and unscored and result['scoring']['scored'] == len(scored) == 4
+    assert result['scoring']['unscored_for_budget'] == len(unscored) == 2
+    for entry in scored:
+        assert entry['scoring_status'] == 'scored' and 'inspect_job' in entry['detail']
+        assert 'match_report' not in entry and 'description' not in entry and entry['match_score'] is not None
+    assert all(u['scoring_status'] == 'unscored_for_budget' and 'Not recommendations' in u['reason'] for u in unscored)
+    # The full report is still one call away.
+    full = execute(c, 'inspect_job', application_id=scored[0]['application_id'])
+    assert full.get('match_report') or full.get('match_overview')
+    # Archived or not, the scoring state stays visible.
+    summary = ContextArchive().tool_result(json.loads(json.dumps(result, default=str)))
+    assert {'scoring', 'unscored'} <= set(summary) and all(j.get('scoring_status') == 'scored' for j in summary['jobs'])

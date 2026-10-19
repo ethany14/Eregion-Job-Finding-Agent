@@ -427,7 +427,9 @@ class ContextArchive:
                     'scope', 'scope_status', 'scope_note', 'verified_fields', 'unresolved_fields', 'out_of_scope_failure_count',
                     'historical_failure_count', 'unreviewed_checkboxes', 'completion_level',
                     'completed_steps', 'failed_step', 'fallback', 'opening_level', 'qualification_evidence',
-                    'seniority_warning', 'score_range', 'analysis_status', 'decision', 'decision_brief', 'pending', 'rejection_code'):
+                    'seniority_warning', 'score_range', 'analysis_status', 'decision', 'decision_brief', 'pending', 'rejection_code',
+                    # Scoring state stays visible when a scoring result is archived (layer-2 run 2).
+                    'scoring', 'unscored', 'unscored_for_budget', 'budget_note', 'interrupted_chunk', 'measured_cost_per_job'):
             if key in result:
                 value = result[key]
                 limit = (BRIEF_LIMIT if key == 'decision_brief' else 4000 if key in {'triage_evidence','match_overview',
@@ -541,7 +543,7 @@ def compact_resources(key,rows,archive):
                          'latest_feedback','report_available','failure'),
           'materials':('pack_id','application_id','status','version','material_overview','items'),
           'jobs':('application_id','title','company','url','location','status','match_score','score_range','qualification_evidence','posting_conditions','request_near_misses',
-                  'analysis_status','score_algorithm','score_valid_until','requirement_counts','gaps','decision_brief')}
+                  'analysis_status','score_algorithm','score_valid_until','requirement_counts','gaps','decision_brief','scoring_status','detail')}
     result=[]
     for row in rows:
         if not isinstance(row,dict):continue
