@@ -19,7 +19,7 @@ from eregion.runtime.provider_usage import track_run
 from .agent import HybridApplicationAgent
 from .autofill import autofill, desired_answer, matches, pending_documents
 from .browser import IDENTITY_PROVIDERS, ApplicationBrowser, BrowserBlocked, form_digest
-from .contracts import PAUSED, TERMINAL
+from .contracts import PAUSED, TERMINAL, posting
 from .repository import ApplyConflict, now
 from .worker import WorkerPool
 from .matching import boolean_answer, is_consent
@@ -82,6 +82,7 @@ class ApplicationLoop:
         self.previews = {}
         self.preview_times = {}
         self.handoff_checks = {}
+        self.handoff_ready = {}  # consecutive positive resume checks per run (in memory: a restart re-checks the page)
         self.closed = False
         self.retry_delays = retry_delays
         self.max_model_calls,self.max_tool_calls=max_model_calls,max_tool_calls
@@ -187,8 +188,33 @@ class ApplicationLoop:
                 message='Your existing sign-in is available. Rechecking this application.')
             self._submit(run_id,self._drive,run_id,None)
 
+    HANDOFF_PHASES = {
+        'verification_active': ('waiting', None),
+        'verification_unknown': ('verifying', "The page is changing or could not be checked yet. Nothing is being filled; "
+                                 "the application continues once the form is back."),
+        'loading': ('verifying', "The verification looks cleared; waiting for the application page to finish loading. "
+                    "Nothing is being filled meanwhile."),
+        'blank_page': ('verifying', "The verification looks cleared, but the page is blank. Nothing is being filled; the "
+                       "application continues once the form is back, or send continue here."),
+        'error_page': ('verifying', "The site shows an error page. Nothing is being filled. Return to the application form "
+                       "in the browser, or send continue here."),
+        'different_application': ('unconfirmed', "This browser now shows a different job. Return to this application's form; "
+                                  "the agent continues once it is back, or send continue here."),
+        'application_unconfirmed': ('unconfirmed', "The verification looks cleared, but this page cannot be confirmed as this "
+                                    "application. Return to the application form, or send continue here."),
+        'sign_in_page': ('sign_in', "The site now shows a sign-in page. Sign in yourself in the browser (the agent does not "
+                         "retry sign-in), then send continue here."),
+        'browser_closed': ('closed', "The application browser was closed. Send continue here to reopen the application."),
+    }
+
     def _resume_after_handoff(self, run_id, browser):
-        """Continue on its own once the user clears a verification or sign-in page."""
+        """Continue on its own once a person handled a verification or sign-in page, on positive evidence only.
+
+        A missing barrier is not enough (a blank page, a redirect or a removed challenge frame also
+        show none): the browser must report that no verification is active or unknown, the page
+        has loaded and is this application's form (not sign-in, blank or error), twice in a row.
+        Waiting makes no model call; pause, cancel, close and a changed state always win.
+        """
         if time.monotonic() - self.handoff_checks.get(run_id, 0) < 3 or not hasattr(browser, "barrier"):
             return
         self.handoff_checks[run_id] = time.monotonic()
@@ -196,17 +222,45 @@ class ApplicationLoop:
             and state.get("handoff_kind") in AUTO_RESUME and not state.get("account_request")
             and not state.get("pause_requested") and not state.get("paused_for_control"))
         with self.lock:
-            if not waiting(self._active(run_id)): return
+            state = self._active(run_id)
+            if not waiting(state):
+                self.handoff_ready.pop(run_id, None)
+                return
+            version, record = state["version"], dict(state.get("handoff") or {})
+        check = getattr(browser, "resume_readiness", None)
         try:
-            if browser.barrier(): return
-        except Exception:
+            readiness = check(record.get("expected") or {}) if callable(check) else {"ready": False, "reason": "resume_check_unavailable"}
+        except Exception as exc:
+            readiness = {"ready": False, "reason": f"check_failed:{type(exc).__name__}"}
+        if not readiness.get("ready"):
+            self.handoff_ready.pop(run_id, None)
+            phase, message = self.HANDOFF_PHASES.get(readiness.get("reason"), ("verifying", None))
+            with self.lock:
+                state = self._active(run_id)
+                if waiting(state) and state["version"] == version and (state.get("handoff") or {}).get("phase") != phase:
+                    # Record what is blocking; a phase change is saved once, never on every check.
+                    self.repository.save(state, handoff={**record, "phase": phase, "reason": readiness.get("reason"), "checked_at": now()},
+                                         message=message or record.get("message") or state.get("message"))
             return
+        self.handoff_ready[run_id] = self.handoff_ready.get(run_id, 0) + 1
+        if self.handoff_ready[run_id] < 2:
+            return  # one clear observation can be a frame that is about to come back
+        self.handoff_ready.pop(run_id, None)
         with self.lock:
             state = self._active(run_id)
-            if not waiting(state): return
+            if not waiting(state) or state["version"] != version:
+                return
+        # The person may have edited fields while handling the page: their values become answers.
+        self._adopt_manual_edits(run_id, browser, state.get("fields") or [], include_new=True)
+        with self.lock:
+            state = self._active(run_id)
+            if not waiting(state):
+                return
             self.repository.save(state, status="queued", pause_requested=False, paused_for_control=False,
                 handoff_kind=None, chat_revision=state.get("chat_revision", 0) + 1, review_digest=None,
-                message="The verification is complete. Continuing the application.")
+                last_tool_result=None, host_inflight=None,
+                handoff={**record, "phase": "resolved", "reason": readiness.get("reason"), "resolved_at": now()},
+                message="The verification is cleared and the application page is back. Re-reading the page before continuing.")
         self._submit(run_id, self._drive, run_id, None)
 
     def _capture_preview(self, run_id, browser):
@@ -653,7 +707,8 @@ class ApplicationLoop:
                 return
             self.revisions[state['run_id']] = state.get('chat_revision', 0)
             self.controls[state['run_id']] = {key: state.get(key, 0) for key in
-                ('version', 'status', 'pause_requested', 'chat_revision', 'agent_calls', 'agent_tools', 'budget_model_base', 'budget_tool_base')}
+                ('version', 'status', 'pause_requested', 'chat_revision', 'agent_calls', 'agent_tools', 'budget_model_base',
+                 'budget_tool_base', 'agent_reason')}
 
     def _control(self, run_id):
         if run_id not in self.controls:
@@ -662,7 +717,9 @@ class ApplicationLoop:
 
     def _can_act(self, run_id):
         state = self._control(run_id)
-        return not self.closed and state['status'] not in TERMINAL and not state.get('pause_requested')
+        # A browser hand-off freezes every in-flight batch, autofill and Next until the run is resumed.
+        handed_off = state['status'] == 'needs_input' and state.get('agent_reason') == 'browser_handoff'
+        return not self.closed and state['status'] not in TERMINAL and not state.get('pause_requested') and not handed_off
 
     def _refresh_hook(self, run_id):
         def refresh():
@@ -799,10 +856,12 @@ class ApplicationLoop:
             return updated
 
     @track_run('run_id', 'application')
-    def _adopt_manual_edits(self, run_id, browser, before):
+    def _adopt_manual_edits(self, run_id, browser, before, *, include_new=False):
         """§13: after the user controlled the browser, their changes are their answers.
         A field whose value changed during the takeover and differs from the agent's target
-        is kept as a manual answer, so the resumed agent does not overwrite it."""
+        is kept as a manual answer, so the resumed agent does not overwrite it. After a
+        verification hand-off the form may not have been visible before (an OTP page came
+        first): with include_new, a filled field first seen after the hand-off counts too."""
         try:
             current = browser.observe()
         except Exception:
@@ -813,8 +872,8 @@ class ApplicationLoop:
             if state is None:
                 return
             edits = {f["key"]: f["value"] for f in current
-                     if f["key"] in earlier and f["kind"] not in {"file", "password"} and f.get("value") not in (None, "")
-                     and f["value"] != earlier[f["key"]] and not f.get("invalid")
+                     if (f["key"] in earlier or include_new) and f["kind"] not in {"file", "password"} and f.get("value") not in (None, "")
+                     and f["value"] != earlier.get(f["key"]) and not f.get("invalid")
                      and (desired_answer(f, state) is None or not matches(f, desired_answer(f, state)))}
             if edits:
                 self.repository.save(state, answers={**state["answers"], **edits},
@@ -1148,16 +1207,30 @@ class ApplicationLoop:
                 kind = "identity"
         except Exception:
             pass
+        verification = None
+        try:
+            if kind == "verification" and hasattr(browser, "verification_state"):
+                verification = {k: v for k, v in browser.verification_state().items()
+                                if k in {"kind", "status", "channel", "evidence", "location"}}
+        except Exception:
+            verification = None
         with self.lock:
             state = self._active(run_id)
             if state is None or state.get("pause_requested"): return
+            try:
+                expected = {"posting": posting(state["url"])[1], "host": urlsplit(posting(state["url"])[2]).hostname}
+            except ValueError:
+                expected = {"posting": None, "host": urlsplit(state.get("url") or "").hostname}
+            expected["field_keys"] = [f["key"] for f in fields or []][:200]
+            handoff = {"kind": kind, "phase": "waiting", "since": now(), "verification": verification,
+                       "expected": expected, "message": message}
             history = state.get("messages", [])
             if not history or history[-1].get("text") != message:
                 history = [*history, {"id":str(uuid4()), "role":"assistant", "text":message,
                     "at":now(), "question_keys":[]}][-100:]
             self.repository.save(state, status="needs_input", fields=fields, pending_fields=[],
                 input_request=None, review_digest=None, agent_reason="browser_handoff", account_request=account,
-                handoff_kind=kind, messages=history, message=message)
+                handoff_kind=kind, handoff=handoff, messages=history, message=message)
 
     def close(self):
         with self.lock:

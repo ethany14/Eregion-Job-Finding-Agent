@@ -67,8 +67,13 @@ def test_review_digest_ignores_clocks_but_not_answers():
 
 class VerificationBrowser(FakeBrowser):
     challenged = True
+    page_after = 'application_page'  # what the site shows once the challenge is gone
     def barrier(self): return "Complete the verification challenge in the open browser, then continue." if self.challenged else None
     def verification_barrier(self): return self.barrier()
+    def resume_readiness(self, expected):
+        # Positive evidence, as ApplicationBrowser reports it: no barrier is not enough.
+        if self.challenged: return {'ready': False, 'reason': 'verification_active'}
+        return {'ready': self.page_after == 'application_page', 'reason': self.page_after}
 
 
 def test_run_continues_by_itself_after_verification_is_cleared(database):
@@ -80,10 +85,26 @@ def test_run_continues_by_itself_after_verification_is_cleared(database):
         assert paused["status"] == "needs_input" and paused["handoff_kind"] == "verification"
         browser.challenged = False  # The user solved it in the browser window.
         import time
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 15  # two positive checks, 3 s apart
         while loop.repository.get(run_id)["status"] == "needs_input" and time.monotonic() < deadline:
             time.sleep(.05)
         assert wait(loop, run_id)["status"] == "awaiting_review"
+    finally:
+        loop.close()
+
+
+def test_a_cleared_challenge_on_a_blank_page_keeps_waiting(database):
+    browser = VerificationBrowser("")
+    loop = ApplicationLoop(ApplyRepository(database.session_factory), browser_factory=lambda _: browser)
+    try:
+        run_id = loop.start(request())["run_id"]
+        wait(loop, run_id)
+        browser.challenged, browser.page_after = False, 'blank_page'
+        import time
+        time.sleep(7)
+        state = loop.repository.get(run_id)
+        assert state["status"] == "needs_input" and state["handoff"]["phase"] == "verifying"
+        assert "Nothing is being filled" in state["message"]
     finally:
         loop.close()
 

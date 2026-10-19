@@ -63,8 +63,14 @@ SCAN = r"""() => {""" + UPLOAD_STATUS + r"""
     const buttonChoice = el.matches('button[aria-pressed][data-option]');
     const kind = buttonChoice ? 'radio' : el.tagName === 'SELECT' ? 'select' : el.getAttribute('role') === 'combobox' || el.getAttribute('aria-haspopup') === 'listbox' ? 'combobox' :
       el.name === 'location' && el.parentElement.querySelector('input[name="selectedLocation"]') ? 'location' : (el.type || 'text');
+    // One-time codes are never form answers: split digit boxes and code fields named by their label
+    // are skipped like autocomplete=one-time-code, so their values never reach the model or logs.
+    const codeLabel = /verification code|security code|one[- ]?time (?:code|pass(?:code|word))|passcode|otp|验证码|código de verificación|bestätigungscode|code de vérification/i;
+    const splitCode = el.maxLength === 1 && el.parentElement &&
+      el.parentElement.querySelectorAll('input[maxlength="1"]').length >= 4;
     if (['hidden', 'password', 'submit', 'button', 'reset', 'image'].includes(kind) ||
-        el.hasAttribute('data-northstar-secret') || el.autocomplete === 'one-time-code' || /otp|verificationcode/i.test(el.name || '') || el.disabled ||
+        el.hasAttribute('data-northstar-secret') || el.autocomplete === 'one-time-code' || /otp|verificationcode|passcode/i.test(el.name || '') ||
+        splitCode || codeLabel.test([label(el), el.placeholder || '', el.getAttribute('aria-label') || ''].join(' ')) || el.disabled ||
         el.getAttribute('data-automation-id') === 'beecatcher') continue;
     const hiddenField = kind !== 'file' && !select2 && (!visible(el) || el.closest('[aria-hidden="true"]'));
     if(hiddenField && kind === 'radio')continue;
@@ -293,6 +299,53 @@ MAX_FIELDS = 400
 OFFSCREEN = {"left": -32000, "top": -32000}
 ON_SCREEN = {"left": 80, "top": 60, "width": 1280, "height": 900}
 TRUSTED_NAVIGATION_SECONDS = 10
+VERIFY_EMAIL_TEXT = re.compile(r"^(?:check your email|verify your email(?: address)?|verify your account)$", re.I)
+# Interstitial access checks (Cloudflare "Just a moment...", WAF denials). Title or main heading only.
+CHALLENGE_PAGE = re.compile(r"^\s*(?:just a moment\.*|attention required!?.*|access denied\.?|verify you are (?:a )?human\.?|"
+                            r"are you a robot\??|checking your browser.*|please verify you are a human\.?)\s*$", re.I)
+ERROR_PAGE = re.compile(r"\b(?:something went wrong|page not found|404|internal server error|service unavailable|"
+                        r"this page is not available|your session has expired)\b", re.I)
+# Widgets and scripts that exist on ordinary forms without blocking them.
+PASSIVE_WIDGETS = ('script[src*="recaptcha" i], script[src*="hcaptcha" i], script[src*="turnstile" i], '
+                   'iframe[src*="recaptcha" i], iframe[src*="hcaptcha" i], iframe[src*="challenges.cloudflare.com" i], '
+                   '.g-recaptcha, .h-captcha, .cf-turnstile')
+SPLIT_CODE = r"""() => [...document.querySelectorAll('input[maxlength="1"]')].some(el => el.parentElement &&
+  el.parentElement.querySelectorAll('input[maxlength="1"]').length >= 4 && el.getClientRects().length)"""
+LABELLED_CODE = r"""() => [...document.querySelectorAll('input:not([type=hidden]):not([type=password])')].some(el => {
+  if (!el.getClientRects().length) return false;
+  const named = [...(el.labels || [])].map(l => l.textContent).join(' ') + ' ' + (el.placeholder || '') + ' ' + (el.getAttribute('aria-label') || '');
+  return /verification code|security code|one[- ]?time (?:code|pass(?:code|word))|passcode|\botp\b|验证码|código de verificación|bestätigungscode|code de vérification/i.test(named);
+})"""
+VERIFICATION_MESSAGES = {
+    'otp': ("The site is asking for a one-time code{channel}. Enter it yourself in Control browser (Agent activity); "
+            "the agent does not read or keep it. Then send continue here."),
+    'email_verification': "Complete the site's email verification, then send continue here. Your application will resume in this browser.",
+    'captcha': "Complete the verification challenge in the open browser, then continue.",
+    'waf': ("The site is showing a verification or access restriction. Use Control browser in Agent activity to inspect it "
+            "and complete any available verification, then send continue here. No application was submitted."),
+    'unknown': ("The page could not be checked for a verification step (it may still be changing). Look at it in Control "
+                "browser; the application continues once the form is back, or send continue here."),
+}
+
+
+def safe_location(url):
+    """Host and path only: no query string or fragment (they can carry challenge tokens)."""
+    parts = urlsplit(url or '')
+    return f"{parts.hostname or ''}{parts.path[:120]}"
+
+
+CODE_LABEL = re.compile(r"verification code|security code|one[- ]?time (?:code|pass(?:code|word))|passcode|\botp\b|"
+                        r"验证码|código de verificación|bestätigungscode|code de vérification", re.I)
+
+
+def secret_locators(frame):
+    """Every input in `frame` whose value is masked in previews: secrets by attribute, and codes named by label."""
+    return [frame.locator(SECRET_INPUTS), frame.get_by_label(CODE_LABEL), frame.get_by_placeholder(CODE_LABEL)]
+
+
+# Inputs whose values are never shown (preview masks) or scanned as answers.
+SECRET_INPUTS = ('input[type="password"], [data-northstar-secret], input[autocomplete="one-time-code"], input[name*="otp" i], '
+                 'input[name*="verificationCode" i], input[name*="passcode" i], input[maxlength="1"]')
 IDENTITY_PROVIDERS = re.compile(r"(?:^|\.)(?:accounts\.google\.com|login\.microsoftonline\.com|login\.live\.com|"
     r"okta\.com|oktapreview\.com|onelogin\.com|auth0\.com|appleid\.apple\.com|linkedin\.com)$")
 CONFIRMATION_TEXT = re.compile(r"application (?:has been |was |is )?(?:submitted|received)\b|"
@@ -1195,7 +1248,7 @@ class ApplicationBrowser:
 
     def preview(self):
         return self.page.screenshot(type="jpeg", quality=55, timeout=2000,
-            mask=[frame.locator('input[type="password"], [data-northstar-secret], input[autocomplete="one-time-code"], input[name*="otp" i], input[name*="verificationCode" i]') for frame in self.page.frames])
+            mask=[locator for frame in self.page.frames for locator in secret_locators(frame)])
 
     def enrich_options(self, fields, *, active=lambda: True):
         deadline = time.monotonic() + 20
@@ -1226,29 +1279,106 @@ class ApplicationBrowser:
             return "This site requires a candidate account. Use the secure account form to let the agent sign in or register. Keep your password out of chat."
         return None
 
+    def verification_state(self):
+        """Structured verification evidence for the current page (V1). No codes, tokens, cookies or full URLs.
+
+        kind: otp | email_verification | captcha | waf | unknown | None; status: active (blocks and needs
+        the person) | passive (a widget that does not block a normal form) | unknown (could not be
+        checked: never treated as cleared) | clear. Codes are entered by the person in this browser;
+        nothing here reads, stores or forwards them.
+        """
+        state = {'kind': None, 'status': 'clear', 'visible': False, 'channel': None, 'evidence': [],
+                 'location': safe_location(self.page.url), 'observed_at': time.time()}
+        def found(kind, status, evidence, **extra):
+            return {**state, 'kind': kind, 'status': status, 'visible': status == 'active', 'evidence': evidence, **extra}
+        try:
+            frames = [frame for frame in self.page.frames if not frame.is_detached()]
+            body = self.page.locator('body')
+            text = body.inner_text(timeout=2000) if body.count() else ''
+            channel = ('email' if re.search(r'\be-?mail\b', text, re.I) else
+                       'sms' if re.search(r'\b(?:phone|text message|sms)\b', text, re.I) else None)
+            for frame in frames:
+                codes = frame.locator('input[autocomplete="one-time-code"]:visible, input[name*="otp" i]:visible, '
+                                      'input[name*="verificationCode" i]:visible, input[name*="passcode" i]:visible').count()
+                split = frame.evaluate(SPLIT_CODE)
+                labelled = frame.evaluate(LABELLED_CODE)
+                if codes or split or labelled:
+                    where = 'main page' if frame == self.page.main_frame else 'embedded frame'
+                    form = 'split digits' if split else 'code field' if codes else 'labelled code field'
+                    return found('otp', 'active', [f'one-time code input ({form}) in {where}'], channel=channel)
+            if self.page.get_by_text(VERIFY_EMAIL_TEXT).count():
+                return found('email_verification', 'active', ['email verification notice'], channel='email')
+            for frame in frames:
+                location = urlsplit(frame.url)
+                if ((location.hostname or '').endswith('.captcha-delivery.com') and location.path.startswith('/captcha/')
+                        and frame.parent_frame and frame.frame_element().is_visible()):
+                    return found('waf', 'active', ['access restriction frame (captcha-delivery)'])
+            if self.page.locator('iframe[title*="challenge" i]:visible, iframe[title*="verification" i]:visible').count():
+                return found('captcha', 'active', ['visible challenge frame'])
+            heading = ' '.join(self.page.locator('h1:visible').all_text_contents())[:200]
+            if CHALLENGE_PAGE.search(self.page.title()) or CHALLENGE_PAGE.search(heading):
+                return found('waf', 'active', ['challenge or access-check page'])
+            passive = self.page.locator(PASSIVE_WIDGETS).count()
+            if passive:
+                return found('captcha', 'passive', [f'{passive} inactive verification widget(s) or script(s)'])
+            return state
+        except Exception as exc:
+            # A detached frame, a destroyed context or a page mid-navigation could not be checked.
+            return found('unknown', 'unknown', [f'detection_error:{type(exc).__name__}'])
+
     def verification_barrier(self):
-        if self.scope.locator('input[autocomplete="one-time-code"]:visible, input[name*="otp" i]:visible, input[name*="verificationCode" i]:visible').count():
-            return "Complete the site's email verification in Control browser, then send continue here."
-        if self.scope.get_by_text(re.compile(r"^(?:check your email|verify your email(?: address)?|verify your account)$", re.I)).count():
-            return "Complete the site's email verification, then send continue here. Your application will resume in this browser."
-        # DataDome renders an actual access restriction in a visible iframe
-        # without a challenge title. Do not confuse passive CAPTCHA widgets
-        # on normal forms with this dedicated verification page.
-        for frame in self.page.frames:
-            location = urlsplit(frame.url)
-            if ((location.hostname or "").endswith(".captcha-delivery.com")
-                    and location.path.startswith("/captcha/") and frame.parent_frame):
-                try:
-                    if frame.frame_element().is_visible():
-                        return ("The site is showing a verification or access restriction. "
-                            "Use Control browser in Agent activity to inspect it and complete any available verification, "
-                            "then send continue here. No application was submitted.")
-                except Exception:
-                    continue  # A detached frame will be checked on the next observation.
-        # An embedded CAPTCHA widget alone is not evidence of a challenge.
-        if self.page.locator('iframe[title*="challenge" i]:visible, iframe[title*="verification" i]:visible').count():
-            return "Complete the verification challenge in the open browser, then continue."
-        return None
+        """Compatibility wrapper: the person-facing message for an active or unknown verification, else None."""
+        state = self.verification_state()
+        if state['status'] == 'unknown':
+            time.sleep(0.5)  # one bounded recheck; a page mid-navigation usually settles
+            state = self.verification_state()
+        if state['status'] not in {'active', 'unknown'}:
+            return None
+        channel = {'email': ' sent by email', 'sms': ' sent by text message'}.get(state.get('channel'), '')
+        return VERIFICATION_MESSAGES.get(state['kind'], VERIFICATION_MESSAGES['unknown']).format(channel=channel)
+
+    def resume_readiness(self, expected):
+        """Positive evidence that the application can continue after a person handled a verification (V2).
+
+        Ready only when no verification is active or unknown, the page has finished loading, it is
+        not a sign-in, blank or error page, and it is the same application: the same posting
+        identity, or the same host still showing fields observed before the hand-off. `expected`
+        holds the run's posting identity, host and the field keys seen at hand-off.
+        """
+        try:
+            if self.page.is_closed():
+                return {'ready': False, 'reason': 'browser_closed'}
+            verification = self.verification_state()
+            if verification['status'] in {'active', 'unknown'}:
+                return {'ready': False, 'reason': f"verification_{verification['status']}", 'verification': verification}
+            if self.page.evaluate('document.readyState') != 'complete':
+                return {'ready': False, 'reason': 'loading'}
+            host = urlsplit(self.page.url).hostname or ''
+            if IDENTITY_PROVIDERS.search(host):
+                return {'ready': False, 'reason': 'sign_in_page'}
+            try:
+                identity = posting(self.page.url)[1]
+            except ValueError:
+                identity = None
+            if identity and expected.get('posting') and identity != expected['posting']:
+                return {'ready': False, 'reason': 'different_application'}
+            from .authentication import context
+            if context(self):
+                return {'ready': False, 'reason': 'sign_in_page'}
+            fields = self.observe()
+            page = self.page_state(fields)
+            text = (page.get('text') or '').strip()
+            if not fields and not page.get('controls') and len(text) < 40:
+                return {'ready': False, 'reason': 'blank_page'}
+            if ERROR_PAGE.search(' '.join([self.page.title(), page.get('heading') or ''])):
+                return {'ready': False, 'reason': 'error_page'}
+            if not identity or identity != expected.get('posting'):
+                seen = set(expected.get('field_keys') or [])
+                if host != expected.get('host') or not seen or not seen & {f['key'] for f in fields}:
+                    return {'ready': False, 'reason': 'application_unconfirmed'}
+            return {'ready': True, 'reason': 'application_page', 'fields': fields}
+        except Exception as exc:
+            return {'ready': False, 'reason': f'check_failed:{type(exc).__name__}'}
 
     def fill(self, field, value):
         upload_filename = field.get('upload_filename')
