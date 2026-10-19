@@ -273,10 +273,21 @@ class ScriptedModel:
             # Historical recordings predate the stop_reason field (tiered-recommendations-v3).
             args['stop_reason'] = 'Recorded run: searching ended after the recorded sources and candidates.'
         if name == 'finish_task' and step.get('render_final'):
+            # The scripted reply follows the saved state: recommendations under their saved tier,
+            # every other read/scored job under its own heading (not a recommendation).
             jobs = snapshot['jobs']
-            lines = [step['render_final'], 'Priority match']
-            for job in jobs:
-                lines.append(f"\n{job['title']}\n{job['url']}\nScore: {job['match_score']}/100")
+            saved = {r['url']: r.get('tier') for r in snapshot.get('recommended_jobs', [])}
+            labels = {'priority': 'Priority match', 'stretch': 'Worth trying (known gaps)', 'to_confirm': 'Needs your confirmation'}
+            lines = [step['render_final']]
+            for tier, label in labels.items():
+                group = [job for job in jobs if saved.get(job['url']) == tier]
+                if group or tier == 'priority':
+                    lines.append(label)
+                lines += [f"\n{job['title']}\n{job['url']}\nScore: {job['match_score']}/100" for job in group]
+            others = [job for job in jobs if job['url'] not in saved]
+            if others:
+                lines.append('### Not recommended')
+                lines += [f"\n{job['title']}\n{job['url']}\nScore: {job['match_score']}/100" for job in others]
             args['text'] = '\n'.join(lines)
         if args.get('observation_id') == '$current':
             args['observation_id'] = snapshot['browser']['observation_id']

@@ -38,6 +38,13 @@ class WorkspaceAnalysisService:
         selected=getattr(self._fit_service,'uses_jev',None)
         return bool(selected and selected())
 
+    def reusable(self,application_id,*,resume_text,candidate_facts=None):
+        """A saved analysis for exactly these inputs (posting snapshot, resume, facts, scorer) that
+        analyze_many would return without scoring again; any other conversation may have saved it."""
+        app=self._workspace.get_application(application_id)
+        snapshot=self._workspace.current_snapshot(application_id)
+        return bool(self._cached(app,snapshot.snapshot_id,resume_text,candidate_facts)[1])
+
     def _cached(self,current,snapshot_id,resume_text,candidate_facts):
         key=(hashlib.sha256(json.dumps([snapshot_id,resume_text,candidate_facts,self.cache_signature()],
              ensure_ascii=False).encode()).hexdigest() if callable(getattr(self._fit_service,'cache_signature',None)) else None)

@@ -272,14 +272,22 @@ def test_low_budget_scores_what_fits_reports_the_rest_and_never_rescores(career,
     c=career;jobs=[posting(i) for i in range(6)];prepare(c,monkeypatch,jobs)
     monkeypatch.setattr(c.harness.analysis,'uses_jev',lambda:True)
     original=c.harness.analysis.analyze_many;groups=[]
-    async def batch(ids,**kwargs):groups.append(list(ids));return await original(ids,**kwargs)
+    async def batch(ids,**kwargs):
+        groups.append(list(ids))
+        for _ in range(8+2*len(ids)):  # the Jev estimate, spent as real ledger attempts
+            with usage_scope(purpose='jev:fit:stage'),provider_call('jev-fixture',input_token_reservation=10) as d:d.update(input_tokens=10,output_tokens=1)
+        return await original(ids,**kwargs)
     monkeypatch.setattr(c.harness.analysis,'analyze_many',batch)
     monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS','17')   # room 14 -> (14-8)//2 = 3 jobs
-    first=execute(c,'verify_and_score_jobs',urls=[j['url'] for j in jobs])
+    from eregion.runtime.provider_usage import UsageLedger
+    ledger=UsageLedger(c.repository.sessions)
+    with usage_scope(ledger=ledger,task_id=c.state['task_id']):
+        first=execute(c,'verify_and_score_jobs',urls=[j['url'] for j in jobs])
     assert len(first['jobs'])==3 and len(first['unscored_for_budget'])==3 and 'Not recommendations' in first['budget_note']
     scored={j['application_id'] for j in first['jobs']}
     monkeypatch.setenv('JOB_AGENT_TASK_MAX_PROVIDER_ATTEMPTS','200')
-    second=execute(c,'verify_and_score_jobs',urls=[j['url'] for j in jobs])
+    with usage_scope(ledger=ledger,task_id=c.state['task_id']):
+        second=execute(c,'verify_and_score_jobs',urls=[j['url'] for j in jobs])
     assert sorted(i['outcome'] for i in second.get('already_processed',[]))==['scored']*3
     assert len(groups)==2 and not set(groups[1])&scored  # only the deferred three were sent to the scorer
 

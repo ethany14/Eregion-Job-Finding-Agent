@@ -191,13 +191,20 @@ def run_one(base, info, scenario, mode):
             'start_attempts': len(starts), 'retried_after_ownership_refusal': starts.count('application_owned_elsewhere') > 1,
             'simulation': 'fake browser: no website or browser session; restart marks the run browser_session_ended',
         }
+        # Target path per scenario: without it the run is "not covered", whatever the reply says.
+        results_seen = [h.get('result') for h in state.get('history', []) if isinstance(h.get('result'), dict)]
+        targets = {'new_conversation': lambda: any(r.get('read_only') or r.get('ownership') or r.get('error_code') == 'application_owned_elsewhere'
+                                                   for r in results_seen),
+                   'correction': lambda: result['correction_delivered'],
+                   'budget_exhausted': lambda: any(h['tool'] == 'inspect_application' for h in state.get('history', []))}
+        result['target_covered'] = bool(targets.get(scenario, lambda: False)())
     finally:
         loop.close(); env.applications.close(); env.db.close()
     (OUT / f'{scenario}-{mode}.json').write_text(json.dumps(result, indent=1, ensure_ascii=False), encoding='utf-8')
     return result
 
 
-if __name__ == '__main__':
+def main():
     base = OUT / 'base.sqlite3'
     if base.exists(): raise SystemExit('Fresh output directory required.')
     info = build_base(base)
@@ -218,3 +225,12 @@ if __name__ == '__main__':
         total = {**total, 'scenario_task_attempts': scenario_calls, 'unattributed_attempts': total['calls'] - scenario_calls}
     (OUT / 'summary.json').write_text(json.dumps({'runs': results, 'experiment': total}, indent=1, ensure_ascii=False), encoding='utf-8')
     print('EXPERIMENT', json.dumps(total))
+    return {'runs': len(results), 'not_covered': [f"{r['scenario']}-{r['mode']}" for r in results if not r.get('target_covered')]}
+
+
+if __name__ == '__main__':
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from run_guard import guarded
+    # Every ending (success, exception, cap stop, hang) cleans up loops, workers and children and exits.
+    with guarded(OUT, deadline_s=int(os.getenv('PILOT_DEADLINE_SECONDS', '1800'))) as run:
+        run['result'] = main()

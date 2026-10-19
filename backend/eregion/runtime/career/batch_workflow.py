@@ -104,7 +104,7 @@ def run(harness,task_id,args,call_id):
                     save(pending=None)
                 except (ValueError,LookupError) as exc:
                     item.update(status='import_failed',error=str(exc)[:400]);save(pending=None)
-            scored,unscored=[],[]
+            scored,unscored,interrupted,notes=[],[],[],[]
             for start in range(0,len(apps),16):
                 group=apps[start:start+16]
                 result=invoke('score_jobs',{'application_ids':group})
@@ -118,12 +118,15 @@ def run(harness,task_id,args,call_id):
                                           'decisions already made are cached and are not paid again on a retry.'}
                 scored.extend(result['jobs'])
                 unscored.extend(result.get('unscored_for_budget') or [])
+                interrupted.extend(result.get('interrupted_chunk') or [])
+                if result.get('budget_note'):notes.append(result['budget_note'])
                 if not result.get('no_new_evidence'):changed=True
             save(pending=None,completed=True,failure=None)
             return {'jobs':scored,'candidates':items,'qualified_count':len(apps),
                     **({'already_processed':skipped} if skipped else {}),
-                    **({'unscored_for_budget':unscored,'budget_note':'Imported and qualified but not scored: the remaining '
-                        'budget could not finish them. Not recommendations.'} if unscored else {}),
+                    **({'unscored_for_budget':unscored,'budget_note':notes[-1] if notes else 'Imported and qualified but not '
+                        'scored: the remaining budget could not finish them. Not recommendations.'} if unscored else {}),
+                    **({'interrupted_chunk':interrupted} if interrupted else {}),
                     'no_new_evidence':not changed,
                     'next':'Decide each scored job. Deferred jobs are not quota matches; discover different postings when no qualified pending candidates remain.'}
     except TaskProviderBudgetExceeded:

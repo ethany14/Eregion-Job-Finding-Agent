@@ -34,6 +34,7 @@ JEV_STAGE_REQUESTS = 8          # measured: one shared request per Jev stage per
 JEV_JOB_REQUESTS = 2
 SCORING_TOKENS_PER_REQUEST = 20000
 MAIN_ROUTE_REQUESTS_PER_JOB = 5 # measured without Jev (claude-main-fit-probe-03)
+SCORING_FIRST_CHUNK = 4         # under a budget, paid scoring starts small and is then sized from measured cost
 TOOLS = [
     function('dismiss_candidate','Exclude a retrieved but unsuitable posting for this user turn without paid scoring. Quote its exact title, location or JD and explain the mismatch with the user request. This is a model decision, not proof the vacancy is closed.',
         {'url':TEXT,'quote':{'type':'string','minLength':1,'maxLength':600},'reason':{'type':'string','minLength':1,'maxLength':600}}),
@@ -113,13 +114,64 @@ class ApplicationOwnedElsewhere(ValueError):
                                 'next': ownership.get('next')}
 
 
+def tier_sections(text):
+    """Job URLs listed inside each tier section of a reply: {job_key: {'url', 'tiers'}}.
+
+    Structure only. A tier section starts at a heading-shaped tier label and ends at the next
+    heading of the same style: a markdown heading with at most as many '#', or, for a bold
+    label, a bold line that starts with a word (an entry such as '**1. Engineer — Co**' is not a
+    heading). Whether a job belongs in a tier is the model's judgment, recorded by recommend_job."""
+    def label_pattern(label):
+        return re.compile(r'[^0-9a-z]+'.join(re.escape(w) for w in re.findall(r'[0-9a-z]+',label.casefold())),re.I)
+    lines,offset=[],0
+    for line in text.split('\n'):
+        lines.append((offset,line));offset+=len(line)+1
+    marks=[]
+    for start,line in lines:
+        stripped=line.strip()
+        hashes=len(stripped)-len(stripped.lstrip('#'))
+        bold=bool(re.fullmatch(r'\*\*[^*]+\*\*:?',stripped))
+        tier=None
+        for key,label in TIERS.items():
+            match=label_pattern(label).search(stripped)
+            if (match and not re.search(r'[0-9A-Za-z]',stripped[:match.start()].replace('#','').replace('*',''))
+                    and not re.search(r'[A-Za-z:]',re.sub(r'\([^)]*\)','',stripped[match.end():]).replace('*',''))):
+                tier=key;break
+        if tier:marks.append((start,tier,hashes,bold))
+        elif hashes:marks.append((start,None,hashes,False))
+        elif bold and re.match(r'\*\*[A-Za-z]',stripped) and 'http' not in stripped:marks.append((start,None,0,True))
+    placed={}
+    for match in re.finditer(r'https://[^\s<>"\]\)]+',text):
+        try:key=job_key(match[0].rstrip('.,;!?)'))
+        except ValueError:continue
+        current=None
+        for start,tier,hashes,bold in marks:
+            if start>match.start():break
+            if tier:current=(tier,hashes,bold)
+            elif current and ((current[1] and hashes and hashes<=current[1]) or (current[2] and bold and not hashes)
+                              or (not current[1] and not current[2] and (hashes or bold))):current=None  # a plain label ends at any heading
+        entry=placed.setdefault(key,{'url':match[0].rstrip('.,;!?)'),'tiers':set()})
+        if current:entry['tiers'].add(current[0])
+    return placed
+
+
+class ApplicationNotLinked(ValueError):
+    """inspect_application on a run this conversation neither owns nor reached through one of its own jobs."""
+    def __init__(self):
+        super().__init__('This application is not linked to this conversation.')
+        self.workflow_detail = {'error_code': 'application_not_linked', 'no_new_evidence': True,
+            'next': 'Open the saved job in this conversation first (the same posting), then inspect its application; '
+                    'or continue in the conversation that owns it.'}
+
+
 class PostingNotRead(ValueError):
     """Recommendation needs this conversation's own read of the posting; names the tool that provides it."""
     def __init__(self, url):
         super().__init__('Read the current posting before recommending it.')
         self.workflow_detail = {'error_code': 'posting_not_read', 'url': url, 'no_new_evidence': True,
             'next': f'This conversation has not read this posting. Call read_job with url {url} '
-                    '(or verify_and_score_jobs for several saved jobs), then recommend it.'}
+                    '(or verify_and_score_jobs for several saved jobs), then recommend it. A saved score is '
+                    'reused when the posting is unchanged; it does not need scoring again.'}
 
 
 class CareerHarness:
@@ -1301,12 +1353,19 @@ class CareerHarness:
         if name=='list_jobs':
             jobs = rt.workspace.list_applications(search=args.get('query'),limit=30)
             for app in jobs:self.repository.link(task_id,'jobs',app.application_id)
-            return {'jobs':[self.job_summary(a.application_id) for a in jobs]}
+            result={'jobs':[self.job_summary(a.application_id) for a in jobs]}
+            if not jobs and args.get('query'):
+                result['note']=('No saved job has every query word in its title, company or location. This is a lookup, '
+                                'not a search: call list_jobs without query to see all saved jobs.')
+            return result
         if 'application_id' in args:self.require_link(state,'jobs',args['application_id'])
         if 'pack_id' in args and args['pack_id']:self.link_job_pack(state,args['pack_id'])
         if 'run_id' in args:
-            self.require_link(state,'application_runs',args['run_id'])
-            if name!='inspect_application':self.require_application_owner(state,self.applications.repository.get(args['run_id']))
+            if name=='inspect_application' and args['run_id'] not in state.get('application_runs',[]):
+                self.readable_application(state,args['run_id'])
+            else:
+                self.require_link(state,'application_runs',args['run_id'])
+                if name!='inspect_application':self.require_application_owner(state,self.applications.repository.get(args['run_id']))
         if 'interview_id' in args:self.require_link(state,'interviews',args['interview_id'])
         if name=='inspect_job' and args.get('requirement_ids'):
             # Exact read by stable requirement ID: no full report, no materials.
@@ -1332,20 +1391,57 @@ class CareerHarness:
                 return {'error':'Verify requested constraints before paid batch scoring.','error_code':'qualification_needed','qualifications':qualifications}
             _,text=self.candidate()
             if not text:raise ValueError('Attach a resume in this chat before comparing fit.')
-            cached=[a for a in identifiers if state.get('analyses',{}).get(a)==self.analysis_fingerprint(
-                text,rt.workspace.get_application(a).current_snapshot_id) and self.job_summary(a)['match_score'] is not None]
-            identifiers,deferred=self.affordable_scoring(task_id,identifiers,cached=cached)
-            asyncio.run(self.analysis.analyze_many(identifiers,resume_text=text,candidate_facts=self.fit_facts()))
-            fingerprints={a:self.analysis_fingerprint(text,rt.workspace.get_application(a).current_snapshot_id)for a in identifiers}
-            self.repository.change(task_id,lambda s:{'analyses':{**s.get('analyses',{}),**fingerprints}})
-            self.save_scored_evidence(task_id,identifiers)
+            # Free: this task's own fingerprint, or a saved analysis (any conversation) for the same inputs.
+            reusable=getattr(self.analysis,'reusable',None)
+            facts=self.fit_facts()
+            cached=[a for a in identifiers if self.job_summary(a)['match_score'] is not None and (
+                state.get('analyses',{}).get(a)==self.analysis_fingerprint(text,rt.workspace.get_application(a).current_snapshot_id)
+                or (callable(reusable) and reusable(a,resume_text=text,candidate_facts=facts)))]
+            planned,deferred=self.affordable_scoring(task_id,identifiers,cached=cached)
+            free=[a for a in planned if a in set(cached)]
+            queue=[a for a in planned if a not in set(cached)]+deferred
+            scored,interrupted=[],[]
+            def persist(group):
+                fingerprints={a:self.analysis_fingerprint(text,rt.workspace.get_application(a).current_snapshot_id) for a in group}
+                self.repository.change(task_id,lambda s:{'analyses':{**s.get('analyses',{}),**fingerprints}})
+                self.save_scored_evidence(task_id,group);scored.extend(group)
+            if free:
+                asyncio.run(self.analysis.analyze_many(free,resume_text=text,candidate_facts=facts));persist(free)
+            # Under a budget, paid scoring runs in persisted chunks: a small first chunk, then chunks sized
+            # from this task's measured cost per job. A batch saves only when it finishes (layer-2 B lost
+            # 35 paid requests in one batch), so a stop at the reply reserve keeps every finished chunk.
+            from eregion.runtime.provider_usage import task_limits,UsageLedger,ReplyBudgetReserved
+            limited=any(task_limits().get(k) for k in ('provider_attempts','input_tokens'))
+            ledger=UsageLedger(self.repository.sessions)
+            size,observed=len(queue)-len(deferred),None
+            if limited and size>SCORING_FIRST_CHUNK:size=SCORING_FIRST_CHUNK
+            while queue and size>0:
+                chunk=queue[:min(size,16)]
+                before=ledger.summary(task_id=task_id)
+                try:asyncio.run(self.analysis.analyze_many(chunk,resume_text=text,candidate_facts=facts))
+                except ReplyBudgetReserved:
+                    interrupted=chunk;break
+                after=ledger.summary(task_id=task_id)
+                persist(chunk);queue=queue[len(chunk):]
+                if not queue or not limited:break
+                observed={'jobs':len(chunk),'calls':after['calls']-before['calls'],
+                          'tokens':after.get('budget_input_tokens',0)-before.get('budget_input_tokens',0)}
+                try:size=len(self.affordable_scoring(task_id,queue,observed=observed)[0])
+                except ReplyBudgetReserved:break
             evidence=self.repository.get(task_id).get('scored_job_evidence',{})
+            note=('Imported and qualified but not scored: the remaining provider attempts could not complete their scoring. '
+                  'Not recommendations.')
+            if interrupted:
+                note+=(' A chunk was stopped at the reply reserve; its paid scorer decisions are cached, so a retry pays only '
+                       'for what is left.')
             return {'jobs':[{**self.job_summary(a,detail=True),'posting_conditions':evidence.get(a,{}).get('posting_conditions',[]),
                              'request_near_misses':evidence.get(a,{}).get('request_near_misses',[])}
-                            for a in identifiers],
-                    **({'unscored_for_budget':deferred,'budget_note':'Imported and qualified but not scored: the '
-                        'remaining provider attempts could not complete their scoring. Not recommendations.'} if deferred else {}),
-                    'no_new_evidence':all(rt.workspace.get_application(a).version==versions[a] for a in identifiers)}
+                            for a in scored],
+                    **({'unscored_for_budget':queue,'budget_note':note} if queue else {}),
+                    **({'interrupted_chunk':interrupted} if interrupted else {}),
+                    **({'measured_cost_per_job':{'requests':round(observed['calls']/observed['jobs'],2),
+                        'input_tokens':round(observed['tokens']/observed['jobs'])}} if observed else {}),
+                    'no_new_evidence':all(rt.workspace.get_application(a).version==versions[a] for a in scored)}
         if name=='score_job':
             from .qualification import record
             qualification=record(self.repository,task_id,self.job_summary(args['application_id'],detail=True))
@@ -1423,9 +1519,14 @@ class CareerHarness:
             self.repository.change(task_id,lambda s:{'saved_evidence':{**s.get('saved_evidence',{}),key:confirmed.evidence_id}})
             return {'evidence_id':confirmed.evidence_id,'saved':True,'quote':quote}
         if name=='inspect_application':
-            self.repository.change(task_id,active_application_run=args['run_id'],active_browser='application')
+            linked=args['run_id'] in state.get('application_runs',[])
+            if linked:self.repository.change(task_id,active_application_run=args['run_id'],active_browser='application')
             result=self.application(args['run_id'],include_fields=args.get('include_fields',False),field_key=args.get('field_key'),
                                     caller=task_id)
+            if not linked:
+                # Another conversation's run, reached through this conversation's own job: a view only.
+                result={**result,'read_only':True,'note':'Read-only view. This conversation did not link, take over, '
+                        'resume or change this application, its budget or its browser.'}
             # Rereading a page that waits on the user (sign-in, verification, a question) within one
             # turn cannot change it; say so once instead of letting the turn poll the same state.
             seen=[state.get('chat_revision',0),result.get('version')]
@@ -1815,13 +1916,15 @@ class CareerHarness:
             [c['key'] for c in account.get('consents',[])],
             child.get('message') if child['status']=='needs_input' else None]
 
-    def affordable_scoring(self,task_id,identifiers,*,cached=()):
+    def affordable_scoring(self,task_id,identifiers,*,cached=(),observed=None):
         """Start only a scoring batch the task's remaining attempts and input tokens can finish.
 
         A Jev batch costs about two requests per job plus shared stage requests; the main-model
         route about five per job. A batch cut off midway yields no score (paid Jev decisions stay
         cached for a retry), so it is sized first, keeping the reply reserve. Jobs whose analysis is
-        already cached cost nothing and go first.
+        already cached cost nothing and go first. `observed` is a chunk this task just finished
+        ({'jobs', 'calls', 'tokens'} from the ledger): its measured cost per job replaces the
+        estimate when it is higher. The ledger's hard limits still decide; this only sizes chunks.
         """
         from eregion.runtime.provider_usage import task_limits, UsageLedger, REPLY_RESERVE, ReplyBudgetReserved
         limits=task_limits()
@@ -1831,15 +1934,21 @@ class CareerHarness:
         if not paid or (not cap and not tokens):return [*free,*paid],[]
         used=UsageLedger(self.repository.sessions).summary(task_id=task_id)
         jev=self.analysis.uses_jev()
+        shared=JEV_STAGE_REQUESTS if jev else 0
+        per_job=JEV_JOB_REQUESTS if jev else MAIN_ROUTE_REQUESTS_PER_JOB
+        per_request=SCORING_TOKENS_PER_REQUEST
+        if observed and observed.get('jobs') and observed.get('calls'):
+            per_job=max(per_job,(observed['calls']-shared)/observed['jobs'])
+            per_request=max(per_request,observed.get('tokens',0)/observed['calls'])
         def jobs_for(requests):
-            return (requests-JEV_STAGE_REQUESTS)//JEV_JOB_REQUESTS if jev else requests//MAIN_ROUTE_REQUESTS_PER_JOB
+            return int((requests-shared)//per_job) if requests>shared else 0
         fits=len(paid)
         if cap:
             if cap<=2*REPLY_RESERVE:return [*free,*paid],[]
             fits=min(fits,jobs_for(cap-REPLY_RESERVE-used['calls']))
         if tokens:
-            room=tokens-used.get('budget_input_tokens',0)-REPLY_RESERVE*SCORING_TOKENS_PER_REQUEST
-            fits=min(fits,jobs_for(room//SCORING_TOKENS_PER_REQUEST))
+            room=tokens-used.get('budget_input_tokens',0)-REPLY_RESERVE*per_request
+            fits=min(fits,jobs_for(room//per_request))
         if fits<1 and not free:raise ReplyBudgetReserved('reply_reserve')
         fits=max(0,fits)
         return [*free,*paid[:fits]],paid[fits:]
@@ -1878,6 +1987,17 @@ class CareerHarness:
         validate_coverage(state,text)
         from .presentation import validate_final_language
         validate_final_language(state,text)
+        # Final recommendation state: a job under a tier label must be a saved recommendation with
+        # that tier, in every reply (layer-2 B listed five unscored jobs under 'Priority match').
+        saved={job_key(r['url']):r.get('tier') for r in state.get('recommendations',[]) if r.get('url')}
+        sections=tier_sections(text)
+        stray=[entry['url'] for key,entry in sections.items() if entry['tiers'] and key not in saved]
+        if stray:raise ValueError('Only saved recommendations are listed under the tier labels. Not saved as a recommendation: '
+            +', '.join(stray[:8])+'. List unscored, deferred or excluded jobs after the tier sections under their own heading '
+            '(for example "### Not scored"), marked as not recommended; use recommend_job first for a scored job you recommend.')
+        moved=[f"{entry['url']} (saved as {TIERS.get(saved[key],saved[key])})" for key,entry in sections.items()
+               if entry['tiers'] and key in saved and entry['tiers']!={saved[key]}]
+        if moved:raise ValueError('List each recommendation under its saved tier label; misplaced: '+'; '.join(moved[:8])+'. '+FINAL_FORMAT)
         from .search_recovery import search_request
         from .reply_evidence import reply_job_evidence
         if not search_request(state):return
@@ -2018,6 +2138,20 @@ class CareerHarness:
                 return self.adopt_application(state,run,adopt)
         return run
 
+    def readable_application(self,state,run_id):
+        """Read-only access to a run outside this conversation: only when it is the application for a
+        posting this conversation explicitly linked (one local user store). Never links, adopts,
+        resumes or reserves anything; writes keep require_application_owner."""
+        from eregion.runtime.auto_apply.contracts import posting
+        from eregion.runtime.auto_apply.repository import ApplyNotFound
+        try:run=self.applications.repository.get(run_id)
+        except ApplyNotFound:raise ApplicationNotLinked() from None
+        target=posting(run['url'])[1]
+        for application_id in state.get('jobs',[]):
+            url=self.runtime.workspace.application_job(application_id).canonical_url
+            if url and posting(url)[1]==target:return run
+        raise ApplicationNotLinked()
+
     def ownership(self,task_id,run,*,owner=None):
         """Who executes this run and what this conversation may do with it (business state,
         independent of task memory). Replays 02/03: a new conversation kept calling
@@ -2031,7 +2165,7 @@ class CareerHarness:
         except Exception:
             other,title={},''
         active=self.owner_active(owner)
-        return {'owned_by_this_conversation':False,'owner_conversation':{'task_id':owner,'title':title,'active':active},
+        return {'owned_by_this_conversation':False,'run_id':run['run_id'],'owner_conversation':{'task_id':owner,'title':title,'active':active},
             'allowed_here':['inspect_application','report its status'],
             'not_allowed_here':['start_application','reply_application','continuing or resubmitting it'],
             'duplicate_policy':'A second application for the same posting cannot be started; the existing run is the only one.',

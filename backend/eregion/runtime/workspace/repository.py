@@ -372,11 +372,15 @@ class JobWorkspaceRepository:
         if status: query = query.where(ApplicationRow.status == status.value)
         if company: query = query.where(func.lower(JobRow.company) == company.strip().lower())
         if search and search.strip():
-            pattern = f"%{search.strip().lower()}%"
-            query = query.where(
-                func.lower(func.coalesce(JobRow.company, "")).like(pattern)
-                | func.lower(func.coalesce(JobRow.title, "")).like(pattern)
-            )
+            # Every word must appear in the title, company or location ("software engineer New York"
+            # matched nothing as one phrase against title or company alone).
+            for term in search.replace(',', ' ').lower().split()[:12]:
+                pattern = f"%{term}%"
+                query = query.where(
+                    func.lower(func.coalesce(JobRow.company, "")).like(pattern)
+                    | func.lower(func.coalesce(JobRow.title, "")).like(pattern)
+                    | func.lower(func.coalesce(JobRow.location, "")).like(pattern)
+                )
         if cursor: query = query.where(ApplicationRow.application_id > cursor)
         query = query.order_by(ApplicationRow.application_id).limit(limit)
         with self._session_factory() as session:

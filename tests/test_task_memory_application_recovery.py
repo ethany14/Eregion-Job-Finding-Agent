@@ -217,8 +217,9 @@ def test_another_conversation_gets_a_read_only_ownership_report_in_every_memory_
     for mode in ('off', 'on'):
         c.runtime.task_memory = TaskMemoryService(c.runtime, TaskMemoryConfig(mode, frozenset({app})))
         fresh = start(c, app, f'Status of my application ({mode})?')
-        c.repository.link(fresh['task_id'], 'application_runs', run['run_id'])
+        # No manual link: the job this conversation opened is the explicit association (replay C).
         view = execute(c, 'inspect_application', run_id=run['run_id'])
+        assert view['read_only'] is True
         ownership = view['ownership']
         assert ownership['owned_by_this_conversation'] is False and ownership['owner_conversation']['task_id'] == state['task_id']
         assert 'start_application' in ownership['not_allowed_here'] and 'cannot be started' in ownership['duplicate_policy']
@@ -259,3 +260,43 @@ def test_multi_start_keeps_the_structured_ownership_refusal(setup):
     assert entry['started'] is False and entry['error_code'] == 'application_owned_elsewhere'
     assert entry['ownership']['owner_conversation']['task_id'] == state['task_id'] and entry['no_new_evidence']
     assert 'cannot be started' in entry['ownership']['duplicate_policy']
+
+
+def test_cross_conversation_inspection_is_read_only_and_needs_the_conversations_own_job(setup):
+    from test_career_flow import execute
+    from eregion.runtime.tasks.host import TaskHost
+    c, job, pack, app, service, state, run = setup
+    before = c.applications.repository.get(run['run_id'])
+    fresh = start(c, app, 'How far did my application get?')
+    view = execute(c, 'inspect_application', run_id=run['run_id'])
+    assert view['read_only'] and view['run_id'] == run['run_id'] and view['ownership']['run_id'] == run['run_id']
+    after, task = c.applications.repository.get(run['run_id']), c.repository.get(fresh['task_id'])
+    # A view only: no link, no takeover, no resume, no browser focus, no new version.
+    assert after['version'] == before['version'] and after['origin_task_id'] == state['task_id']
+    assert task['application_runs'] == [] and task.get('active_application_run') is None
+    # Writes from here stay refused: the read-only path never links the run to this conversation.
+    with pytest.raises(ValueError) as refused:
+        execute(c, 'reply_application', run_id=run['run_id'], message_id='m', text='continue')
+    assert 'does not belong' in str(refused.value)
+
+
+def test_inspection_of_another_postings_run_or_an_arbitrary_id_is_refused(setup):
+    from test_career_flow import execute
+    from eregion.runtime.tasks.host import TaskHost
+    c, job, pack, app, service, state, run = setup
+    other, _ = c.repository.create('Something unrelated.', 'unrelated-conversation')  # no job linked
+    c.state = other
+    for run_id in (run['run_id'], 'not-a-run'):
+        with pytest.raises(ValueError) as refused:
+            execute(c, 'inspect_application', run_id=run_id)
+        detail = TaskHost.action_error(TaskHost.__new__(TaskHost), refused.value)
+        assert detail['error_code'] == 'application_not_linked' and detail['no_new_evidence']
+    assert c.repository.get(other['task_id'])['application_runs'] == []
+
+
+def test_the_owner_still_inspects_with_focus_and_without_the_read_only_flag(setup):
+    from test_career_flow import execute
+    c, job, pack, app, service, state, run = setup
+    c.state = c.repository.get(state['task_id'])
+    view = execute(c, 'inspect_application', run_id=run['run_id'])
+    assert 'read_only' not in view and c.repository.get(state['task_id'])['active_application_run'] == run['run_id']
