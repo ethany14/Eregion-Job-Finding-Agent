@@ -12,7 +12,7 @@
 .digest-job { padding-top: 20px; margin-top: 20px; border-top: 1px solid var(--line); }
 .digest-job h4 { margin: 0; font-size: 16px; font-weight: 500; }
 .digest-score { float: right; font-weight: 400; font-size: 20px; margin-left: 12px; }
-.alert-settings form > label:not(.check-row) { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; color: var(--muted); font-size: 13px; }
+.alert-settings form > label:not(.check-row), .model-settings details > label { display: flex; flex-direction: column; gap: 6px; margin: 14px 0; color: var(--muted); font-size: 13px; }
 .alert-settings input:not([type="checkbox"]), .alert-settings textarea { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--soft); color: var(--ink); min-width: 0; width: 100%; }
 .alert-settings textarea { min-height: 82px; resize: vertical; }
 
@@ -444,6 +444,32 @@ dialog input:focus { box-shadow: 0 0 0 1.5px var(--ink); background: var(--raise
   font-size: 14px; color: var(--ink-2); text-decoration: none;
 }
 .side-footer-links a { font-size: 13.5px; color: var(--muted); }
+.side-footer-links button {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 7px 10px; border: 0; border-radius: 9px;
+  background: transparent; font: inherit; font-size: 13.5px; color: var(--muted); text-align: left; cursor: pointer;
+}
+.side-footer-links button:hover { background: var(--soft); color: var(--ink); }
+/* "Needs you" colour: no model is connected yet. */
+.setup-needed { width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--signal); flex: none; }
+.model-settings { width: min(520px, calc(100vw - 32px)); }
+.model-settings .dialog-note { margin: 4px 0 6px; }
+.model-settings .field-note { font-size: 12px; line-height: 1.5; color: var(--faint); }
+.model-settings label > .text-button { align-self: flex-start; padding: 0; font-size: 12.5px; }
+.model-load { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 14px; margin: -4px 0 14px; }
+.model-load .secondary-button { padding: 6px 14px; border-radius: 999px; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.model-more { margin: 8px 0 0; }
+.model-more summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+.model-settings input:disabled, .model-settings select:disabled { opacity: .6; cursor: not-allowed; }
+.model-features { margin-top: 22px; padding-top: 6px; border-top: 1px solid var(--line); }
+.model-features h3 { margin-bottom: 2px; }
+.feature-group { margin: 14px 0 0; padding: 0; border: 0; }
+.feature-group legend { padding: 0; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.feature-switch { margin: 10px 0; }
+.feature-switch > span { display: grid; gap: 2px; }
+.feature-label { color: var(--ink-2); }
+.feature-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; color: var(--muted); font-size: 13px; }
+.feature-field > .text-button { align-self: flex-start; padding: 0; font-size: 12.5px; }
+.model-settings select { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--soft); color: var(--ink); font: inherit; }
 .side-footer-links svg.i { width: 15px; height: 15px; }
 .side-nav a:hover, .side-footer-links a:hover { background: var(--soft); color: var(--ink); }
 .side-nav a[aria-current="true"], .side-footer-links a[aria-current="true"] { background: var(--soft); color: var(--ink); }

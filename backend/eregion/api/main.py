@@ -36,6 +36,7 @@ from eregion.api.auto_apply_routes import router as auto_apply_router
 from eregion.api.career_routes import router as career_router, groups_router as career_groups_router
 from eregion.api.material_routes import router as material_router
 from eregion.api.job_alert_routes import router as job_alert_router
+from eregion.api.model_settings_routes import router as model_settings_router
 
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "testserver")
@@ -82,6 +83,10 @@ def create_app(
             and factory is not None
             and not application.dependency_overrides
         ):
+            if factory is create_session_runtime:
+                # Switches saved from the workspace that their readers take from the process environment.
+                from eregion.domain.model_settings import load_process_switches
+                load_process_switches()
             created_runtime = await anyio.to_thread.run_sync(factory)
             application.state.session_runtime = created_runtime
         try:
@@ -141,6 +146,7 @@ def create_app(
     application.include_router(career_groups_router)
     application.include_router(material_router)
     application.include_router(job_alert_router)
+    application.include_router(model_settings_router)
     from eregion.api.skill_evolution_routes import router as skill_evolution_router
     application.include_router(skill_evolution_router)
     install_error_handlers(application)

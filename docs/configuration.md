@@ -11,6 +11,32 @@ The model and TypeSafe adapters read the repository-root `.env` file. Process
 environment variables override values in that file. Restart the backend after
 changing configuration so active services use the new settings consistently.
 
+**From the app.** "Model and API key" in the sidebar sets `LLM_API_KEY`,
+`LLM_BASE_URL`, `LLM_MODEL_ID`, `LLM_FAST_MODEL_ID` and
+`LLM_EXTRACTION_MODEL_ID` in the same `.env` file, without a restart: the next
+conversation turn or application uses them, and work already running keeps its
+model. "Load models" reads the provider's OpenAI-compatible `GET /models` list
+with the key; it makes no model call. The key is write-only: the app shows only
+that one is saved and its last four characters. A variable set in the server's
+process environment overrides `.env`, so the app shows it as locked. These
+settings can be read or changed only from the local workspace (a loopback host
+and client, same origin). The sidebar entry shows a dot until a model and key
+are configured. A server with no model configured still starts, so this page is
+reachable on a fresh install.
+
+The same dialog's **Features** section turns optional parts on and off and
+stores them in `.env`: Jev fit scoring (`TYPESAFE_ENABLED`, `TYPESAFE_API_KEY`,
+`TYPESAFE_CAREER_ENABLED`, `TYPESAFE_FIT_RESOLVE_UNKNOWNS`), job sources
+(`JOB_AGENT_JOB_API_FIRST`, `JOB_AGENT_TREG_ENABLED`, `TREG_TOKEN`,
+`JOB_AGENT_TREG_SEARCH_PROVIDER`, `JOB_AGENT_JOBSPY_PYTHON`,
+`JOB_AGENT_JOBSPY_SITES`), applications (`JOB_AGENT_BROWSER_DRIVER`,
+`JOB_AGENT_HIDDEN_BROWSER`, `JOB_AGENT_TASK_MEMORY_MODE`) and materials
+(`JOB_AGENT_ANALYSIS_WARMUP`, `JOB_AGENT_OPT_MATERIAL_PATCHES`). A switch that
+needs a key or another switch cannot be turned on without it. Settings whose
+readers use the process environment are also set in the running server and are
+loaded from `.env` when it starts; task memory applies after a restart. Values
+set in the server's own environment win and are shown as locked.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `LLM_MODEL_ID` | Required | Main model for chat, planning, writing, and verification. |

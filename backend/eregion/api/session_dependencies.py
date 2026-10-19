@@ -68,7 +68,7 @@ from eregion.runtime.tools.loop import ToolCallingLoop
 from eregion.runtime.tools.model_adapter import LangChainToolModelAdapter
 from eregion.runtime.tools.run_reader import SqlAlchemyRunReader
 from eregion.api.db import Database, create_database, upgrade_database, require_current_database
-from eregion.domain.model import create_model
+from eregion.domain.model import ConfiguredModel
 from eregion.runtime.model_runtime import model_timeout
 from eregion.runtime.semantics import SemanticDecisions
 from eregion.runtime.workspace.repository import JobWorkspaceRepository
@@ -208,7 +208,8 @@ def create_session_runtime(
     mcp_manager = McpToolManager(**manager_options)
     try:
         mcp_manager.start()
-        configured_model = model or create_model(purpose='api')
+        # Resolved per call: the server starts before a model is configured from the workspace.
+        configured_model = model or ConfiguredModel(purpose='api')
         adapter = LangChainToolModelAdapter(configured_model)
         loop = ToolCallingLoop(model=adapter, registry=registry, executor=executor)
     except Exception:

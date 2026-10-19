@@ -384,3 +384,36 @@ def shared_model(*, env_path=DEFAULT_ENV_PATH, purpose=None):
                 _clients.popitem(last=False)
         _clients.move_to_end(key)
         return _clients[key]
+
+
+class ConfiguredModel:
+    """The configured model, resolved on each use. A model saved later from the workspace applies
+    without a restart, and a server with no model configured still starts; a call then raises the
+    same "Set LLM_MODEL_ID" error as create_model."""
+
+    def __init__(self, *, purpose=None, env_path=DEFAULT_ENV_PATH):
+        self._purpose, self._env_path = purpose, env_path
+
+    def _resolve(self):
+        return shared_model(env_path=self._env_path, purpose=self._purpose)
+
+    def __getattr__(self, name):
+        if name.startswith('_'):
+            raise AttributeError(name)
+        return getattr(self._resolve(), name)
+
+    @property
+    def request_timeout(self):
+        try:
+            return self._resolve().request_timeout
+        except ValueError:
+            return None
+
+    def with_structured_output(self, *args, **kwargs):
+        return self._resolve().with_structured_output(*args, **kwargs)
+
+    def bind_tools(self, *args, **kwargs):
+        return self._resolve().bind_tools(*args, **kwargs)
+
+    def invoke(self, *args, **kwargs):
+        return self._resolve().invoke(*args, **kwargs)

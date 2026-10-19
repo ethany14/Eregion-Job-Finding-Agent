@@ -8,6 +8,7 @@ import {api,organise,createGroup,renameGroup,deleteGroup,sidebarSections,collaps
 import {renderPage} from './pages.js';
 import {startAlertNotifications} from './job-alerts.js';
 import {initTheme} from './theme.js';
+import {initModelSettings} from './model-settings.js';
 const careerMode=new URLSearchParams(location.search).get('mode')!=='application';
 import {AnswerDrafts,renderAnswerBatch,renderPendingQuestion} from './apply-answers.js';
 const answerDrafts=new AnswerDrafts();
@@ -697,6 +698,7 @@ if(careerMode){
   for(const link of document.querySelectorAll('[data-view]'))link.addEventListener('click',event=>{event.preventDefault();showView(link.dataset.view);});
 }
 initTheme();
+void initModelSettings($('#model-settings'));
 render();refresh();restoreCandidate();refreshCounts();
 if(careerMode){
   const stopNotifications=startAlertNotifications({open:()=>showView('alerts'),onUpdate:data=>{
