@@ -23,6 +23,13 @@ _COVERAGE = {
     InterviewMode.MIXED: ("role_fit", "collaboration", "requirement_fit", "project_deep_dive", "prioritization"),
 }
 
+# Evidence a competency's question may be about, in order of preference. A collaboration or
+# project question about a degree or a skills list is not answerable, so those are never pinned.
+_PROJECT_FIRST = ("project", "experience")
+_EVIDENCE_FOR = {"project_deep_dive": _PROJECT_FIRST, "personal_contribution": _PROJECT_FIRST,
+                 "approach": _PROJECT_FIRST, "tradeoffs": _PROJECT_FIRST, "validation": _PROJECT_FIRST,
+                 "collaboration": ("experience", "project")}
+
 
 def build_plan(*, interview_id: str, snapshot_id: str, snapshot_hash: str,
                pack_id: str | None = None, pack_version: int | None = None,
@@ -40,14 +47,19 @@ def build_plan(*, interview_id: str, snapshot_id: str, snapshot_hash: str,
     if mode == InterviewMode.MIXED and not any(item.get("category") == "project" for item in evidence):
         choices.remove("project_deep_dive")
     items = []
+    used: dict[str, int] = {}
     for index in range(target_count):
         competency = choices[index % len(choices)]
         requirement_id = (requirement_ids[index % len(requirement_ids)]
                           if requirement_ids and competency in {"requirement_fit", "responsibilities", "technical_approach"}
                           else None)
-        related = ([evidence[index % len(evidence)]["evidence_id"]]
-                   if evidence and competency in {"project_deep_dive", "personal_contribution", "approach", "tradeoffs", "validation", "collaboration"}
-                   else [])
+        related = []
+        for category in _EVIDENCE_FOR.get(competency, ()):
+            pool = [item for item in evidence if item.get("category") == category]
+            if pool:
+                related = [pool[used.get(category, 0) % len(pool)]["evidence_id"]]
+                used[category] = used.get(category, 0) + 1
+                break
         items.append(PlanItem(plan_item_id=str(uuid5(NAMESPACE_URL, f"{interview_id}:item:{index}")),
             sequence=index + 1, competency=competency,
             related_requirement_id=requirement_id,

@@ -377,3 +377,21 @@ def test_protected_attribute_check_ignores_technical_terms_only(text, allowed):
     else:
         with pytest.raises(MockInterviewValidation, match="protected"):
             validate_question(question, item, set(), "")
+
+
+def test_plan_pins_project_and_collaboration_questions_to_answerable_evidence():
+    evidence = [{"evidence_id": "degree", "category": "education"},
+                {"evidence_id": "skills", "category": "skill"},
+                {"evidence_id": "intern", "category": "experience"},
+                {"evidence_id": "agent", "category": "project"},
+                {"evidence_id": "lab", "category": "experience"},
+                {"evidence_id": "dashboard", "category": "project"}]
+    mixed = build_plan(interview_id="i", snapshot_id="s", snapshot_hash="h", evidence=evidence,
+        requirement_ids=["r"], mode=InterviewMode.MIXED, target_count=10).items
+    pinned = {(item.competency, tuple(item.related_evidence_ids)) for item in mixed}
+    assert ("collaboration", ("intern",)) in pinned and ("collaboration", ("lab",)) in pinned
+    assert ("project_deep_dive", ("agent",)) in pinned and ("project_deep_dive", ("dashboard",)) in pinned
+    assert not {"degree", "skills"} & {e for item in mixed for e in item.related_evidence_ids}
+    deep = build_plan(interview_id="i", snapshot_id="s", snapshot_hash="h", evidence=evidence[:3],
+        requirement_ids=[], mode=InterviewMode.PROJECT_DEEP_DIVE, target_count=4).items
+    assert [item.related_evidence_ids for item in deep] == [["intern"]] * 4  # no project: experience
