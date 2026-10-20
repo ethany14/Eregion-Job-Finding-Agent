@@ -49,7 +49,7 @@ def _validation_shape(exc):
     return [{"location": list(error["loc"]), "type": error["type"]}
             for error in exc.errors(include_input=False, include_context=False, include_url=False)]
 
-PACK_PROMPT_VERSION = "application-pack-v8"
+PACK_PROMPT_VERSION = "application-pack-v9"
 _COVER_SYSTEM = (
     "Write a polished, concise schema_version=2 CoverLetter with three to five paragraphs. "
     "Use a neutral 'Dear Hiring Team,' greeting unless a verified recipient is supplied. "
@@ -472,17 +472,41 @@ class ApplicationPackWorkflow:
         return json.dumps({"company": employer.company, "title": employer.title,
             "job_description": source.cleaned_job_description,
             "resume_header_lines": snap.resume_header_lines,
-            "job_analysis": job.model_dump(mode="json"),
-            "skill_match": match.model_dump(mode="json"),
+            "job_analysis": self._writing_job(job),
+            "skill_match": self._writing_match(match),
             "evidence": [self._writing_evidence(e) for e in snap.items],
             "preferences": snap.preference_versions, "question": item.source_question,
             "user_revision_feedback": item.regeneration_feedback,
             "max_length": item.max_length}, ensure_ascii=False)
 
     @staticmethod
+    def _writing_job(job: JobAnalysis) -> dict:
+        """Each requirement once: the analysis repeats its text in five fields."""
+        value = job.model_dump(mode="json", include={"title", "summary", "responsibilities"})
+        value["requirements"] = [{**requirement.model_dump(mode="json", include={
+                "requirement_id", "level", "category", "minimum_years"}),
+            "text": requirement.atomic_text or requirement.source_text or requirement.display_name}
+            for requirement in job.requirements]
+        return value
+
+    @staticmethod
+    def _writing_match(match: SkillMatch) -> dict:
+        """Per-requirement status only. Citable evidence is the snapshot's evidence list; a match's
+        resume_evidence can be a whole resume (Jev) and scoring internals are not writing context."""
+        value = match.model_dump(mode="json", include={
+            "overall_score", "explanation", "missing_required_requirements", "missing_preferred_requirements"})
+        value["matches"] = [item.model_dump(mode="json", include={
+            "requirement_id", "requirement_level", "match_status", "condition_satisfied"})
+            for item in match.matches]
+        value["confirmation_requirement_ids"] = [item.requirement_id for item in match.confirmation_requirements]
+        return value
+
+    @staticmethod
     def _writing_evidence(evidence) -> dict:
         """Legacy ownership fallbacks identify a section, not an actual job title."""
-        value = evidence.model_dump(mode="json")
+        value = evidence.model_dump(mode="json", exclude={"content_hash", "status_at_selection"})
+        if value.get("exact_quote") == value.get("claim_text"):
+            value.pop("exact_quote")
         role = normalize_text(value.get("role") or "")
         section = normalize_text(value.get("source_section") or "")
         if role and role == section and role in {

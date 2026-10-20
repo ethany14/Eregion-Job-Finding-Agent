@@ -801,3 +801,21 @@ def test_cover_letter_structure_is_checked_when_the_analysis_has_no_title(setup)
     reasons = {issue.reason for issue in edited.verification.issues}
     assert "Cover letter needs at least three coherent paragraphs." in reasons
     assert "Cover letter does not begin with a role-specific opening." in reasons
+
+
+def test_writing_context_keeps_requirements_and_citable_evidence_but_not_scoring_internals(setup):
+    import json
+    workflow, packs, _, _, saved, _ = setup
+    pack = workflow.create(saved.application.application_id,
+        expected_version=saved.application.version, idempotency_key="context")
+    item = packs.add_item(pack.pack_id, expected_version=pack.version,
+        artifact_type="cover_letter", idempotency_key="letter")
+    context = json.loads(workflow._context(pack.pack_id, item))
+    assert context["job_analysis"]["requirements"] == [{"requirement_id": "REQ-1", "level": "required",
+        "category": "skill", "minimum_years": None, "text": "Python API experience"}]
+    assert context["skill_match"]["matches"] == [{"requirement_id": "REQ-1", "requirement_level": "required",
+        "match_status": "missing", "condition_satisfied": None}]
+    assert "decision_details" not in context["skill_match"]
+    evidence = context["evidence"][0]
+    assert evidence["claim_text"] == "Built Python APIs." and evidence["evidence_version_id"]
+    assert "content_hash" not in evidence and "exact_quote" not in evidence  # the quote equals the claim
