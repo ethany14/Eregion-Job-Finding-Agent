@@ -97,7 +97,7 @@ TOOLS = [
          "Saves only a run-local decision, never a new candidate fact. For a standalone questionnaire, cite education facts with format/equivalent and your reason; evidence is model-verified without inventing a repeated-row binding. "
          "mode=leave_empty records your decision to leave an "
          "OPTIONAL field empty when no observed option reliably represents the fact (value may be empty; give the reason); "
-         "it is shown to the user immediately. An existing optional value is cleared through its own control and read back; a failed clear is not completion. Never pick a merely similar option instead.",
+         "it is shown to the user immediately. An existing optional value is cleared through its own control and read back; a failed clear is not completion. Never pick a merely similar option instead, except for a field of study (choose the closest option; see instructions).",
          {**FIELD, "mode":{"type":"string", "enum":["format", "equivalent", "default", "leave_empty"]}, "value":TEXT,
           "source_refs":{"type":"array", "items":TEXT}, "reason":TEXT}),
     tool("explore_option", "Enter an observed category to find a user's intended leaf. Read returned children/new fields; the category is not the final answer.",
@@ -174,7 +174,11 @@ def shared_word_options(fact, options, limit=20):
         count = len(wanted & {w.casefold() for w in _words(label)})
         if count and label not in shared:
             shared[label] = count
-    return sorted(shared, key=lambda label: -shared[label])[:limit]  # most shared words first, stable
+    # Most shared words first; among equals, an option made only of the fact's words (the broader option of
+    # the same discipline: "Engineering" for "Systems Engineering") before narrower ones.
+    def broader(label):
+        return {w.casefold() for w in _words(label)} <= wanted
+    return sorted(shared, key=lambda label: (-shared[label], not broader(label)))[:limit]
 
 
 OTHER_PARTY = re.compile(r"\b(company|employer|organi[sz]ation|business|reference|referee|referr\w*|emergency|"

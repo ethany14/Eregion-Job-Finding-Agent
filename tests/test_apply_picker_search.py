@@ -44,6 +44,15 @@ def test_helpers_pick_distinctive_words_and_rank_shared_options():
     assert ranked[0] == 'Computer and Information Science' and 'Accounting' not in ranked
 
 
+def test_the_broader_option_of_the_same_discipline_ranks_first_among_equals():
+    # The owner's rule (2026-10-20): Systems Engineering -> Engineering; Computer Science ->
+    # Computer and Information Science. Ranking is a hint; the model saves the decision.
+    options = [{'label': c} for c in ['Aerospace Engineering', 'Industrial Engineering', 'Computer Systems Analysis', 'Engineering']]
+    assert shared_word_options('Systems Engineering', options)[0] == 'Engineering'
+    from eregion.runtime.auto_apply.prompt import SYSTEM
+    assert 'Systems Engineering -> Engineering' in SYSTEM and 'Computer and Information Science' in SYSTEM
+
+
 def test_one_search_call_runs_the_words_when_the_phrase_has_no_literal_match(monkeypatch):
     browser, session = tools()
     monkeypatch.setattr(session, 'search_source', lambda field, ref: 'Computer Science')
