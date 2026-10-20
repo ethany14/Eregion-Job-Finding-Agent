@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Education</title></head>
+<body>
+<h1>My Experience</h1>
+<form id="education" onsubmit="window.nextCount++; return false">
+  <label for="school">School or University *</label>
+  <input id="school" name="school" required>
+  <label for="degree">Degree *</label>
+  <select id="degree" name="degree" required>
+    <option value="">Select One</option><option>Bachelors</option><option>Masters</option><option>Doctorate</option>
+  </select>
+  <label for="field">Field of Study</label>
+  <select id="field" name="field"></select>
+  <button type="submit">Next</button>
+</form>
+<script>
+window.nextCount = 0; window.submitCount = 0;
+// A long Workday-style field-of-study list: 250 entries, none named "Systems Engineering".
+const subjects = ['Accounting', 'Agriculture', 'Anthropology', 'Architecture', 'Art History', 'Astronomy', 'Biochemistry',
+  'Biology', 'Chemistry', 'Classics', 'Communications', 'Criminology', 'Dance', 'Economics', 'Education', 'English',
+  'Environmental Science', 'Film', 'Finance', 'Geography', 'Geology', 'History', 'Journalism', 'Linguistics',
+  'Marketing', 'Music', 'Nursing', 'Philosophy', 'Physics', 'Political Science', 'Psychology', 'Sociology', 'Statistics',
+  'Theater', 'Zoology'];
+const select = document.getElementById('field');
+select.add(new Option('Select One', ''));
+for (let i = 0; i < 250; i++) {
+  const name = subjects[i % subjects.length] + (i >= subjects.length ? ' ' + (Math.floor(i / subjects.length) + 1) : '');
+  select.add(new Option(name, name));
+}
+</script>
+</body></html>

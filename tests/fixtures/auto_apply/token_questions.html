@@ -1,0 +1,27 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Application Questions</title></head>
+<body>
+<h1>Application Questions</h1>
+<form id="questions" onsubmit="window.nextCount++; return false">
+  <label for="sponsorship">Will you now or in the future require sponsorship for employment visa status? *</label>
+  <select id="sponsorship" name="sponsorship" required>
+    <option value="">Select One</option><option value="yes">Yes</option><option value="no">No</option>
+  </select>
+  <fieldset><legend>Are you willing to relocate to New York, NY? *</legend>
+    <label><input type="radio" name="relocate" value="yes" required> Yes</label>
+    <label><input type="radio" name="relocate" value="no"> No</label>
+  </fieldset>
+  <label for="start">Earliest start date *</label>
+  <input id="start" name="start" required>
+  <label for="why">Why are you interested in this role? *</label>
+  <textarea id="why" name="why" required></textarea>
+  <label for="linkedin">LinkedIn profile</label>
+  <input id="linkedin" name="linkedin">
+  <label for="hear">How did you hear about us?</label>
+  <select id="hear" name="hear">
+    <option value="">Select One</option><option>Job board</option><option>Referral</option><option>Company website</option>
+  </select>
+  <button type="submit">Next</button>
+</form>
+<script>window.nextCount = 0; window.submitCount = 0;</script>
+</body></html>
