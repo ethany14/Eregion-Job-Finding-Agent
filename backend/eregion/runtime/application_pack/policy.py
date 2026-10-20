@@ -155,12 +155,15 @@ class EvidenceSelectionPolicy:
 def evidence_set_hash(items: list[EvidenceSnapshotItem], *, job_snapshot_id: str,
                       preferences: list[dict], prompt_version: str,
                       model_configuration: dict | None = None,
-                      resume_header_lines: list[str] | None = None) -> str:
+                      resume_header_lines: list[str] | None = None,
+                      resume_entries: dict[str, dict] | None = None) -> str:
     payload = {"job_snapshot_id": job_snapshot_id, "prompt_version": prompt_version,
                "evidence": [item.model_dump(mode="json") for item in items],
                "preferences": preferences,
                "resume_header_lines": resume_header_lines or [],
                "model_configuration": model_configuration or {}}
+    if resume_entries:
+        payload["resume_entries"] = resume_entries
     return hashlib.sha256(canonical_json(payload).encode()).hexdigest()
 
 

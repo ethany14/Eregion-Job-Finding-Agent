@@ -170,6 +170,9 @@ class GenerationEvidenceSnapshot(PackModel):
     job_snapshot_id: str
     items: list[EvidenceSnapshotItem]
     resume_header_lines: list[str] = Field(default_factory=list)
+    # Source-entry metadata of resume-imported evidence, by evidence_version_id: entry_type, heading,
+    # organization, location, start_date, end_date and the entry's position in the resume.
+    resume_entries: dict[str, dict] = Field(default_factory=dict)
     preference_versions: list[dict]
     prompt_version: str
     model_config_id: str

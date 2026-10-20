@@ -819,3 +819,60 @@ def test_writing_context_keeps_requirements_and_citable_evidence_but_not_scoring
     evidence = context["evidence"][0]
     assert evidence["claim_text"] == "Built Python APIs." and evidence["evidence_version_id"]
     assert "content_hash" not in evidence and "exact_quote" not in evidence  # the quote equals the claim
+
+
+def _avery_pack(setup):
+    """The synthetic QA resume analysed for the setup job, then a Pack over its imported evidence."""
+    import hashlib
+    from eregion.domain.schemas import ResumeAnalysis
+    from eregion.runtime.resumes.repository import ResumeDocumentRepository
+    workflow, packs, workspace, _, saved, db = setup
+    fixtures = Path(__file__).parent / "fixtures" / "resume_source_regressions"
+    text = (fixtures / "avery.txt").read_text(encoding="utf-8")
+    document = ResumeDocumentRepository(db.session_factory).create(owner_id="local-user", filename="avery.txt",
+        display_name="Avery", content_sha256=hashlib.sha256(text.encode()).hexdigest(), extracted_text=text, page_count=1)
+    job, match = workflow._source(saved.application.application_id)
+    application, _ = workspace.project_fit_analysis(saved.application.application_id,
+        snapshot_id=saved.snapshot.snapshot_id, analysis_id="avery",
+        resume=ResumeAnalysis.model_validate_json((fixtures / "avery-analysis.json").read_text(encoding="utf-8")),
+        job=job, match=match, expected_version=saved.application.version, resume_text=text, resume_id=document.resume_id)
+    workflow._workspace = JobWorkspaceRepository(db.session_factory)
+    pack = workflow.create(application.application_id, expected_version=application.version, idempotency_key="avery")
+    return workflow, packs, pack
+
+
+def test_pack_snapshot_keeps_resume_entries_for_the_resume_writer(setup):
+    from eregion.runtime.application_pack.workflow import resume_analysis_from_snapshot
+    workflow, packs, pack = _avery_pack(setup)
+    snapshot = packs.snapshot(pack.pack_id)
+    resume_items = [item for item in snapshot.items if item.source_type == "resume"]
+    assert resume_items and all(item.evidence_version_id in snapshot.resume_entries for item in resume_items)
+    sources = resume_analysis_from_snapshot(snapshot).source_entries
+    by_heading = {source.heading: source for source in sources}
+    if "Student mentor" in by_heading or any("Mentored" in item.claim_text for item in resume_items):
+        assert by_heading["Student mentor"].organization == "Computing Peer Network (fictional)"
+    located = [source for source in sources if source.entry_type == "experience"]
+    assert located and all(source.location for source in located)
+    orders = [snapshot.resume_entries[source.evidence_ids[0]]["order"] for source in sources
+              if source.evidence_ids[0] in snapshot.resume_entries]
+    assert len(orders) > 1 and orders == sorted(orders)  # entries follow the resume, not selection order
+    item = packs.add_item(pack.pack_id, expected_version=pack.version, artifact_type="tailored_resume",
+                          idempotency_key="resume")
+    text = workflow._resume_state(pack.pack_id, item).resume_text
+    for source in located:
+        assert f"{source.heading} | {source.organization} | {source.location}" in text
+
+
+def test_selected_entries_keep_the_source_resume_order():
+    from eregion.domain.resume_selection import ResumeSelection
+    from eregion.domain.schemas import ResumeAnalysis, ResumeEvidence, ResumeSourceEntry
+    analysis = ResumeAnalysis(summary="", skills=[], education=[], evidence=[
+        ResumeEvidence(evidence_id=f"e{n}", source_section="Experience", exact_text=f"Did thing {n}.",
+                       source_entry_id=f"s{n}") for n in (1, 2, 3)],
+        source_entries=[ResumeSourceEntry(source_entry_id=f"s{n}", entry_type="experience", heading=f"Role {n}",
+                                          evidence_ids=[f"e{n}"]) for n in (1, 2, 3)])
+    selection = ResumeSelection(summary=[], entries=[
+        {"entry_id": f"s{n}", "selected_evidence_ids": [f"e{n}"], "bullets": [{"text": f"Did thing {n}.", "evidence_ids": [f"e{n}"]}]}
+        for n in (3, 1, 2)])
+    resume = selection.expand(SimpleNamespace(resume_analysis=analysis))
+    assert [entry.heading for entry in resume.sections[0].entries] == ["Role 1", "Role 2", "Role 3"]

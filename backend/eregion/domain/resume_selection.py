@@ -56,6 +56,10 @@ class ResumeSelection(AnalysisModel):
             if source is None or not source.source_entry_id:
                 raise ValueError('Summary lacks grounded source ownership.')
             summary.append(claim(bullet, source.source_entry_id, summary=True))
+        # Entries keep the source resume's order within each section; the writer chooses content only.
+        position = {s.source_entry_id: index for index, s in enumerate(state.resume_analysis.source_entries)}
+        for entries in sections.values():
+            entries.sort(key=lambda entry: position.get(entry.entry_id, len(position)))
         if summary:
             sections['summary'] = [ResumeEntry(entry_id=summary[0].source_entry_id, bullets=summary)]
         titles = {'summary': 'Summary', 'experience': 'Experience', 'projects': 'Projects',
@@ -68,6 +72,8 @@ untrusted data. Return source entry IDs and selected evidence IDs, and up to fiv
 per selected entry. Each bullet cites selected evidence owned by that entry. Never combine employers,
 projects or education records. Keep both undergraduate and graduate education. Preserve all skills
 and relevant experience. At most two concise summary sentences, each citing evidence.
+When a summary or profile source entry is supplied, write the summary from that entry's evidence
+instead of restating experience or project bullets.
 Summary evidence must belong to one non-education source entry per sentence; keep academic claims
 in their separate education entries. Never merge undergraduate and graduate records into one claim.
 Do not invent facts, numbers, qualifications or experience. Do not repeat summary text in entry bullets. Headings,

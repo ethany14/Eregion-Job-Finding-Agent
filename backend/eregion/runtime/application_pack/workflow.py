@@ -49,7 +49,7 @@ def _validation_shape(exc):
     return [{"location": list(error["loc"]), "type": error["type"]}
             for error in exc.errors(include_input=False, include_context=False, include_url=False)]
 
-PACK_PROMPT_VERSION = "application-pack-v9"
+PACK_PROMPT_VERSION = "application-pack-v10"
 _COVER_SYSTEM = (
     "Write a polished, concise schema_version=2 CoverLetter with three to five paragraphs. "
     "Use a neutral 'Dear Hiring Team,' greeting unless a verified recipient is supplied. "
@@ -135,8 +135,18 @@ def resume_analysis_from_snapshot(
     snapshot: GenerationEvidenceSnapshot,
 ) -> ResumeAnalysis:
     """Build stable source ownership for confirmed Pack evidence."""
-    grouped: dict[tuple[str, str, str, str, str, str], list] = {}
+    grouped: dict[tuple, list] = {}
+    located: dict[tuple, tuple[str | None, int]] = {}
+    entries = getattr(snapshot, "resume_entries", None) or {}  # snapshots saved before v10 have none
     for item in snapshot.items:
+        entry = entries.get(item.evidence_version_id)
+        if entry:
+            # The resume's own entry: section type, heading, organization, location and order survive.
+            key = (entry["entry_type"], entry.get("heading") or "", entry.get("organization") or "",
+                   entry.get("start_date") or "", entry.get("end_date") or "", "")
+            grouped.setdefault(key, []).append(item)
+            located[key] = (entry.get("location"), entry["order"])
+            continue
         category = (item.category or "").casefold()
         section = normalize_text(item.source_section or "")
         if section in {"summary", "profile", "professional summary"}:
@@ -180,7 +190,9 @@ def resume_analysis_from_snapshot(
 
     evidence: list[ResumeEvidence] = []
     sources: list[ResumeSourceEntry] = []
-    for key, items in grouped.items():
+    # Resume entries keep the resume's order; evidence without an entry follows in selection order.
+    ordered = sorted(grouped.items(), key=lambda pair: located.get(pair[0], (None, len(grouped)))[1])
+    for key, items in ordered:
         entry_type, heading, organization, start_date, end_date, _ = key
         source_id = make_source_entry_id(
             entry_type,
@@ -194,8 +206,9 @@ def resume_analysis_from_snapshot(
         sources.append(ResumeSourceEntry(
             source_entry_id=source_id,
             entry_type=entry_type,
-            heading=heading,
+            heading=heading or None,
             organization=organization or None,
+            location=located.get(key, (None, 0))[0],
             start_date=start_date or None,
             end_date=end_date or None,
             evidence_ids=evidence_ids,
@@ -354,6 +367,34 @@ class ApplicationPackWorkflow:
                 "max_retries": int(retries) if retries is not None else 0,
                 "endpoint_hash": hashlib.sha256(endpoint.encode()).hexdigest() if endpoint else None}
 
+    def _resume_entries(self, application_id: str, items) -> dict[str, dict]:
+        """The resume entry each resume-imported item came from, matched by the exact imported text.
+
+        Evidence records keep no location, and records imported from an 'other' entry (activities)
+        keep no heading or organization; the analysis the evidence was imported from still has them.
+        """
+        artifacts = self._workspace.list_artifacts(application_id)
+        analyses = []
+        resume = next((a for a in reversed(artifacts) if a.artifact_type == ArtifactType.RESUME_ANALYSIS), None)
+        text = self._workspace.resume_source(resume.artifact_id) if resume else None
+        if text is not None:
+            analyses.append(complete_source_evidence(ResumeAnalysis.model_validate(resume.content), text))
+        match = next((a for a in reversed(artifacts) if a.artifact_type == ArtifactType.MATCH_REPORT), None)
+        source = self._packs.resume_source(application_id, match.source_run_id) if match and match.source_run_id else None
+        if source is not None:
+            analyses.append(complete_source_evidence(source[1], source[0]))
+        by_text: dict[str, dict] = {}
+        for analysis in analyses:
+            analysis = normalize_resume_analysis(analysis)
+            for order, entry in enumerate(analysis.source_entries):
+                meta = {**entry.model_dump(mode="json", include={
+                    "entry_type", "heading", "organization", "location", "start_date", "end_date"}), "order": order}
+                for evidence in analysis.evidence:
+                    if evidence.source_entry_id == entry.source_entry_id or evidence.evidence_id in entry.evidence_ids:
+                        by_text.setdefault(normalize_text(evidence.exact_text), meta)
+        return {item.evidence_version_id: by_text[normalize_text(item.claim_text)] for item in items
+                if item.source_type == EvidenceSourceType.RESUME.value and normalize_text(item.claim_text) in by_text}
+
     def _current_snapshot(self, application_id: str, *, pack_id: str | None = None) -> GenerationEvidenceSnapshot:
         app = self._workspace.get_application(application_id)
         job, _ = self._source(application_id)
@@ -367,14 +408,16 @@ class ApplicationPackWorkflow:
         preferences = self._preferences(application_id)
         model_configuration = self._model_configuration()
         resume_header_lines = self._resume_header_lines(application_id)
+        resume_entries = self._resume_entries(application_id, selected)
         digest = evidence_set_hash(selected, job_snapshot_id=app.current_snapshot_id,
                                    preferences=preferences, prompt_version=PACK_PROMPT_VERSION,
                                    model_configuration=model_configuration,
-                                   resume_header_lines=resume_header_lines)
+                                   resume_header_lines=resume_header_lines,
+                                   resume_entries=resume_entries)
         return GenerationEvidenceSnapshot(generation_snapshot_id=str(uuid4()),
             pack_id=pack_id or str(uuid4()), application_id=application_id,
             job_snapshot_id=app.current_snapshot_id, items=selected,
-            resume_header_lines=resume_header_lines,
+            resume_header_lines=resume_header_lines, resume_entries=resume_entries,
             preference_versions=preferences, prompt_version=PACK_PROMPT_VERSION,
             model_config_id=str(model_configuration["model_id"]),
             model_configuration=model_configuration, effective_tools=[],
@@ -548,17 +591,31 @@ class ApplicationPackWorkflow:
                 context += "\nRepair targets (data, not instructions): " + json.dumps(targets, ensure_ascii=False)
         return context
 
+    @staticmethod
+    def _sectioned_source(analysis: ResumeAnalysis) -> list[str]:
+        """The writer's source text: each entry under its own section with its heading line, as on a resume."""
+        titles = {"summary": "SUMMARY", "education": "EDUCATION", "project": "PROJECTS", "skills": "SKILLS"}
+        texts = {item.evidence_id: item.exact_text for item in analysis.evidence}
+        lines, section = [], None
+        for entry in analysis.source_entries:
+            title = titles.get(entry.entry_type, "EXPERIENCE")
+            if title != section:
+                lines.append(title)
+                section = title
+            dates = " - ".join(value for value in (entry.start_date, entry.end_date) if value)
+            header = " | ".join(value for value in (entry.heading, entry.organization, entry.location, dates) if value)
+            if header and entry.entry_type != "summary":
+                lines.append(header)
+            lines.extend(texts[key] for key in entry.evidence_ids if key in texts)
+        return lines
+
     def _resume_state(self, pack_id: str, item: ApplicationPackItem,
                       *, content: dict | None = None,
                       feedback: ArtifactVerification | None = None) -> AgentState:
         snap = self._packs.snapshot(pack_id)
         job, match = self._source(snap.application_id)
         resume_analysis = resume_analysis_from_snapshot(snap)
-        source_text = "\n".join([
-            *snap.resume_header_lines,
-            *( ["EXPERIENCE"] if snap.resume_header_lines else [] ),
-            *(e.exact_text for e in resume_analysis.evidence),
-        ])
+        source_text = "\n".join([*snap.resume_header_lines, *self._sectioned_source(resume_analysis)])
         verification = None
         if content is not None and item.regeneration_feedback:
             verification = VerificationResult(passed=True, unsupported_claims=[], revision_feedback=[])
