@@ -497,6 +497,12 @@ class ApplicationHost:
                 self.checkpoint(last_tool_result={'tool': 'model', 'result': {'error': failure.error_type, 'status': failure.status}})
             raise LoopStop(failure.code, **({'retry_after': failure.retry_after} if failure.retry_after else {})) from exc
         self.timed('model', started, **model_metrics(messages, tools, result))
+        if turn.snapshot.get('recovery'):
+            # The note explains the previous step's end to the first turn after it. Kept, it made every
+            # later turn look like a recovery (main model, recovery label) for the rest of the run.
+            self.session.state['recovery_note'] = None
+            if self.checkpoint:  # saved now: the next observation reloads state from the repository
+                self.checkpoint(recovery_note=None)
         return result
 
     def fast_choices(self, state, questions):

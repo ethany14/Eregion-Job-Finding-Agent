@@ -43,6 +43,10 @@ def _desired_answer(field, state):
         return experience_value(field, state)
     education=bound_value(field,state)
     if education is not None:return education
+    from .structural_facts import structural_fact
+    structural = structural_fact(field, state["profile"])
+    if structural is not None:
+        return structural
     answer = candidate_answer(field, state["profile"], state["answers"])
     return answer if answer is not None else consent_answer(field, state.get("consent_policy", "ask"))
 
