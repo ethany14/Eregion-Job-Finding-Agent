@@ -41,7 +41,7 @@ def control_input(field):
     """Explain observed browser mechanics, never candidate meaning or an answer."""
     kind = field['kind']
     if kind == 'checkbox':
-        return 'checkbox: save your evidence-backed yes/no decision; binding alone is not a decision'
+        return 'checkbox: save your evidence-backed yes/no decision; binding alone is not a decision, except to a listed current_status'
     if kind in {'select', 'radio'}:
         return 'choice: use listed options directly; inspect only when the needed options are not visible'
     if field.get('choice_control') or kind in {'combobox', 'location'}:
