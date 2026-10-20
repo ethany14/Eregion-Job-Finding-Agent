@@ -1,4 +1,5 @@
 """Jev decision cache keys follow each stage's real inputs: posting stages survive a resume change."""
+import hashlib
 import json
 
 import httpx
@@ -6,20 +7,46 @@ import httpx
 from eregion.domain.jev_fit import cache as cache_module
 from eregion.domain.jev_fit.service import JevFitService
 from eregion.domain.jev_fit.settings import Settings
-from eregion.domain.jev_fit.transport import decode_wire
-from test_jev_wire_encoding import JD, RESUME, Endpoint
 
+RESUME = ('Avery Example\nEXPERIENCE\nData Analyst | Example Co | 2023-01 | 2026-01\n'
+          'Built SQL dashboards and Python pipelines for operations reporting.\nSKILLS\nPython, SQL, Tableau\n')
+JD = ('Data Analyst\nRequirements:\n- Two or more years of experience writing production SQL for analytics teams.\n'
+      '- Experience with Python data pipelines or a similar scripting language for reporting.\n'
+      '- Bachelor degree in statistics, economics, computer science or a related quantitative field.\n'
+      'Preferred:\n- Familiarity with Tableau or another business intelligence tool used by stakeholders.\n'
+      '- Authorization to work in the United States without employer sponsorship now or later.\n'
+      'Benefits:\n- Health insurance and a generous paid time off policy for every employee.\n')
 OTHER_RESUME = RESUME.replace('Python pipelines', 'Java services').replace('Tableau', 'Looker')
 POSTING_STAGES = {'Does this span state', 'Is this candidate qualification', 'Does this span specify',
                   'Does this qualification explicitly', 'Is `requirement` a condition', 'Does the requirement ask for personal'}
+
+
+class Endpoint:
+    """Answers each question from a hash of its sentence and evidence; records request payloads."""
+
+    def __init__(self):
+        self.payloads = []
+
+    def __call__(self, request):
+        payload = json.loads(request.content)
+        self.payloads.append(payload)
+        answers = {}
+        for key, q in payload['questions'].items():
+            ins = dict(q['instructions'])
+            ins.pop('context_case', None)
+            ins.pop('context_rule', None)
+            digest = int(hashlib.sha256(json.dumps([ins, q.get('criteria')], sort_keys=True).encode()).hexdigest(), 16)
+            answers[key] = {'type': 'noul', 'noul': (.96, .04, .5)[digest % 3]}
+        return httpx.Response(200, json={'model': payload['model'], 'answers': answers,
+                                         'usage': {'prompt_tokens': 1, 'completion_tokens': 1}})
+
 
 
 def stages(endpoint):
     """Which judgments each request asked, by question sentence."""
     asked = []
     for payload in endpoint.payloads:
-        _, questions = decode_wire(payload['state'], payload['questions'])
-        asked.extend(q['instructions']['question'] for q in questions.values())
+        asked.extend(q['instructions']['question'] for q in payload['questions'].values())
     return asked
 
 

@@ -222,9 +222,7 @@ def test_offline_eight_job_production_uses_the_exact_live_acceptance_contract(ca
     def transport(request):
         response=endpoint(request)
         body=response.json();payload=json.loads(request.content)
-        from eregion.domain.jev_fit.transport import decode_wire
-        _,questions=decode_wire(payload['state'],payload['questions'])
-        for key,question in questions.items():
+        for key,question in payload['questions'].items():
             args=question['instructions']
             if args['question'].startswith('Does this span'):
                 body['answers'][key]['noul']=.01 if any(t in args['span'] for t in
