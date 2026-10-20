@@ -25,7 +25,8 @@ sys.path[:0] = [str(ROOT / 'backend'), str(ROOT / 'tools' / 'scripts')]
 # Attempt 1 of the earlier arm (4 calls) stopped at the first scheduler yield (run() was called once);
 # attempt 2 (7 calls) clicked Next, which replaces the page, before the values were read. Values are now
 # taken at Next and both remaining arms use 10 attempts, so the approved total (2 x 16) is not exceeded.
-CAPS = {'provider_attempts': 10, 'input_tokens': 900_000, 'seconds': 600}
+# Selective-model check C (approved 2026-10-20) lowers input to 300,000 units per run, 4 runs.
+CAPS = {'provider_attempts': 10, 'input_tokens': 300_000, 'seconds': 600}
 EXPECTED = {'work': {1: {'jobTitle': 'Research', 'companyName': 'University', 'startDate-dateSectionMonth-input': '8',
                          'startDate-dateSectionYear-input': '2026', 'current': True},
                      2: {'jobTitle': 'Intern', 'companyName': 'Employer', 'startDate-dateSectionMonth-input': '7',
