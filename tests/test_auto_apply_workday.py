@@ -534,9 +534,8 @@ def test_one_workday_search_call_also_runs_the_words_of_a_phrase_without_a_match
         s.search_source=lambda field,ref:'Systems Engineering'
         result=s.execute('search_options',{'observation_id':s.observation_id,'field_key':study['key'],
             'source_ref':'education:a:field_of_study'})
-        found={item['query']:item['options'] for item in result['additional_searches']}
-        assert found['Systems']==['Computer Systems Analysis','Management Information Systems']
-        assert found['Engineering']==['Industrial Engineering']
+        found={item['query']:(item['total_options'],item.get('in_options_sharing_words'),item['options']) for item in result['additional_searches']}
+        assert found['Systems']==(2,2,[]) and found['Engineering']==(1,1,[])   # listed once, below
         assert set(result['options_sharing_words'])=={'Computer Systems Analysis','Management Information Systems','Industrial Engineering'}
         assert 'unresolved' in result and not browser.observe()[0]['value']  # nothing chosen for the model
     finally:browser.close()
@@ -558,6 +557,10 @@ def test_a_word_search_reads_every_row_of_a_virtualized_result_list():
         assert len(found)==len(set(found))
         assert browser.page.locator('[role="option"]').count()<12            # still only a window rendered
         assert browser.page.evaluate("document.getElementById('list').scrollTop")==0
+        # Adobe run 41: the unfiltered catalogue a phrase leaves is not scrolled.
+        assert len(browser.inspect_options(study['key'],query='Systems Engineering'))<12
+        again=browser.inspect_options(study['key'],query='Engineering')
+        assert len(browser.inspect_options(study['key'],query='Engineering'))==24==len(again)  # same query, list unchanged
         browser.choose_option(study['key'],'Structural Engineering')       # a row scrolled out of view
         assert browser.page.locator('[data-automation-id="selectedItem"]').inner_text()=='Structural Engineering'
     finally:browser.close()

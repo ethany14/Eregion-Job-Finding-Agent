@@ -99,3 +99,28 @@ def test_a_changed_field_value_runs_the_search_again(monkeypatch):
     session.observe()
     result = session.execute('search_options', {**args, 'observation_id': session.observation_id})
     assert len(browser.queries) > count and 'reused_results' not in result
+
+
+def test_an_adobe_sized_word_search_fits_inline_without_read_context(monkeypatch):
+    # Adobe run 41: a 19,000-character search result was archived (inline limit 5,500) and the
+    # model paged it back in 13 calls. The phrase's list (14 rendered rows), "Systems" (2) and a
+    # fully read "Engineering" (30) list each label once.
+    import json
+    engineering = [f'{word} Engineering' for word in 'Aerospace Agricultural Architectural Automotive Biomedical Ceramic '
+                   'Chemical Civil Computer Electrical Environmental Geological Industrial Manufacturing Materials Mechanical '
+                   'Metallurgical Mineral Mining Nuclear Ocean Petroleum Software Sound Structural Textile Welding'.split()]
+    engineering += ['Engineering Mechanics', 'Engineering Physics', 'Engineering Technology']
+    rendered = ['Accounting', 'Actuarial Science', 'Advertising', 'Aerospace Engineering', 'African Studies', 'Agricultural Business',
+                'Agronomy and Crop Science', 'American Studies', 'Anatomy', 'Ancient Studies', 'Animal Behavior and Ethology',
+                'Animal Science', 'Anthropology', 'Applied Mathematics']
+    lists = {'Systems': ['Computer Systems Analysis', 'Management Information Systems'], 'Engineering': engineering}
+    browser, session = tools('Systems Engineering')
+    full = {'role': 'option', 'automation_id': 'menuItem', 'expandable': False, 'disabled': False}
+    browser.inspect_options = lambda key, query=None: [{'label': c, 'value': c, **full} for c in lists.get(query, rendered)]
+    monkeypatch.setattr(session, 'search_source', lambda field, ref: 'Systems Engineering')
+    result = session.execute('search_options', {'observation_id': session.observation_id,
+                                                'field_key': 'text:education--fieldOfStudy:1',
+                                                'source_ref': 'education:b:field_of_study'})
+    assert set(engineering) <= set(result['options_sharing_words'])
+    assert all(item['options'] == [] for item in result['additional_searches'])
+    assert len(json.dumps(result, ensure_ascii=False)) < 5000

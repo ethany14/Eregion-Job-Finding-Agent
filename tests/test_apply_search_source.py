@@ -175,7 +175,10 @@ def test_extra_queries_run_in_one_call_and_report_each_result():
         'query':'Physics','query_reason':'Shorter and related terms for the cited major.','extra_queries':['Applied Physics','Science','Physics']})
     assert seen==['Physics','Applied Physics','Science']            # duplicate of the main query not repeated
     assert [x['query'] for x in result['additional_searches']]==['Applied Physics','Science']
-    assert result['additional_searches'][1]['options']==['Physical Science','Applied Physics']
+    # Labels in options_sharing_words are listed there once (Adobe run 41); the count stays.
+    assert result['options_sharing_words']==['Applied Physics']
+    science=result['additional_searches'][1]
+    assert science['options']==['Physical Science'] and science['in_options_sharing_words']==1 and science['total_options']==2
     assert [o['label'] for o in s.observed_options[major['key']]]==['Applied Physics','Physical Science']
     assert s.state['option_search_log'][major['key']]['queries']==['Physics','Applied Physics','Science']
     assert major['value']=='' and not s.state.get('field_decisions')      # searching decides nothing

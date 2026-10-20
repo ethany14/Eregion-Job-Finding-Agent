@@ -1082,9 +1082,18 @@ class ApplicationBrowser:
             options.first.wait_for(state="visible", timeout=1000)
         except Exception:
             return []
-        if before is not None and self.option_search_evidence[key]['list_changed']:
+        if before is not None and self._filtered(field, query):
             return self._all_options(key, field, options)
         return self._read_options(key, options)
+
+    def _filtered(self, field, query):
+        """Every rendered option contains a word of the query: a filtered result list. Adobe run 41:
+        a phrase without a match leaves the whole catalogue (about 120 majors), and reading it all
+        made a 19,000-character result the model paged through in 13 calls. A repeated query
+        leaves the list unchanged but still filtered."""
+        words = [w for w in re.findall(r"\w+", str(query).casefold()) if len(w) >= 3]
+        labels = [label.casefold() for label in self._option_labels(field)]
+        return bool(words and labels and all(any(w in label for w in words) for label in labels))
 
     def _all_options(self, key, field, options, limit=120, steps=12):
         """Workday renders only the rows near the visible part of a long menu (Adobe run 40: the
@@ -1187,6 +1196,8 @@ class ApplicationBrowser:
         choices = options.evaluate_all(OPTION_SCAN)
         wanted = label.strip().casefold()
         matching = [(item["index"], item) for item in choices if item['label'].strip().casefold() == wanted and not item['disabled']]
+        if not matching:
+            options, matching = self._scroll_to_option(field, wanted)
         searchable = field['kind'] in {'text', 'search'} or (field.get('constraints') or {}).get('placeholder')
         if not matching and searchable:
             # Filter by the exact label the model chose; selection below is still exact-match only.
@@ -1194,11 +1205,34 @@ class ApplicationBrowser:
             options = self._option_locator(self.field(key))
             choices = options.evaluate_all(OPTION_SCAN)
             matching = [(item["index"], item) for item in choices if item['label'].strip().casefold() == wanted and not item['disabled']]
+            if not matching:
+                # Adobe: an exact multi-word label leaves the whole (virtualized) catalogue.
+                options, matching = self._scroll_to_option(field, wanted)
         if not matching or resolve_option(field["label"], label, [item for _, item in matching]) is None:
             raise BrowserBlocked("The option changed or is ambiguous. Inspect the field again.", code='options_changed')
         options.nth(matching[0][0]).click(timeout=5000)
         if not matching[0][1]['expandable']: self._choice_queries.pop(key,None)
         self._settle()
+
+    def _scroll_to_option(self, field, wanted, steps=40):
+        """A virtualized menu renders only the rows near its visible part (Adobe run 41): an option
+        read by scrolling is not rendered once the menu is back at the top. Scroll from the top
+        until the exact label is rendered; bounded, exact match only."""
+        options = self._option_locator(field)
+        for step in range(steps + 1):
+            try:
+                position = options.first.evaluate(SCROLL_MENU, 'top' if step == 0 else 'down')
+            except Exception:
+                return options, []
+            if not position or (step and position['after'] == position['before']):
+                return options, []
+            self.page.wait_for_timeout(150)
+            options = self._option_locator(field)
+            matching = [(item['index'], item) for item in options.evaluate_all(OPTION_SCAN)
+                        if item['label'].strip().casefold() == wanted and not item['disabled']]
+            if matching:
+                return options, matching
+        return options, []
 
     def _settle(self, timeout=1500):
         """Wait for a short quiet DOM interval, bounded even on animated pages."""

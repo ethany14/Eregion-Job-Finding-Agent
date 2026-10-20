@@ -1096,6 +1096,13 @@ class AgentTools:
             if shared and not resolve_option(field["label"], fact, seen):
                 # Observed options sharing a word with the fact, so the decision needs no re-reading.
                 page["options_sharing_words"] = shared
+                # A fully read word search repeated these labels (Adobe run 41: results above
+                # 5,500 characters are archived and paged back with read_context); list them once.
+                for item in additional:
+                    rest = [label for label in item["options"] if label not in shared]
+                    if len(rest) < len(item["options"]):
+                        item["in_options_sharing_words"] = len(item["options"]) - len(rest)
+                        item["options"] = rest
             if not resolve_option(field["label"], fact, seen):
                 # Replay: the model searched and said it would "keep looking" without saving a
                 # decision. Name the decisions that resolve the field; the choice stays the model's.

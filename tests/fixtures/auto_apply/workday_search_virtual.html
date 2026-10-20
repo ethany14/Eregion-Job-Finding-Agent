@@ -45,7 +45,8 @@ input.addEventListener('click', () => { document.getElementById('popup').style.d
 input.addEventListener('keydown', e => {
   if (e.key !== 'Enter') return;
   const query = input.value.toLowerCase();
-  setTimeout(() => show(ALL.filter(t => t.toLowerCase().includes(query))), 300);
+  // Adobe: a phrase leaves the whole catalogue; one word filters.
+  setTimeout(() => show(query.includes(' ') ? ALL : ALL.filter(t => t.toLowerCase().includes(query))), 300);
 });
 </script>
 </body></html>
