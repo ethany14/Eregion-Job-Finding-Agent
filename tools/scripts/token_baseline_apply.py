@@ -119,7 +119,7 @@ def run_scenario(name, fixture, state, turns, setup=None, done=None):
                 return AIMessage(content='', tool_calls=[{'id': 'end', 'name': 'ask_user',
                                                           'args': {'text': 'Baseline scenario ended.', 'field_keys': []}}])
             for tool, args in calls:
-                if tool != 'autofill':
+                if tool not in ('autofill', 'focus_fields'):
                     args.setdefault('observation_id', snap['observation_id'])
             return AIMessage(content='', tool_calls=[{'id': f'{len(requests)}-{i}', 'name': n, 'args': a}
                                                      for i, (n, a) in enumerate(calls)])
@@ -174,6 +174,21 @@ def experience_turns():
             lambda s: [('click_page_action', {'control_id': control(s, 'Next')['id']})]]
 
 
+def record_keys(snap, kind, n):
+    return [f['key'] for f in snap['fields'] + snap.get('field_index', [])
+            if f'{kind}--' in f['key'] and f['key'].endswith(f':{n}')]
+
+
+def scoped_experience_turns():
+    """Record by record, as a model narrowing its observation: focus, then that record's batch."""
+    work, school = experience_turns()[0:2], experience_turns()[2:4]
+    focus = lambda kind, n: (lambda s: [('focus_fields', {'field_keys': record_keys(s, kind, n)})])
+    return [focus('workExperience', 1), work[0], focus('workExperience', 2), work[1],
+            focus('education', 1), school[0], focus('education', 2), school[1],
+            lambda s: [('focus_fields', {'field_keys': []})],
+            lambda s: [('click_page_action', {'control_id': control(s, 'Next')['id']})]]
+
+
 def long_options_turns():
     # The long list is inspected once; the next turns work on other fields while it stays on the page.
     return [lambda s: [('inspect_field', {'field_key': keyof(s, 'field')})],
@@ -210,6 +225,11 @@ SCENARIOS = {
         'experience_two_work_two_education', 'experience_page.html',
         base_state(answers=dict(EARLIER_ANSWERS), review_fields=REVIEW_FIELDS, messages=MESSAGES),
         experience_turns(), setup=lambda p: (p.locator('#addWork').click(), p.locator('#addSchool').click()),
+        done='window.nextCount > 0'),
+    'experience_record_by_record': lambda: run_scenario(
+        'experience_record_by_record', 'experience_page.html',
+        base_state(answers=dict(EARLIER_ANSWERS), review_fields=REVIEW_FIELDS, messages=MESSAGES),
+        scoped_experience_turns(), setup=lambda p: (p.locator('#addWork').click(), p.locator('#addSchool').click()),
         done='window.nextCount > 0'),
     'long_options_after_inspect': lambda: run_scenario(
         'long_options_after_inspect', 'token_long_options.html', base_state(review_fields=REVIEW_FIELDS), long_options_turns()),

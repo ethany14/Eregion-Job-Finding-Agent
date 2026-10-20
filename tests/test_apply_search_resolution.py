@@ -12,7 +12,8 @@ def test_preselected_but_unmapped_picker_counts_attempts_and_explains_decision(m
     f=browser.fields[0];f.update(value='Systems Science',value_committed=True,choice_control=True)
     obs=s.observe();item=obs['fields'][0]
     assert item['mapping']=='undecided' and not item['write_verified']
-    assert 'already an observed option' in item['selected_option_decision']
+    assert item['selected_option_decision'] == 'committed_option'
+    assert 'already an observed option' in obs['field_notes']['committed_option']
     for _ in range(FIELD_ATTEMPT_LIMIT):
         run(host,'inspect_field',{'observation_id':s.observation_id,'field_key':f['key']})
     assert host.attempts(f)==FIELD_ATTEMPT_LIMIT

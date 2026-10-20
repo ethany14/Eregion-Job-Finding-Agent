@@ -361,7 +361,8 @@ def test_dynamic_preselection_is_unresolved_until_model_decides(monkeypatch):
         s.execute('bind_education',{'observation_id':s.observation_id,'education_id':'b','fields':[{'field_key':f['key'],'component':'field_of_study'}]})
         obs=s.observe();item=next(x for x in obs['fields'] if x['key']==f['key'])
         assert item['mapping']=='undecided' and not item['write_verified']
-        assert 'already an observed option' in item['selected_option_decision']
+        assert item['selected_option_decision'] == 'committed_option'
+        assert 'already an observed option' in obs['field_notes']['committed_option']
         result=s.execute('resolve_field',{'observation_id':s.observation_id,'field_key':f['key'],'mode':'equivalent','value':f['value'],
             'source_refs':['education:b:field_of_study'],'reason':'Scripted semantic decision for tool validation only.'})
         assert result['verified'] and s.state['field_decisions'][f['key']]['mode']=='equivalent'

@@ -11,7 +11,12 @@ def test_observation_explains_mechanics_without_choosing_value(kind,choice,expec
     browser.fields=[f]
     snapshot=tools.observe()
     item=next(f for f in snapshot['fields'] if f['key']=='education')
-    assert item['control_input'].startswith(expected)
+    # One field of a kind keeps its mechanics inline; several share one entry of control_inputs.
+    assert item['control_input'].startswith(expected) and 'control_inputs' not in snapshot
+    browser.fields=[f,{**f,'key':'education2','dom_id':'education2'}]
+    shared=tools.observe()
+    assert [x['control_input'] for x in shared['fields']]==[expected[:-1]]*2
+    assert shared['control_inputs'][expected[:-1]].startswith(expected)
     assert not tools.state.get('field_decisions')
     assert not tools.state.get('education_bindings')
     assert not item.get('write_verified')

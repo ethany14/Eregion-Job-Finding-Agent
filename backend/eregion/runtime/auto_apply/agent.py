@@ -148,6 +148,8 @@ TOOLS.extend(item for item in BROWSER_TOOLS if item['function']['name'] not in B
 HIDDEN_TOOLS = {"observe", "use_chat_answer", "browser_select", "browser_check"}
 # Snapshot size: long option lists are previewed until the agent inspects the field.
 OPTION_PREVIEW = 25
+COMMITTED_OPTION_NOTE = ('This committed value is already an observed option. You may resolve_field equivalent with cited facts '
+                         'and your reason without searching for it again; its presence alone does not establish equivalence.')
 NARRATIVE = re.compile(r"\b(describe|explain|share|example|why|what|how|motivat\w*|summari\w*)\b|"
     r"tell us|tell me|cover letter|additional information|介绍|描述|经历|项目|简述|说明", re.I)
 
@@ -383,9 +385,11 @@ class AgentTools:
         sources.update(experience_facts(self.state['profile'], self.state.get('experience_answer_overrides')))
         if self.state.get('cover_letter'):sources['material:cover_letter'] = self.state['cover_letter']
         sources.update({f"answer:{key}": value for key, value in self.state["answers"].items()})
-        # The resume text is only needed to draft open-ended answers.
+        # The resume text is only needed to draft open-ended answers on this page: a draft saved on an
+        # earlier page does not need it (it was resent on every later page), a draft for a field shown here does.
         resume = self.state.get('resume_context', {}) or {}
-        if resume.get('text') and not (self.state.get('answer_drafts') or any(
+        from .drafting import visible_drafts as page_drafts
+        if resume.get('text') and not (page_drafts(self.state, self.fields) or any(
                 f["kind"] == "textarea" or NARRATIVE.search(f["label"]) for f in self.fields)):
             resume = {**{k: v for k, v in resume.items() if k != 'text'},
                 'text_omitted': 'Included when this page has an open-ended question.'}
@@ -460,6 +464,14 @@ class AgentTools:
         if seen != self.state.get('record_kinds_seen', []) or completion != self.state.get('record_completion', {}):
             self._save_decisions(record_kinds_seen=seen, record_completion=completion)
         from .observation import control_input, record_rows
+        # The same mechanics text was repeated on every field of a kind: each field names it once here.
+        mechanics_text = {}
+
+        def mechanics(field):
+            text = control_input(field)
+            code = text.split(':', 1)[0]
+            mechanics_text[code] = text
+            return code
         snapshot = {"observation_id": self.observation_id, "autofill_called": self.autofill_called, "autofill_scope": self.state.get("autofill_scope"),
             'pending_document_uploads':pending_documents(self.state,self.fields),
             'document_bindings':self.state.get('document_bindings',{}),
@@ -504,11 +516,11 @@ class AgentTools:
             "fields": [{"key": f["key"], "label": f["label"][:250], "value": f["value"], "done": True, **({"completion": "model_decided_leave_empty", "reason": active_decision(f, self.state)["reason"][:400]} if verified_empty_decision(f, self.state) else {})} if f["key"] in completed_keys else _without_empty({"key": f["key"], "label": f["label"][:250], "kind": f["kind"],
                 "allowed_source_refs":[r for r in allowed[f["key"]] if r not in universal],
                 # selected (value) vs target fact vs saved semantic mapping vs verified write.
-                **status[f["key"]], "control_input": control_input(f),
+                **status[f["key"]], "control_input": mechanics(f),
                 **({"search_history": search_log[f["key"]]} if f["key"] in search_log else {}),
                 "required": f["required"], "invalid": f.get("invalid", False),
                 "choice_control":f.get("choice_control", False), "value_committed":f.get("value_committed"),
-                **({"selected_option_decision": "This committed value is already an observed option. You may resolve_field equivalent with cited facts and your reason without searching for it again; its presence alone does not establish equivalence."}
+                **({"selected_option_decision": "committed_option"}
                     if f.get("value_committed") and status[f["key"]]["mapping"] == "undecided" else {}),
                 "group":f.get("group", ""),
                 "search_text":f.get("search_text", ""), "section":f.get("section", ""),
@@ -520,6 +532,20 @@ class AgentTools:
                 "options": [{"label": o["label"][:200], "value": o["value"][:200], **({"expandable":True} if o.get("expandable") else {}),
                     **({"disabled":True} if o.get("disabled") else {})} for o in options(f)]}) for f in self.fields]}
 
+        # Shared only when at least two fields use it; a mechanics text used once stays inline.
+        used = {}
+        for item in snapshot['fields']:
+            if item.get('control_input') in mechanics_text:
+                used[item['control_input']] = used.get(item['control_input'], 0) + 1
+        for item in snapshot['fields']:
+            if used.get(item.get('control_input'), 0) == 1:
+                item['control_input'] = mechanics_text[item['control_input']]
+        shared_mechanics = {code: text for code, text in sorted(mechanics_text.items()) if used.get(code, 0) > 1}
+        if shared_mechanics:
+            # Present only when fields name an entry by code, so pages without repeats pay nothing.
+            snapshot['control_inputs'] = shared_mechanics
+        if any(f.get('selected_option_decision') for f in snapshot['fields']):
+            snapshot['field_notes'] = {'committed_option': COMMITTED_OPTION_NOTE}
         from .observation import focus_observation
         from .record_coverage import gaps as record_gaps
         snapshot['record_blockers'] = record_gaps(self.fields, self.state, self.page_context)

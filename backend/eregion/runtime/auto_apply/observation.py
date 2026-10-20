@@ -81,6 +81,84 @@ def focus_observation(snapshot, state, fields):
         'next':'Use focus_fields with index keys for another record, or [] for the full page. Scope success is not page completion.'}
     # Raw page text repeats out-of-scope controls; retain navigation and all structured blockers.
     snapshot['page'] = {k:v for k,v in page.items() if k != 'text'}
+    return focus_evidence(snapshot, state, fields, selected)
+
+
+RECORD_KINDS = ('experience', 'education')
+RECORD_IDENTITY = {'experience': ('title', 'company'), 'education': ('school', 'degree')}
+
+
+def fact_record(ref):
+    parts = str(ref or '').split(':')
+    return ':'.join(parts[:2]) if len(parts) > 2 and parts[0] in RECORD_KINDS else None
+
+
+def focus_evidence(snapshot, state, fields, selected):
+    """Evidence closure of the scoped fields; every other fact stays one focus_fields([]) away.
+
+    In full detail: profile facts; every fact of a record bound to or cited by a scoped field; every
+    record of a kind when a scoped record row is still unbound (the model chooses among them); answers
+    for scoped fields, cited by their decisions or bound by user messages; materials when a scoped field
+    is open-ended or cites them. Other records keep their identity in an index. User messages, record
+    coverage and blockers are never scoped.
+    """
+    from .agent import NARRATIVE
+    by_key = {f['key']: f for f in fields}
+    bindings = {**state.get('education_bindings', {}), **state.get('experience_bindings', {})}
+    decisions = state.get('field_decisions') or {}
+    records, open_kinds, cited = set(), set(), set()
+    for key in selected:
+        if key in bindings:
+            records.add(fact_record(bindings[key].get('source_ref')))
+        for ref in (decisions.get(key) or {}).get('sources') or {}:
+            cited.add(ref)
+            records.add(fact_record(ref))
+        identity = record_identity(by_key[key]) if key in by_key else None
+        if identity and key not in bindings:
+            open_kinds.add('experience' if identity.startswith('workExperience') else 'education')
+    answer_keys = set(selected) | {ref.removeprefix('answer:') for ref in cited if ref.startswith('answer:')}
+    for message in snapshot.get('user_messages', []):
+        answer_keys.update((message.get('bound_answers') or {}).keys())
+    open_question = any(by_key[k].get('kind') == 'textarea' or NARRATIVE.search(by_key[k].get('label') or '')
+                        for k in selected if k in by_key)
+
+    def needed(fact):
+        ref = fact['ref']
+        kind = ref.split(':', 1)[0]
+        if kind == 'profile':
+            return True
+        if kind in RECORD_KINDS:
+            return fact_record(ref) in records or kind in open_kinds
+        if kind == 'answer':
+            return ref.removeprefix('answer:') in answer_keys
+        return open_question or ref in cited
+
+    kept, index, others = [], {}, []
+    for fact in snapshot.get('facts', []):
+        if needed(fact):
+            kept.append(fact)
+            continue
+        record = fact_record(fact['ref'])
+        if record:
+            entry = index.setdefault(record, {'record': record})
+            component = fact['ref'].split(':', 2)[2]
+            if component in RECORD_IDENTITY[record.split(':')[0]]:
+                entry[component] = fact['value'][:120] if isinstance(fact['value'], str) else fact['value']
+        else:
+            others.append(fact['ref'])
+    if index or others:
+        snapshot['facts'] = kept
+        snapshot['facts_outside_scope'] = {'records': list(index.values()), 'refs': others,
+            'read': 'Only identities are shown for these. focus_fields([]) (or focusing their fields) shows their full facts; '
+                    'read a value before citing it.'}
+    resume = snapshot.get('resume_context') or {}
+    if resume.get('text') and not open_question:
+        snapshot['resume_context'] = {**{k: v for k, v in resume.items() if k != 'text'},
+            'text_omitted': 'Included when a scoped field is open-ended; focus_fields([]) shows the whole page.'}
+    previous = snapshot.get('previous_page_answers') or []
+    if previous:
+        snapshot['previous_page_answers'] = []
+        snapshot['previous_page_answers_outside_scope'] = {'count': len(previous), 'read': 'focus_fields([]) shows them.'}
     return snapshot
 
 
