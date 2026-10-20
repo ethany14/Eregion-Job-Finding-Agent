@@ -353,6 +353,9 @@ class AgentTools:
         self.autofill_called = False
         self.failed_fields = set()
         self.observed_options = {}
+        # (field key, query) -> (page, field value, options, evidence): an identical search on the same page
+        # with the field unchanged returns these instead of driving the picker again (Adobe 2026-10-20).
+        self.search_results = {}
         self.refresh, self.communicate, self.accept_answer = refresh, communicate, accept_answer
         self.checkpoint = checkpoint
         self.bind_answers = bind_answers
@@ -933,6 +936,7 @@ class AgentTools:
             self.visual_field_key = None
             self.autofill_called = False
             self.observed_options.clear()
+            self.search_results.clear()
             return {**(navigation if isinstance(navigation, dict) else {"navigated": True}),
                     "label":control["label"], "next":"Observe the new page before choosing another action; an unverified transition is not completion."}
         field = next((f for f in self.fields if f["key"] == args["field_key"]), None)
@@ -1042,9 +1046,20 @@ class AgentTools:
             if extra and (not isinstance(extra, list) or len(extra) > 3 or not isinstance(args.get("query_reason"), str)
                     or not args["query_reason"].strip() or any(not isinstance(q, str) or not q.strip() or len(q) > 120 for q in extra)):
                 raise BrowserBlocked("Give up to three nonempty extra queries and a query_reason tied to the cited fact.")
-            options = self.browser.inspect_options(key, query=query)
-            self._log_search(key, query, options, args)
-            primary_evidence = getattr(self.browser, 'option_search_evidence', {}).get(key)
+            page_id = [(self.page_context or {}).get('url'), (self.page_context or {}).get('heading')]
+            reused = []
+
+            def search(term):
+                saved = self.search_results.get((key, term))
+                if saved and saved[0] == page_id and saved[1] == field.get('value'):
+                    reused.append(term)
+                    return saved[2], saved[3]
+                found = self.browser.inspect_options(key, query=term)
+                self._log_search(key, term, found, args)
+                evidence = getattr(self.browser, 'option_search_evidence', {}).get(key)
+                self.search_results[(key, term)] = (page_id, field.get('value'), found, evidence)
+                return found, evidence
+            options, primary_evidence = search(query)
             # Dynamic-19: three dependent-free searches for one major took three model rounds.
             # Extra terms run in this call; each keeps its own results and evidence.
             additional, seen = [], list(options)
@@ -1056,11 +1071,9 @@ class AgentTools:
             if not resolve_option(field["label"], fact, options):
                 terms += [word for word in fallback_words(query) if word not in terms]
             for term in dict.fromkeys(terms):
-                found = self.browser.inspect_options(key, query=term)
-                self._log_search(key, term, found, args)
+                found, evidence = search(term)
                 item = {"query": term, "options": [o.get("label") for o in found][:OPTION_PREVIEW], "total_options": len(found),
                         **({"automatic": True} if term not in extra else {})}
-                evidence = getattr(self.browser, 'option_search_evidence', {}).get(key)
                 if evidence:
                     item["search_evidence"] = evidence
                 additional.append(item)
@@ -1075,6 +1088,9 @@ class AgentTools:
                 page['search_evidence'] = primary_evidence
             if additional:
                 page["additional_searches"] = additional
+            if reused:
+                page["reused_results"] = {"queries": reused, "note": "Identical searches already ran on this page with the "
+                                          "field unchanged; these are their results. Decide from them rather than searching again."}
             shared = shared_word_options(fact, seen)
             if shared and not resolve_option(field["label"], fact, seen):
                 # Observed options sharing a word with the fact, so the decision needs no re-reading.
@@ -1342,6 +1358,7 @@ class AgentTools:
                 if closed_choice or normalized_label(target["label"]) == normalized_label(query):
                     self.browser._choice_queries.pop(field["key"],None)
         self.observed_options.clear()
+        self.search_results.clear()  # a raw click may have changed what a picker shows
         self._reconcile_paths()
         return {**result,"action":name,"field_key":field["key"] if field else None,
             "target":{"label":target["label"],"tag":target["tag"]} if target else None,

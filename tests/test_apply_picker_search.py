@@ -73,3 +73,29 @@ def test_a_literal_match_runs_no_extra_searches(monkeypatch):
                                                 'field_key': 'text:education--fieldOfStudy:1',
                                                 'source_ref': 'education:b:field_of_study', 'query': 'Accounting'})
     assert browser.queries == ['Accounting'] and 'additional_searches' not in result
+
+
+def test_an_identical_search_on_the_same_page_reuses_its_results(monkeypatch):
+    browser, session = tools()
+    monkeypatch.setattr(session, 'search_source', lambda field, ref: 'Computer Science')
+    args = {'observation_id': session.observation_id, 'field_key': 'text:education--fieldOfStudy:1',
+            'source_ref': 'education:b:field_of_study'}
+    first = session.execute('search_options', dict(args))
+    driven = list(browser.queries)
+    session.observe()
+    again = session.execute('search_options', {**args, 'observation_id': session.observation_id})
+    assert browser.queries == driven  # the picker was not driven again
+    assert again['reused_results']['queries'] == ['Computer Science', 'Computer', 'Science']
+    assert again['options_sharing_words'] == first['options_sharing_words']
+
+
+def test_a_changed_field_value_runs_the_search_again(monkeypatch):
+    browser, session = tools()
+    monkeypatch.setattr(session, 'search_source', lambda field, ref: 'Computer Science')
+    args = {'field_key': 'text:education--fieldOfStudy:1', 'source_ref': 'education:b:field_of_study'}
+    session.execute('search_options', {**args, 'observation_id': session.observation_id})
+    browser.fields[0]['value'] = 'Accounting'  # something was selected meanwhile
+    count = len(browser.queries)
+    session.observe()
+    result = session.execute('search_options', {**args, 'observation_id': session.observation_id})
+    assert len(browser.queries) > count and 'reused_results' not in result
