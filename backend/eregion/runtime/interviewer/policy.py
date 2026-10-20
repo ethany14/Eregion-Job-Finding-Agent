@@ -9,6 +9,7 @@ from eregion.runtime.interviewer.types import (
     InterviewAnswerAssessment,
 )
 from eregion.domain.domain import normalize_text
+from eregion.runtime.protected_attributes import mentions_protected
 
 _EXCLUDED_TARGETS = re.compile(
     r"\b(age|race|religion|disability|gender|marital status|pregnancy|ethnicity)\b",
@@ -36,7 +37,7 @@ class InterviewPriorityPolicy:
             return False
         if item.match_status in {"matched", "confirmed_condition"}:
             return False
-        return not _EXCLUDED_TARGETS.search(item.original_requirement_text)
+        return not mentions_protected(_EXCLUDED_TARGETS, item.original_requirement_text)
 
     def select(self, items: list[ApplicationRequirementAssessment]) -> ApplicationRequirementAssessment | None:
         seen: set[str] = set()

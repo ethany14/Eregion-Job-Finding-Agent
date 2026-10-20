@@ -10,8 +10,10 @@ from eregion.runtime.mock_interview.types import (
     PlanItem,
 )
 from eregion.domain.domain import normalize_text
+from eregion.runtime.protected_attributes import mentions_protected
 
 PROMPT_VERSION = "mock-interview-v1"
+_PROTECTED = re.compile(r"\b(?:age|marital status|religion|disability|nationality|race|gender)\b", re.I)
 
 _COVERAGE = {
     InterviewMode.RECRUITER_SCREEN: ("role_fit", "background", "motivation"),
@@ -70,8 +72,7 @@ def validate_question(question: MockInterviewQuestion, item: PlanItem,
         raise MockInterviewValidation("Question refers to another requirement.")
     if set(question.related_evidence_ids) - known_evidence_ids:
         raise MockInterviewValidation("Question references unknown evidence.")
-    forbidden = ("age", "marital status", "religion", "disability", "nationality", "race", "gender")
-    if any(re.search(rf"\b{re.escape(word)}\b", question.question_text, re.I) for word in forbidden):
+    if mentions_protected(_PROTECTED, question.question_text):
         raise MockInterviewValidation("Question requests protected personal information.")
     question_numbers = set(re.findall(r"\b\d+(?:\.\d+)?%?\b", question.question_text))
     source_numbers = set(re.findall(r"\b\d+(?:\.\d+)?%?\b", source_text))

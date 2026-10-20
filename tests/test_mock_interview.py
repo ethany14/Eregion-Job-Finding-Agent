@@ -355,3 +355,25 @@ def test_migration_from_prior_populated_schema(tmp_path):
     with db.engine.connect() as connection:
         assert connection.scalar(text("SELECT count(*) FROM runs WHERE run_id='old-run'")) == 1
     db.close()
+
+
+@pytest.mark.parametrize("text, allowed", [
+    ("How would you prevent a race condition when two workers update the same record?", True),
+    ("Where could a data race appear in this queue, and how would you test for it?", True),
+    ("How would you set max-age for cached API responses?", True),
+    ("What is your race?", False),
+    ("Which age group are you in?", False),
+    ("Do you have a disability we should know about?", False),
+    ("Would your religion affect weekend on-call shifts?", False),
+])
+def test_protected_attribute_check_ignores_technical_terms_only(text, allowed):
+    from eregion.runtime.mock_interview.errors import MockInterviewValidation
+    item = build_plan(interview_id="i", snapshot_id="s", snapshot_hash="h", evidence=[],
+        requirement_ids=[], mode=InterviewMode.MIXED, target_count=3).items[0]
+    question = MockInterviewQuestion(question_id="q", plan_item_id=item.plan_item_id, question_text=text,
+        question_type=item.question_type, competency=item.competency, reason_for_asking="Practice.")
+    if allowed:
+        validate_question(question, item, set(), "")
+    else:
+        with pytest.raises(MockInterviewValidation, match="protected"):
+            validate_question(question, item, set(), "")

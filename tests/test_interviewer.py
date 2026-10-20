@@ -509,3 +509,20 @@ def test_awaiting_answer_survives_fresh_database_instance(interview_setup):
         assert answered.status == InterviewStatus.COMPLETED
     finally:
         fresh.close()
+
+
+@pytest.mark.parametrize("text, eligible", [
+    ("Experience debugging race conditions in concurrent services", True),
+    ("Configure cache max-age headers for public APIs", True),
+    ("Must state your age and gender", False),
+    ("Religion or ethnicity preference", False),
+])
+def test_requirement_targets_skip_protected_attributes_but_not_technical_terms(text, eligible):
+    from datetime import UTC
+    from eregion.runtime.interviewer.types import ApplicationRequirementAssessment, EvidenceAssessmentStatus
+    now = datetime.now(UTC)
+    item = ApplicationRequirementAssessment(assessment_id="a", application_id="app", snapshot_id="s",
+        requirement_id="r", canonical_requirement=text, original_requirement_text=text,
+        requirement_level="required", match_status="missing", evidence_status=EvidenceAssessmentStatus.NEEDS_CLARIFICATION,
+        source_match_artifact_id="m", jd_order=0, version=1, created_at=now, updated_at=now)
+    assert InterviewPriorityPolicy.eligible(item) is eligible
