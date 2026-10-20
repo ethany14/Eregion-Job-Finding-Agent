@@ -12,7 +12,7 @@ from eregion.runtime.core.model import ModelInterrupted, ModelRequests
 from eregion.runtime.model_runtime import model_failure
 from eregion.runtime.telemetry import outcome_fingerprint, safe_traceback, timing_update, model_metrics
 from .browser import BrowserBlocked
-from .errors import failure_detail, failure as action_failure
+from .errors import RECOVERY, failure_detail, failure as action_failure
 from .prompt import SYSTEM
 
 # Veeva pilot: ~23 tries on one optional school type-ahead. Past this many unsuccessful
@@ -22,7 +22,7 @@ FIELD_ATTEMPT_LIMIT = 4
 # Per business step across replies, pauses and revisits; the task ledger is the outer cap.
 PAGE_MODEL_CALL_LIMIT = 30
 # Refusals by the progress guards: the action was not executed.
-PROTECTIVE = {'repeated_action', 'field_attempt_limit', 'unchanged_failure'}
+PROTECTIVE = {'repeated_action', 'field_attempt_limit', 'unchanged_failure', 'evidence_deferred'}
 NON_FIELD_ACTIONS = {'read_field', 'focus_fields', 'observe', 'view_browser', 'say', 'ask_user', 'request_input', 'read_context', 'record_answers',
     'update_plan', 'computer_wait', 'draft_answer'}
 
@@ -161,6 +161,7 @@ class ApplicationHost:
         self.context_archive = None
         self.text_turns = 0
         self.autofill_trims = {}  # call id -> (remaining field_keys, keys other calls in the batch write)
+        self.evidence_deferrals = {}  # call id -> keys searched or written earlier in the batch
         self.first_observation = True
         self.host_autofill = None
         self.visual_requested, self.pending_screen = False, None
@@ -311,15 +312,26 @@ class ApplicationHost:
             keys = [args['field_key']] if args.get('field_key') else []
             keys += [item.get('field_key') for key in ('answers', 'fields') for item in args.get(key, [])]
             kind = batch_kind(call['name'])
+            deferred = []
             for key in keys:
                 if key not in observed:
                     raise ToolArgumentsError('Observe a newly revealed field before batching an action for it.')
-                for earlier_name, earlier_kind in history.get(key, []):
-                    rule = BATCH_RULES.get((earlier_kind, kind))
-                    if rule:
-                        raise BatchConflict(call['name'], earlier_name, key, *rule)
+                rules = [(earlier_name, earlier_kind, BATCH_RULES[(earlier_kind, kind)]) for earlier_name, earlier_kind
+                         in history.get(key, []) if (earlier_kind, kind) in BATCH_RULES]
+                # Adobe run 40: two major searches and two school bindings in one batch were all
+                # refused because one binding named a searched field. Evidence after a search or
+                # write of its field is held for the next turn and the rest runs, unless a page
+                # action closes the batch (the field would be gone).
+                if (rules and kind == 'evidence' and all(r[1] in {'search', 'write'} for r in rules)
+                        and calls[-1]['name'] != 'click_page_action'):
+                    deferred.append(key)
+                    continue
+                if rules:
+                    raise BatchConflict(call['name'], rules[0][0], key, *rules[0][2])
                 history.setdefault(key, []).append((call['name'], kind))
                 (seen if kind in {'write', 'search'} else bound if kind == 'evidence' else set()).add(key)
+            if deferred:
+                self.__dict__.setdefault('evidence_deferrals', {})[call.get('id')] = sorted(set(deferred))
 
     def _read_closed_options(self, session, *, limit=8, seconds=12):
         """Adobe-22: a closed Workday "Select One" control exposes no options, so the model spent
@@ -596,6 +608,16 @@ class ApplicationHost:
                     'next': 'Every field_key of this autofill was written by another call in this turn; nothing else to fill.'}
         if trim:
             args = {**args, 'field_keys': trim[0]}
+        deferred = self.__dict__.setdefault('evidence_deferrals', {}).pop(call['id'], None)
+        if deferred:
+            items = {part: [item for item in args[part] if item.get('field_key') not in deferred]
+                     for part in ('answers', 'fields') if isinstance(args.get(part), list)}
+            if args.get('field_key') in deferred or not any(items.values()):
+                self.fingerprint = None  # not executed: no repeat-guard history under another call's fingerprint
+                return {**action_failure('evidence_deferred', f'Not run: {name} on {", ".join(deferred)} came after a search '
+                        'or write of the same field in this turn (evidence must be saved before acting on the field). '
+                        'The other calls in this batch ran.'), 'deferred_evidence': deferred}
+            args = {**args, **items}
         if not self.active() or self.revision() != turn.revision:
             raise LoopStop('steered', chat_revision=turn.revision)
         if not self.reserve('tool'):
@@ -662,6 +684,8 @@ class ApplicationHost:
         outcome = session.execute(name, args)
         if trim:
             outcome = {**outcome, 'dropped_overlap': trim[1]}
+        if deferred:
+            outcome = {**outcome, 'deferred_evidence': deferred, 'deferred_note': RECOVERY['evidence_deferred'][0]}
         if (name == 'view_browser' or name.startswith('computer_')) and isinstance(outcome.get('image'), bytes):
             # Host.observe owns screenshot delivery and freshness. Do not also
             # place this image in the kernel's generic one-turn image queue.

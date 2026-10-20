@@ -57,6 +57,7 @@ def batch(*calls):
     from eregion.runtime.auto_apply.runner import ApplicationHost
     host = Host([field('a'), field('b'), field('c', kind='checkbox')])
     ApplicationHost.validate_batch(host, [{'name': n, 'args': a} for n, a in calls], None)
+    return host
 
 
 def test_bind_decide_and_scoped_fill_fit_one_turn():
@@ -76,7 +77,8 @@ def test_writes_then_one_page_action_fit_one_turn():
     [('click_page_action', {'control_id': 'add'}), ('click_page_action', {'control_id': 'next'})],
     [('autofill', {'field_keys': ['a']}), ('resolve_field', {'field_key': 'b'}), ('click_page_action', {'control_id': 'x'})],
     [('resolve_field', {'field_key': 'a'}), ('type_from_source', {'field_key': 'a'})],          # two writes
-    [('resolve_field', {'field_key': 'a'}), ('bind_experience', {'fields': [{'field_key': 'a'}]})],  # bind after write
+    [('resolve_field', {'field_key': 'a'}), ('bind_experience', {'fields': [{'field_key': 'a'}]}),
+     ('click_page_action', {'control_id': 'add'})],                                             # bind after write, then leave
     [('autofill', {'field_keys': ['a']}), ('resolve_field', {'field_key': 'b'})],               # autofill not last
     [('resolve_field', {'field_key': 'b'}), ('autofill', {})],                                  # unscoped in a batch
     [('resolve_field', {'field_key': 'new'})],                                                  # unobserved field
@@ -267,8 +269,63 @@ def test_record_an_answer_then_choose_it_in_one_turn():
     batch(('record_answers', {'answers': [{'field_key': 'a'}, {'field_key': 'b'}]}),
           ('choose_option', {'field_key': 'a'}), ('choose_option', {'field_key': 'b'}),
           ('click_page_action', {'control_id': 'next'}))
+    # Evidence after a write of its field waits for the next turn (Adobe run 40); with a closing
+    # page action the field would be gone, so that batch is still refused.
     with pytest.raises(__import__('eregion.runtime.core.engine', fromlist=['x']).ToolArgumentsError):
-        batch(('choose_option', {'field_key': 'a'}), ('record_answers', {'answers': [{'field_key': 'a'}]}))
+        batch(('choose_option', {'field_key': 'a'}), ('record_answers', {'answers': [{'field_key': 'a'}]}),
+              ('click_page_action', {'control_id': 'next'}))
+
+
+def test_evidence_after_a_search_of_its_field_is_held_and_the_rest_of_the_batch_runs():
+    # Adobe run 40: two major searches and two school bindings were all refused because one
+    # binding named a searched field.
+    calls = [('search_options', {'field_key': 'a'}), ('search_options', {'field_key': 'b'}),
+             ('bind_education', {'fields': [{'field_key': 'a'}]}),
+             ('bind_education', {'fields': [{'field_key': 'c'}, {'field_key': 'b'}]})]
+    from eregion.runtime.auto_apply.runner import ApplicationHost
+    host = Host([field('a'), field('b'), field('c', kind='checkbox')])
+    ApplicationHost.validate_batch(host, [{'id': str(i), 'name': n, 'args': a} for i, (n, a) in enumerate(calls)], None)
+    assert host.evidence_deferrals == {'2': ['a'], '3': ['b']}
+    host = batch(('choose_option', {'field_key': 'a'}), ('record_answers', {'answers': [{'field_key': 'a'}]}))
+    assert list(host.evidence_deferrals.values()) == [['a']]
+
+
+def test_the_held_evidence_reports_itself_and_the_other_calls_run(monkeypatch):
+    from langchain_core.messages import AIMessage
+    from eregion.runtime.auto_apply.agent import AgentTools, HybridApplicationAgent
+    from eregion.runtime.auto_apply.autofill import autofill
+    from test_auto_apply_agent import RepairBrowser, state
+    recorded, original = [], AgentTools.execute
+
+    def execute(self, name, args):
+        if name == 'record_answers':
+            recorded.append([item['field_key'] for item in args['answers']])
+            return {'recorded': recorded[-1]}
+        return original(self, name, args)
+    monkeypatch.setattr(AgentTools, 'execute', execute)
+    answer = lambda key: {'field_key': key, 'message_id': 'm', 'quote': 'x', 'value': 'x'}
+    turns = iter([
+        lambda snap: [{'id': 'w', 'name': 'type_from_source', 'args': {'observation_id': snap['observation_id'],
+                       'field_key': 'First name', 'source_ref': 'profile:first_name'}},
+                      {'id': 'all', 'name': 'record_answers', 'args': {'observation_id': snap['observation_id'],
+                       'answers': [answer('First name')]}},
+                      {'id': 'part', 'name': 'record_answers', 'args': {'observation_id': snap['observation_id'],
+                       'answers': [answer('First name'), answer('Country')]}}],
+        lambda snap: [{'id': 'end', 'name': 'request_input', 'args': {'field_keys': ['Country']}}]])
+
+    class Model:
+        def invoke(self, messages, tools):
+            import json
+            from langchain_core.messages import HumanMessage
+            snap = json.loads(next(m.content for m in reversed(messages) if isinstance(m, HumanMessage) and isinstance(m.content, str)))
+            return AIMessage(content='', tool_calls=next(turns)(snap))
+    browser, saved = RepairBrowser(), state()
+    HybridApplicationAgent(model_factory=Model).run(browser, saved, autofill=lambda: autofill(browser, saved, lambda: b''),
+        active=lambda: True, reserve=lambda kind: True, report=lambda *a: None)
+    results = {h['call_id']: h['result'] for h in saved['decision_history'] if h.get('call_id') in {'w', 'all', 'part'}}
+    assert 'error' not in results['w'] and browser.observe()[0]['value'] == 'Test'
+    assert results['all']['error_code'] == 'evidence_deferred' and results['all']['deferred_evidence'] == ['First name']
+    assert recorded == [['Country']] and results['part']['deferred_evidence'] == ['First name']
 
 
 def test_a_third_reopen_of_an_unchanged_page_is_refused_until_the_user_writes(monkeypatch):
