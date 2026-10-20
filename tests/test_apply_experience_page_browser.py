@@ -1,4 +1,5 @@
 """Real Chrome with synthetic full-page controls and explicit scripted decisions, no LLM/network."""
+import json
 import os
 from pathlib import Path
 import pytest
@@ -424,4 +425,40 @@ def test_omission_after_an_uncommitted_search_clears_the_typed_text():
         assert b.locate(b.field(target['key'])).input_value()==''
         assert b.page.locator('[data-automation-id="selectedItem"]').count()==0
         assert b.page.evaluate('window.nextCount')==0
+    finally:b.close()
+
+
+def test_add_another_shows_the_new_row_and_keeps_saved_work_through_the_production_tools():
+    # Add Another through click_page_action: the next observation lists the new row, the old observation
+    # is refused, and bindings, decisions, failure records and the step budget are unchanged.
+    b=PageBrowser(URL)
+    state={'automation_mode':'hybrid','answers':{},'step_budgets':{'v':1,'active':'step:3','counts':{'step:3':4}},
+           'profile':{'experience':[{'id':'one','title':'Research','company':'University','start_date':'Aug 2026','current':'Present'},
+                                    {'id':'two','title':'Intern','company':'Employer','start_date':'Jul 2022','end_date':'Aug 2022'}],
+                      'education':[]}}
+    s=AgentTools(b,state,autofill=lambda:{},active=lambda:True)
+    try:
+        snap=s.observe()
+        title=next(f['key'] for f in snap['fields'] if f['key'].startswith('text:workExperience--jobTitle'))
+        current=next(f['key'] for f in snap['fields'] if f['key'].startswith('checkbox:workExperience--current'))
+        s.execute('bind_experience',{'observation_id':s.observation_id,'experience_id':'one',
+                                     'fields':[{'field_key':title,'component':'title'},{'field_key':current,'component':'current'}]})
+        s.observe()
+        assert s.execute('resolve_field',{'observation_id':s.observation_id,'field_key':current,'mode':'equivalent','value':'true',
+                                          'source_refs':['experience:one:current'],'reason':'Saved current role.'})['verified']
+        state['autofill_failures']={'x':{'code':'kept'}}
+        keep={k:json.dumps(state.get(k),sort_keys=True,default=str) for k in
+              ('experience_bindings','field_decisions','autofill_failures','step_budgets')}
+        rows=lambda snapshot:{f['key'].rsplit(':',1)[-1] for f in snapshot['fields']+snapshot.get('field_index',[])
+                              if f['key'].startswith('text:workExperience--jobTitle')}
+        before=s.observe();old=s.observation_id
+        add=next(c['id'] for c in before['page']['controls'] if c['label'].startswith('Add Another Work'))
+        s.execute('click_page_action',{'observation_id':old,'control_id':add})
+        after=s.observe()
+        assert rows(after)==rows(before)|{str(len(rows(before))+1)}
+        with pytest.raises(BrowserBlocked,match='[Ss]tale'):
+            s.execute('resolve_field',{'observation_id':old,'field_key':current,'mode':'equivalent','value':'true',
+                                       'source_refs':['experience:one:current'],'reason':'Saved current role.'})
+        assert {k:json.dumps(state.get(k),sort_keys=True,default=str) for k in keep}==keep
+        assert b.page.evaluate('window.nextCount===0 && window.submitCount===0')
     finally:b.close()
