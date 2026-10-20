@@ -335,6 +335,10 @@ class ApplicationPackWorkflow:
             raise PackConflictError("Job snapshot changed.")
         return JobAnalysis.model_validate(job.content), SkillMatch.model_validate(match.content)
 
+    def _expected_role(self, application_id: str, job: JobAnalysis) -> str | None:
+        """The verified target role: the analysis title, else the saved posting title (Jev leaves it empty)."""
+        return job.title or self._workspace.application_job(application_id).title
+
     def _preferences(self, application_id: str | None = None) -> list[dict]:
         from eregion.runtime.memory.access import MemoryPurpose
         context = self._memory_access.context(MemoryPurpose.APPLICATION_MATERIALS, application_id=application_id)
@@ -684,7 +688,7 @@ class ApplicationPackWorkflow:
                 check = lambda: self._measured('evidence_verification', item, lambda: self._verifier.verify(
                     content, item.artifact_type, snap.items, max_length=item.max_length,
                     expected_question=item.source_question, preferences=snap.preference_versions,
-                    expected_role=job_analysis.title,
+                    expected_role=self._expected_role(pack.application_id, job_analysis),
                     employer_context=self._workspace.current_snapshot(pack.application_id).cleaned_job_description))
                 try:
                     if item.artifact_type == 'tailored_resume':
@@ -717,7 +721,7 @@ class ApplicationPackWorkflow:
                                         max_length=item.max_length,
                                         expected_question=item.source_question,
                                         preferences=snap.preference_versions,
-                                        expected_role=job_analysis.title,
+                                        expected_role=self._expected_role(pack.application_id, job_analysis),
                                                      employer_context=self._workspace.current_snapshot(pack.application_id).cleaned_job_description)
         if item.artifact_type == 'tailored_resume':
             from .verification import verify_material_resume

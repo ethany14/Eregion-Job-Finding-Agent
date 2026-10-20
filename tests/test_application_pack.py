@@ -772,3 +772,32 @@ def test_integrated_pack_review_survives_database_restart(setup):
         assert reopened.item(pack.pack_id, manual.pack_item_id).requires_manual_answer
     finally:
         restarted_db.close()
+
+
+def _without_analysis_title(db):
+    """Jev's job analysis carries no title; the posting title stays on the application."""
+    import json
+    from sqlalchemy import select
+    with db.session_factory.begin() as session:
+        row = session.scalars(select(ApplicationArtifactRow).where(
+            ApplicationArtifactRow.artifact_type == "job_analysis")).one()
+        content = json.loads(row.content_json)
+        content["title"] = None
+        row.content_json = canonical_json(content)
+
+
+def test_cover_letter_structure_is_checked_when_the_analysis_has_no_title(setup):
+    workflow, packs, _, _, saved, db = setup
+    _without_analysis_title(db)
+    pack = workflow.create(saved.application.application_id,
+        expected_version=saved.application.version, idempotency_key="untitled")
+    item = workflow.generate(pack.pack_id, artifact_type="cover_letter",
+        expected_version=packs.get(pack.pack_id).version, idempotency_key="letter")
+    assert item.status == ItemStatus.AWAITING_REVIEW
+    one_paragraph = {"paragraphs": [{"paragraph_type": "closing", "text": "Thank you for your time."}]}
+    edited = workflow.edit(pack.pack_id, item.pack_item_id, expected_version=item.version,
+                           content=one_paragraph, idempotency_key="short")
+    assert edited.status == ItemStatus.NEEDS_REVISION
+    reasons = {issue.reason for issue in edited.verification.issues}
+    assert "Cover letter needs at least three coherent paragraphs." in reasons
+    assert "Cover letter does not begin with a role-specific opening." in reasons
