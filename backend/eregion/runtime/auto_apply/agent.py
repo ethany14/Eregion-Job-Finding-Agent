@@ -44,7 +44,7 @@ VISUAL_TOOLS = {"view_browser", "view_field", "computer_click", "computer_move",
 from .experience import BINDING_COMPONENTS, binding as experience_binding, bound_value as experience_value, facts as experience_facts, coverage as experience_coverage, gaps as experience_gaps
 
 TOOLS = [
-    tool('enable_browser_tools', 'Expose ordinary low-level browser tools when form tools are insufficient. This only changes tool visibility; it performs no browser action and relaxes no safety checks.'),
+    tool('enable_browser_tools', 'Expose ordinary low-level browser tools, and form tools not offered for this page (browser_tools.form_tools_not_offered_here), when the offered tools are insufficient. This only changes tool visibility; it performs no browser action and relaxes no safety checks.'),
     tool('apply_record', 'Process ONE observed work/education row in one call: bind, save YOUR decisions, fill the explicit remaining fields, optionally click one final page control. Use alone in a reply. A failure stops dependent actions. Inspect unknown options first. Never put a decision field in fill_fields as well.',
         {'observation_id': TEXT, 'record': {'type': 'string', 'description': 'Exact record_coverage.record including its work: or education: prefix; do not use a bare id.'},
          'bindings': {'type': 'array', 'maxItems': 20, 'items': {'type': 'object', 'properties': {'field_key': TEXT, 'component': TEXT}, 'required': ['field_key', 'component'], 'additionalProperties': False}},

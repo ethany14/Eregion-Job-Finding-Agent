@@ -56,6 +56,32 @@ def record_page(fields, state, page):
     return any(experience_binding(f, state) or education_binding(f, state) or record_identity(f) for f in fields)
 
 
+# apply_record needs a structurally identified row and plan_records concerns record coverage; the
+# bind tools stay offered everywhere: a plain school/degree form (no row ids, no Add Another) still
+# uses education facts through bind_education (caught by the long-options baseline scenario).
+RECORD_TOOLS = {'apply_record', 'plan_records'}
+CHOICE_TOOLS = {'search_options', 'explore_option', 'choose_option', 'inspect_field'}
+
+
+def capability_hidden(fields, state, page):
+    """Form tools for capabilities this page does not have (P4). Asking, saying, reading, waiting,
+    autofill, field decisions and page actions are always offered; enable_browser_tools restores
+    every hidden tool, and the observation names them."""
+    from .agent import NARRATIVE
+    hidden = set()
+    if not record_page(fields, state, page):
+        hidden |= RECORD_TOOLS
+    if not any(f['kind'] == 'file' for f in fields):
+        hidden.add('bind_document')
+    if not any(f['kind'] == 'textarea' or NARRATIVE.search(str(f.get('label') or '')) for f in fields):
+        hidden.add('draft_answer')
+    if not any(f['kind'] in {'select', 'radio', 'combobox'} or f.get('choice_control') for f in fields):
+        hidden |= CHOICE_TOOLS
+    if not state.get('remembered_answers') or not state.get('reuse_answers', True):
+        hidden.add('use_remembered_answer')
+    return hidden
+
+
 def attempt_target(state, field):
     """The grounded target with date padding normalized; fixed-list options only."""
     from .autofill import desired_answer
@@ -220,8 +246,10 @@ class ApplicationHost:
             'remaining': max(0, PAGE_MODEL_CALL_LIMIT - step_bucket['count']),
             'identity_confirmed': step_marker(self.session.page_context) is not None}
         browser_expanded = bool(self.session.state.get('browser_tools_requested')) or (snapshot.get('page') or {}).get('stage') != 'application'
-        snapshot['browser_tools'] = {'expanded':browser_expanded, 'expand_with':'enable_browser_tools'}
-        tools = [item for item in TOOLS if item['function']['name'] not in HIDDEN_TOOLS
+        hidden = set() if browser_expanded else capability_hidden(self.session.fields, self.session.state, self.session.page_context)
+        snapshot['browser_tools'] = {'expanded':browser_expanded, 'expand_with':'enable_browser_tools',
+                                     **({'form_tools_not_offered_here': sorted(hidden)} if hidden else {})}
+        tools = [item for item in TOOLS if item['function']['name'] not in HIDDEN_TOOLS | hidden
                  and (browser_expanded or item['function']['name'] not in BROWSER_NAMES)
                  and (not browser_expanded or item['function']['name'] != 'enable_browser_tools')
                  and (self.session.state.get('visual_fallback') or item['function']['name'] not in VISUAL_TOOLS)

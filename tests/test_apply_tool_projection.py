@@ -16,12 +16,14 @@ def test_form_tools_load_browser_group_only_on_model_request():
         host._prepare_page=s.observe
         turn=host.observe(); names={t['function']['name'] for t in turn.tools}
         assert not names & BROWSER_NAMES
-        assert {'apply_record','record_answers','resolve_field','click_page_action','ask_user','enable_browser_tools'} <= names
+        assert {'record_answers','resolve_field','click_page_action','ask_user','enable_browser_tools'} <= names
+        # P4: record tools are for record pages; this form has none, and the observation names them.
+        assert 'apply_record' not in names and 'apply_record' in turn.snapshot['browser_tools']['form_tools_not_offered_here']
         before=deepcopy(browser.fields); decisions=deepcopy(s.state.get('field_decisions'))
         s.execute('enable_browser_tools',{})
         assert browser.fields==before and s.state.get('field_decisions')==decisions
         expanded={t['function']['name'] for t in host.observe().tools}
-        assert 'browser_read' in expanded and 'browser_click' in expanded
+        assert 'browser_read' in expanded and 'browser_click' in expanded and 'apply_record' in expanded
         assert 'enable_browser_tools' not in expanded
         assert not any(n.startswith('computer_') for n in expanded)
         s.state['browser_tools_requested']=False

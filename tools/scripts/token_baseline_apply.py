@@ -189,6 +189,37 @@ def experience_turns():
             lambda s: [('click_page_action', {'control_id': control(s, 'Next')['id']})]]
 
 
+def one_reply_turns(direct):
+    """The whole page in one reply, then (only if the page is still open) a reply pressing Next.
+
+    direct=False: every work field bound, current boxes decided with resolve_field (the pre-P1 way).
+    direct=True: current boxes bound to current_status; row 2's end date left to the row's saved binding.
+    Scripted: how many turns the host leaves to a model is measured, not how a real model would act.
+    """
+    def page(s):
+        calls = []
+        for n, record in ((1, 'one'), (2, 'two')):
+            parts = dict(WORK, **({'endDate-dateSectionMonth': 'end_month', 'endDate-dateSectionYear': 'end_year'}
+                                  if n == 2 and not direct else {}), **({'current': 'current_status'} if direct else {}))
+            fields = [{'field_key': keyof(s, p, n), 'component': c} for p, c in parts.items()]
+            calls.append(('bind_experience', {'experience_id': record, 'fields': fields}))
+            if not direct:
+                calls.append(('resolve_field', {'field_key': keyof(s, 'current', n), 'mode': 'equivalent', 'value': 'true' if n == 1 else 'false',
+                                                'source_refs': [f'experience:{record}:' + ('current' if n == 1 else 'end_date')],
+                                                'reason': 'Saved employment evidence.'}))
+        fill = [f['field_key'] for name, args in calls if name == 'bind_experience' for f in args['fields']]
+        for n, record, degree in ((1, 'a', 'Masters'), (2, 'b', 'Bachelors')):
+            calls += [('bind_education', {'education_id': record, 'fields': [{'field_key': keyof(s, 'schoolName', n), 'component': 'school'},
+                                                                            {'field_key': keyof(s, 'degree', n), 'component': 'degree'}]}),
+                      ('resolve_field', {'field_key': keyof(s, 'degree', n), 'mode': 'equivalent', 'value': degree,
+                                         'source_refs': [f'education:{record}:degree'], 'reason': 'Exact degree option.'}),
+                      ('resolve_field', {'field_key': keyof(s, 'fieldOfStudy', n), 'mode': 'leave_empty', 'value': '', 'source_refs': [],
+                                         'reason': 'Optional field; no listed option matches the saved field of study.'})]
+            fill.append(keyof(s, 'schoolName', n))
+        return calls + [('autofill', {'field_keys': fill})]
+    return [page, lambda s: [('click_page_action', {'control_id': control(s, 'Next')['id']})]]
+
+
 def record_keys(snap, kind, n):
     return [f['key'] for f in snap['fields'] + snap.get('field_index', [])
             if f'{kind}--' in f['key'] and f['key'].endswith(f':{n}')]
@@ -245,6 +276,16 @@ SCENARIOS = {
         'experience_record_by_record', 'experience_page.html',
         base_state(answers=dict(EARLIER_ANSWERS), review_fields=REVIEW_FIELDS, messages=MESSAGES),
         scoped_experience_turns(), setup=lambda p: (p.locator('#addWork').click(), p.locator('#addSchool').click()),
+        done='window.nextCount > 0'),
+    'experience_one_reply_decisions': lambda: run_scenario(
+        'experience_one_reply_decisions', 'experience_page.html',
+        base_state(answers=dict(EARLIER_ANSWERS), review_fields=REVIEW_FIELDS, messages=MESSAGES),
+        one_reply_turns(direct=False), setup=lambda p: (p.locator('#addWork').click(), p.locator('#addSchool').click()),
+        done='window.nextCount > 0'),
+    'experience_one_reply_direct': lambda: run_scenario(
+        'experience_one_reply_direct', 'experience_page.html',
+        base_state(answers=dict(EARLIER_ANSWERS), review_fields=REVIEW_FIELDS, messages=MESSAGES),
+        one_reply_turns(direct=True), setup=lambda p: (p.locator('#addWork').click(), p.locator('#addSchool').click()),
         done='window.nextCount > 0'),
     'long_options_after_inspect': lambda: run_scenario(
         'long_options_after_inspect', 'token_long_options.html', base_state(review_fields=REVIEW_FIELDS), long_options_turns()),
