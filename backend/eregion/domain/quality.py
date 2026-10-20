@@ -500,6 +500,12 @@ def validate_resume_structure(
                     "experience": {"experience"}, "projects": {"project"},
                     "education": {"education"}, "skills": {"skills", "experience", "project", "other"},
                 }[section.section_type]
+                # An 'other' entry with its own heading and an organization or dates is a role
+                # (an activity, volunteering); the writer files it under experience. Loose facts are not.
+                role_like = bool(source and source.entry_type == "other" and source.heading
+                                 and (source.organization or source.start_date))
+                if section.section_type == "experience" and role_like:
+                    allowed = allowed | {"other"}
                 if source and source.entry_type not in allowed:
                     issues.append(ResumeQualityIssue(
                         code="invalid_section_membership",

@@ -876,3 +876,22 @@ def test_selected_entries_keep_the_source_resume_order():
         for n in (3, 1, 2)])
     resume = selection.expand(SimpleNamespace(resume_analysis=analysis))
     assert [entry.heading for entry in resume.sections[0].entries] == ["Role 1", "Role 2", "Role 3"]
+
+
+@pytest.mark.parametrize("organization, start, accepted", [
+    ("Computing Peer Network", "Sep 2023", True), (None, "Sep 2023", True), (None, None, False)])
+def test_activity_entries_are_accepted_under_experience_only_as_roles(organization, start, accepted):
+    from eregion.domain.quality import validate_resume_structure
+    from eregion.domain.resume_selection import ResumeSelection
+    from eregion.domain.schemas import ResumeAnalysis, ResumeEvidence, ResumeSourceEntry
+    source = ResumeSourceEntry(source_entry_id="s1", entry_type="other", heading="Student mentor",
+        organization=organization, start_date=start, evidence_ids=["e1"])
+    analysis = ResumeAnalysis(summary="", skills=[], education=[], source_entries=[source], evidence=[
+        ResumeEvidence(evidence_id="e1", source_section="Activities", exact_text="Mentored six students.",
+                       source_entry_id="s1")])
+    resume = ResumeSelection(summary=[], entries=[{"entry_id": "s1", "selected_evidence_ids": ["e1"],
+        "bullets": [{"text": "Mentored six students.", "evidence_ids": ["e1"]}]}]).expand(
+        SimpleNamespace(resume_analysis=analysis))
+    assert resume.sections[0].section_type == "experience"
+    issues = validate_resume_structure(resume, [source], known_evidence_ids={"e1"})
+    assert any(issue.code == "invalid_section_membership" for issue in issues) is not accepted
