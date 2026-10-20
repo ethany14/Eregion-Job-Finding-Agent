@@ -309,6 +309,56 @@ def scoring_cache(args):
     print(json.dumps(passes, indent=1))
 
 
+def scoring_precheck(args):
+    """No-send precheck for a real-model A/B of the wire encoding: both arms built, nothing sent.
+
+    The inline arm is the earlier encoding (encode_wire replaced by identity, as the A/B script would);
+    reservation follows provider_usage.input_reservation (UTF-8 bytes + 1,024 per request), the cap unit
+    of the budget. Stage flow depends on the answers, so the fake's mix (65% yes, 20% no, 15% unknown)
+    is only one plausible flow.
+    """
+    from eregion.domain.jev_fit import transport
+    from eregion.domain.jev_fit.service import JevFitService
+    from eregion.domain.jev_fit.settings import Settings
+    from eregion.runtime.provider_usage import input_reservation
+    no_network()
+    wanted = args.jobs.split(',')
+    jobs = [{'id': j['id'], 'job_description': j['job_description']} for j in frozen_jobs(Path(args.snapshots)) if j['id'] in wanted]
+    if len(jobs) != len(wanted):
+        raise SystemExit('token_baseline: unknown job id')
+    resume = (RESUMES[0].parent / args.resume).read_text(encoding='utf-8')
+    arms, original = {}, transport.encode_wire
+    for arm, encoder in (('inline', lambda state, questions: (state, questions)), ('shared', original)):
+        transport.encode_wire = encoder
+        endpoint = FakeJev()
+        captured = []
+        real = endpoint.__call__
+
+        def call(request, real=real, captured=captured):
+            captured.append(input_reservation(json.loads(request.content)))
+            return real(request)
+        try:
+            with tempfile.TemporaryDirectory() as temp:
+                JevFitService(Settings(key='precheck-not-a-key', cache_path=Path(temp) / 'cold.sqlite3'),
+                              transport=httpx.MockTransport(call)).analyze_many(resume_text=resume, jobs=jobs)
+        finally:
+            transport.encode_wire = original
+        arms[arm] = {'requests': len(endpoint.requests), 'bytes': sum(r['size']['bytes'] for r in endpoint.requests),
+                     'reservation_total': sum(captured), 'largest_request_reservation': max(captured),
+                     'questions': sum(r['question_count'] for r in endpoint.requests)}
+    import re
+    features = {j['id']: {'chars': len(j['job_description']),
+                          'preferred_words': len(re.findall(r'(?i)\b(preferred|nice to have|bonus|plus)\b', j['job_description'])),
+                          'or_words': len(re.findall(r'(?i)\bor\b', j['job_description'])),
+                          'negations': len(re.findall(r"(?i)\b(not|no|without|never)\b", j['job_description'])),
+                          'eligibility_words': len(re.findall(r'(?i)\b(authoriz\w*|sponsor\w*|citizen\w*|clearance|visa)', j['job_description']))}
+                for j in jobs}
+    report = {'kind': 'scoring-precheck', 'sent': 0, 'resume': args.resume, 'jobs': wanted, 'job_features': features, 'arms': arms}
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).write_text(json.dumps(report, indent=2), encoding='utf-8')
+    print(json.dumps(report, indent=1))
+
+
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest='command', required=True)
@@ -321,7 +371,14 @@ def main():
     c.add_argument('--out', required=True)
     c.add_argument('--snapshots', default=str(SNAPSHOTS))
     c.add_argument('--label', default='current')
+    pre = sub.add_parser('scoring-precheck')
+    pre.add_argument('--out', required=True)
+    pre.add_argument('--jobs', default='A0-boards,B0-jobspy_indeed')
+    pre.add_argument('--resume', default='avery.txt')
+    pre.add_argument('--snapshots', default=str(SNAPSHOTS))
     args = parser.parse_args()
+    if args.command == 'scoring-precheck':
+        scoring_precheck(args)
     if args.command == 'scoring':
         scoring(args)
     elif args.command == 'scoring-cache':
