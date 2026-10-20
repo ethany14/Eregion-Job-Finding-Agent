@@ -31,6 +31,71 @@ def semantic_value(value):
 
 _WAKE = object()
 
+# Wire encoding of one request. Questions stay complete inside the service (and in cache keys);
+# on the wire, an evidence value repeated within one request (a JD span asked about twice, the
+# same requirement in several questions, shared criteria) is sent once in shared_values and the
+# questions cite it as {"$ref": ID}. Only values this request cites are included, so every
+# request is self-contained. The question sentence itself always stays inline.
+WIRE_PROTOCOL = 'jev-wire-2-shared-values'
+SHARED_FIELDS = ('span', 'section', 'requirement', 'subject', 'excerpt', 'context_rule')
+SHARED_MINIMUM = 24
+SHARED_RULE = ('In questions, {"$ref": ID} stands exactly for shared_values[ID]. A shared value is part of each '
+               'question that cites it, never a fact of any case or document.')
+
+
+def _shareable(question):
+    """(path, value) pairs of a question that may be sent once per request."""
+    ins = question.get('instructions', {})
+    pairs = [(('instructions', k), ins[k]) for k in SHARED_FIELDS if isinstance(ins.get(k), str)]
+    if isinstance(question.get('criteria'), dict):
+        pairs.append((('criteria',), question['criteria']))
+    if isinstance(ins.get('criteria'), dict):
+        pairs.append((('instructions', 'criteria'), ins['criteria']))
+    return pairs
+
+
+def encode_wire(state, questions):
+    """Lossless request encoding: repeated evidence values once, cited by reference."""
+    counts = {}
+    for q in questions.values():
+        for _, value in _shareable(q):
+            text = canonical(value)
+            if len(text) >= SHARED_MINIMUM:
+                counts[text] = counts.get(text, 0) + 1
+    ids, shared, wire = {}, {}, {}
+    for key, q in questions.items():
+        encoded = copy.deepcopy(q)
+        for path, value in _shareable(q):
+            text = canonical(value)
+            if counts.get(text, 0) < 2:
+                continue
+            ref = ids.setdefault(text, 'v' + str(len(ids)))
+            shared[ref] = value
+            target = encoded
+            for part in path[:-1]:
+                target = target[part]
+            target[path[-1]] = {'$ref': ref}
+        wire[key] = encoded
+    if not shared:
+        return state, wire
+    return {**state, 'shared_values': shared, 'shared_values_rule': SHARED_RULE}, wire
+
+
+def decode_wire(state, questions):
+    """The complete questions an encoded request stands for (used by tests and fakes)."""
+    shared = state.get('shared_values', {})
+
+    def resolve(value):
+        if isinstance(value, dict):
+            if set(value) == {'$ref'}:
+                return shared[value['$ref']]
+            return {k: resolve(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [resolve(v) for v in value]
+        return value
+    plain = {k: v for k, v in state.items() if k not in ('shared_values', 'shared_values_rule')}
+    return plain, {k: resolve(q) for k, q in questions.items()}
+
 
 @dataclass
 class Pending:
@@ -142,13 +207,15 @@ class Broker:
         # State + question contain the full semantic input. The consumer's job
         # ID/hash must not prevent reuse of the same resume/requirement decision.
         scope={k:v for k,v in p.scope.items() if k!='job'}
-        return digest([self.signature, scope, p.purpose, p.state, q,
+        # The key holds the complete question; the wire protocol versions the encoding it was asked in.
+        return digest([self.signature, scope, p.purpose, p.state, q, WIRE_PROTOCOL,
                        resolve(self.config.reasoning, p.purpose), escalation_enabled()])
 
     def _request(self, state, questions, purpose, context, *, retry=False, plain=False):
         if len(self.records) >= self.max_requests:
             return {}, 'request_budget', None
-        payload = {'model': self.config.model, 'state': state, 'questions': questions}
+        wire_state, wire_questions = encode_wire(state, questions)
+        payload = {'model': self.config.model, 'state': wire_state, 'questions': wire_questions}
         from eregion.domain.reasoning import resolve, escalated, escalation_enabled
         level = resolve(self.config.reasoning, purpose)
         original_level = level
@@ -259,7 +326,8 @@ class Broker:
         purpose = pending[0].purpose
         for k,q in unique.items():
             trial = {**current, k:q}
-            payload = {'model':self.config.model,'state':state_for({case_of[w] for w in trial}),'questions':trial}
+            wire_state, wire_questions = encode_wire(state_for({case_of[w] for w in trial}), trial)
+            payload = {'model':self.config.model,'state':wire_state,'questions':wire_questions}
             if current and (len(trial)>MAX_QUESTIONS or len(json.dumps(payload,ensure_ascii=False).encode())>MAX_PAYLOAD_BYTES):
                 batches.append(current)
                 current={}

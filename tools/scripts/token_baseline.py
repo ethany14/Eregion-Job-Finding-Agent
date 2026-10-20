@@ -153,9 +153,26 @@ class FakeJev:
             subject = entry.get('subject') if subject is None and 'subject' in ins.get('uses', ['subject']) else subject
         return [span, section, requirement, subject, ins.get('excerpt'), ins.get('support_level')]
 
+    @staticmethod
+    def resolve(state, questions):
+        """Inline {"$ref": ID} values from state.shared_values (independent of the product's decoder)."""
+        shared = state.get('shared_values', {})
+
+        def walk(value):
+            if isinstance(value, dict):
+                if set(value) == {'$ref'}:
+                    if value['$ref'] not in shared:
+                        raise ValueError('reference to a value this request does not carry')
+                    return shared[value['$ref']]
+                return {k: walk(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [walk(v) for v in value]
+            return value
+        return state, {k: walk(q) for k, q in questions.items()}
+
     def __call__(self, request):
         payload = json.loads(request.content)
-        state, questions = payload['state'], payload['questions']
+        state, questions = self.resolve(payload['state'], payload['questions'])
         answers, kinds = {}, {}
         for key, q in questions.items():
             ins = q['instructions']
