@@ -540,3 +540,24 @@ def test_one_workday_search_call_also_runs_the_words_of_a_phrase_without_a_match
         assert set(result['options_sharing_words'])=={'Computer Systems Analysis','Management Information Systems','Industrial Engineering'}
         assert 'unresolved' in result and not browser.observe()[0]['value']  # nothing chosen for the model
     finally:browser.close()
+
+
+def test_a_word_search_reads_every_row_of_a_virtualized_result_list():
+    # Adobe run 40: Workday rendered 11-14 of the "Engineering" rows, so the closest major was
+    # chosen without seeing Industrial or Mechanical Engineering.
+    class VirtualBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_search_virtual.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=VirtualBrowser(URL)
+    try:
+        study=browser.observe()[0]
+        found=[o['label'] for o in browser.inspect_options(study['key'],query='Engineering')]
+        assert len(found)==24 and 'Industrial Engineering' in found and 'Structural Engineering' in found
+        assert len(found)==len(set(found))
+        assert browser.page.locator('[role="option"]').count()<12            # still only a window rendered
+        assert browser.page.evaluate("document.getElementById('list').scrollTop")==0
+        browser.choose_option(study['key'],'Structural Engineering')       # a row scrolled out of view
+        assert browser.page.locator('[data-automation-id="selectedItem"]').inner_text()=='Structural Engineering'
+    finally:browser.close()

@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- Workday searchable prompt with a virtualized result list (Adobe run 40, 2026-10-20): only the
+     rows near the visible part of the menu exist in the DOM, so the "Engineering" search read
+     11-14 of its rows. Rows are 30px in a 210px menu; a few buffer rows are rendered. -->
+<html><body>
+<div data-automation-id="formField-fieldOfStudy">
+  <label for="education-11--fieldOfStudy">Field of Study</label>
+  <div data-automation-id="multiSelectContainer">
+    <input id="education-11--fieldOfStudy" enterkeyhint="search" placeholder="Search" autocomplete="off">
+    <div id="chosen"></div>
+  </div>
+</div>
+<div id="popup" style="display:none">
+  <div data-automation-id="activeListContainer" role="listbox" id="list" style="height:210px;overflow-y:auto;position:relative"></div>
+</div>
+<script>
+const ENGINEERING = ['Aerospace', 'Agricultural', 'Architectural', 'Automotive', 'Biomedical', 'Ceramic', 'Chemical',
+  'Civil', 'Computer', 'Electrical', 'Environmental', 'Geological', 'Industrial', 'Manufacturing', 'Materials',
+  'Mechanical', 'Metallurgical', 'Mining', 'Nuclear', 'Petroleum', 'Software', 'Structural'].map(w => w + ' Engineering');
+const ALL = ['Accounting', 'Actuarial Science', 'Computer Systems Analysis', ...ENGINEERING, 'Engineering Mechanics',
+  'Engineering Physics', 'Management Information Systems'].sort();
+const ROW = 30, input = document.getElementById('education-11--fieldOfStudy'), list = document.getElementById('list');
+let items = [];
+function row(text) {
+  const el = document.createElement('div');
+  el.setAttribute('role', 'option'); el.textContent = text; el.style.height = ROW + 'px';
+  el.addEventListener('click', () => {
+    const pill = document.createElement('div');
+    pill.setAttribute('data-automation-id', 'selectedItem'); pill.textContent = text;
+    document.getElementById('chosen').replaceChildren(pill);
+    input.value = ''; document.getElementById('popup').style.display = 'none';
+  });
+  return el;
+}
+function render() {
+  const first = Math.max(0, Math.floor(list.scrollTop / ROW) - 2);
+  const last = Math.min(items.length, Math.ceil((list.scrollTop + 210) / ROW) + 2);
+  const top = document.createElement('div'), bottom = document.createElement('div');
+  top.style.height = first * ROW + 'px'; bottom.style.height = (items.length - last) * ROW + 'px';
+  list.replaceChildren(top, ...items.slice(first, last).map(row), bottom);
+}
+function show(next) { items = next; list.scrollTop = 0; render(); }
+list.addEventListener('scroll', render);
+input.addEventListener('click', () => { document.getElementById('popup').style.display = 'block'; show(ALL); });
+input.addEventListener('keydown', e => {
+  if (e.key !== 'Enter') return;
+  const query = input.value.toLowerCase();
+  setTimeout(() => show(ALL.filter(t => t.toLowerCase().includes(query))), 300);
+});
+</script>
+</body></html>

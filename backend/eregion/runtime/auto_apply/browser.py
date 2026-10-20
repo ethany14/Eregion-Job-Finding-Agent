@@ -273,6 +273,19 @@ OPTION_SCAN = r"""els => {
   }).filter(Boolean);
 }"""
 
+# Scroll the menu holding an option: one step down, or back to the top. Returns null when no
+# ancestor scrolls (the whole list is already rendered).
+SCROLL_MENU = r"""(el, where) => {
+  for (let box = el.parentElement; box; box = box.parentElement) {
+    if (box.scrollHeight > box.clientHeight + 2 && /(auto|scroll)/.test(getComputedStyle(box).overflowY)) {
+      const before = box.scrollTop;
+      box.scrollTop = where === 'top' ? 0 : before + Math.max(40, box.clientHeight * 0.8);
+      return {before, after: box.scrollTop};
+    }
+  }
+  return null;
+}"""
+
 # Cookie banners covering a form cost the agent minutes of page reads (Palantir pilot,
 # 2026-10-15). Privacy first: choose "reject"/"necessary only" when offered; otherwise hide
 # the banner without accepting. Only known consent containers are touched.
@@ -1069,7 +1082,38 @@ class ApplicationBrowser:
             options.first.wait_for(state="visible", timeout=1000)
         except Exception:
             return []
+        if before is not None and self.option_search_evidence[key]['list_changed']:
+            return self._all_options(key, field, options)
         return self._read_options(key, options)
+
+    def _all_options(self, key, field, options, limit=120, steps=12):
+        """Workday renders only the rows near the visible part of a long menu (Adobe run 40: the
+        "Engineering" search read 11, then 14 of its rows, so later majors were never seen). Scroll
+        a filtered result list to its end, merging each read; bounded, and scrolled back to the top."""
+        items = self._read_options(key, options)
+        moved = False
+        for _ in range(steps):
+            if len(items) >= limit:
+                break
+            try:
+                position = options.first.evaluate(SCROLL_MENU, 'down')
+            except Exception:
+                break
+            if not position or position['after'] == position['before']:
+                break
+            moved = True
+            self.page.wait_for_timeout(150)
+            options = self._option_locator(field)
+            labels = {item['label'] for item in items}
+            items += [item for item in self._read_options(key, options) if item['label'] not in labels]
+        if moved:
+            try:
+                self._option_locator(field).first.evaluate(SCROLL_MENU, 'top')
+                self.page.wait_for_timeout(150)
+            except Exception:
+                pass
+        self.option_cache[key] = items
+        return items
 
     def _option_labels(self, field):
         try:

@@ -165,8 +165,9 @@ def fallback_words(query):
     return words[:3] if len(words) > 1 else []
 
 
-def shared_word_options(fact, options, limit=20):
-    """Observed option labels sharing a distinctive word with the fact (lexical retrieval, not equivalence)."""
+def shared_word_options(fact, options, limit=40):
+    """Observed option labels sharing a distinctive word with the fact (lexical retrieval, not equivalence).
+    The limit fits a fully read word search (Adobe's "Engineering" lists about 30 majors)."""
     wanted = {w.casefold() for w in _words(fact)}
     shared = {}
     for option in options:
