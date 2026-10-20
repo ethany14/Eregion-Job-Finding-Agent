@@ -67,4 +67,6 @@ def test_repeating_exact_source_as_query_needs_no_extra_explanation(monkeypatch)
     browser,s,host,searches=session_for(monkeypatch)
     s.execute('search_options',{'observation_id':s.observation_id,'field_key':browser.fields[0]['key'],
         'source_ref':f"education:{REPLAY['binding']['education_id']}:field_of_study",'query':REPLAY['profile_fact']})
-    assert searches==[REPLAY['profile_fact']] and not s.state.get('field_decisions')
+    # The exact fact first; with no literal match its words follow in the same call (2026-10-20).
+    assert searches[0]==REPLAY['profile_fact'] and searches[1:]==['Systems','Engineering']
+    assert not s.state.get('field_decisions')

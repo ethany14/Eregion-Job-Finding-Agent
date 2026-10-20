@@ -124,7 +124,7 @@ TOOLS = [
     tool("read_field", "Read a field's current value, target, saved decision and date siblings without clicking, opening menus or typing.", FIELD),
     tool("focus_fields", "Choose fields for detailed observations; other fields remain in a page-wide index and blockers. Empty field_keys restores full detail. Does not write or decide any answers.", {"field_keys":{"type":"array","items":TEXT,"maxItems":100}}),
     tool("inspect_field", "Open a dropdown and read its actual options. Clears a previous search so parent categories can be explored when searching a leaf found nothing. Follow next_offset to read long lists.", FIELD, optional=OPTION_PAGE),
-    tool("search_options", "Search using a cited fact. Optionally choose a shorter or alternative query with a reason; a search term is not a candidate answer or an equivalence decision.", {**FIELD, "source_ref": TEXT}, optional={**OPTION_PAGE,
+    tool("search_options", "Search using a cited fact. Optionally choose a shorter or alternative query with a reason; a search term is not a candidate answer or an equivalence decision. A multi-word query without a literal match also searches its distinctive words in the same call (additional_searches, automatic: do not repeat them); options_sharing_words lists observed options sharing a word with the fact.", {**FIELD, "source_ref": TEXT}, optional={**OPTION_PAGE,
         "query": {"type":"string", "maxLength":120, "description":"Model-chosen search term grounded in source_ref; does not change the fact."},
         "query_reason": {"type":"string", "maxLength":500, "description":"Why this alternative query helps find options for the cited fact."},
         "extra_queries": {"type":"array", "maxItems":3, "items":{"type":"string", "maxLength":120},
@@ -152,6 +152,29 @@ COMMITTED_OPTION_NOTE = ('This committed value is already an observed option. Yo
                          'and your reason without searching for it again; its presence alone does not establish equivalence.')
 NARRATIVE = re.compile(r"\b(describe|explain|share|example|why|what|how|motivat\w*|summari\w*)\b|"
     r"tell us|tell me|cover letter|additional information|介绍|描述|经历|项目|简述|说明", re.I)
+_SEARCH_STOPWORDS = frozenset('and of the in for to with or an at on by from'.split())
+
+
+def _words(text):
+    return [w for w in re.findall(r"[^\W\d_][\w'-]*", str(text or '')) if len(w) >= 3 and w.casefold() not in _SEARCH_STOPWORDS]
+
+
+def fallback_words(query):
+    """The distinctive words of a multi-word query, at most three, for pickers that filter on one word."""
+    words = list(dict.fromkeys(_words(query)))
+    return words[:3] if len(words) > 1 else []
+
+
+def shared_word_options(fact, options, limit=20):
+    """Observed option labels sharing a distinctive word with the fact (lexical retrieval, not equivalence)."""
+    wanted = {w.casefold() for w in _words(fact)}
+    shared = {}
+    for option in options:
+        label = option.get('label')
+        count = len(wanted & {w.casefold() for w in _words(label)})
+        if count and label not in shared:
+            shared[label] = count
+    return sorted(shared, key=lambda label: -shared[label])[:limit]  # most shared words first, stable
 
 
 OTHER_PARTY = re.compile(r"\b(company|employer|organi[sz]ation|business|reference|referee|referr\w*|emergency|"
@@ -1021,10 +1044,18 @@ class AgentTools:
             # Dynamic-19: three dependent-free searches for one major took three model rounds.
             # Extra terms run in this call; each keeps its own results and evidence.
             additional, seen = [], list(options)
-            for term in dict.fromkeys(q.strip() for q in extra if q.strip() != query):
+            # Adobe 2026-10-20: Workday's major picker filters on single words; "Systems Engineering"
+            # left the unfiltered list and "Computer Science" an empty one, so the model searched one
+            # word per turn (4-7 actions per school). A multi-word query without a literal match also
+            # runs its distinctive words here. Retrieval only: equivalence stays the model's decision.
+            terms = [q.strip() for q in extra if q.strip() != query]
+            if not resolve_option(field["label"], fact, options):
+                terms += [word for word in fallback_words(query) if word not in terms]
+            for term in dict.fromkeys(terms):
                 found = self.browser.inspect_options(key, query=term)
                 self._log_search(key, term, found, args)
-                item = {"query": term, "options": [o.get("label") for o in found][:OPTION_PREVIEW], "total_options": len(found)}
+                item = {"query": term, "options": [o.get("label") for o in found][:OPTION_PREVIEW], "total_options": len(found),
+                        **({"automatic": True} if term not in extra else {})}
                 evidence = getattr(self.browser, 'option_search_evidence', {}).get(key)
                 if evidence:
                     item["search_evidence"] = evidence
@@ -1040,6 +1071,10 @@ class AgentTools:
                 page['search_evidence'] = primary_evidence
             if additional:
                 page["additional_searches"] = additional
+            shared = shared_word_options(fact, seen)
+            if shared and not resolve_option(field["label"], fact, seen):
+                # Observed options sharing a word with the fact, so the decision needs no re-reading.
+                page["options_sharing_words"] = shared
             if not resolve_option(field["label"], fact, seen):
                 # Replay: the model searched and said it would "keep looking" without saving a
                 # decision. Name the decisions that resolve the field; the choice stays the model's.

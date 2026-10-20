@@ -515,3 +515,28 @@ def test_confirm_statement_checkbox_carries_the_statement_and_the_check_sees_it(
         assert 'confirm the statement above' in question and 'Applicant Privacy Policy' in question
         assert any('Applicant Privacy Policy' in q.get('help','') for q in seen[0][1]['questions'])
     finally:browser.close()
+
+
+def test_one_workday_search_call_also_runs_the_words_of_a_phrase_without_a_match():
+    # Adobe 2026-10-20: "Systems Engineering" matched nothing; the model then searched one word per turn.
+    from eregion.runtime.auto_apply.agent import AgentTools
+    class SearchBrowser(WorkdayBrowser):
+        def _guard_request(self,route):
+            if route.request.is_navigation_request():
+                route.fulfill(content_type='text/html',body=(Path(__file__).parent/'fixtures/auto_apply/workday_search.html').read_text(encoding='utf-8'))
+            else:route.abort()
+    browser=SearchBrowser(URL)
+    state={'automation_mode':'hybrid','answers':{},'profile':{'experience':[],'education':[
+        {'id':'a','school':'School A','field_of_study':'Systems Engineering'}]}}
+    try:
+        s=AgentTools(browser,state,autofill=lambda:{},active=lambda:True)
+        s.observe();study=s.fields[0]
+        s.search_source=lambda field,ref:'Systems Engineering'
+        result=s.execute('search_options',{'observation_id':s.observation_id,'field_key':study['key'],
+            'source_ref':'education:a:field_of_study'})
+        found={item['query']:item['options'] for item in result['additional_searches']}
+        assert found['Systems']==['Computer Systems Analysis','Management Information Systems']
+        assert found['Engineering']==['Industrial Engineering']
+        assert set(result['options_sharing_words'])=={'Computer Systems Analysis','Management Information Systems','Industrial Engineering'}
+        assert 'unresolved' in result and not browser.observe()[0]['value']  # nothing chosen for the model
+    finally:browser.close()
