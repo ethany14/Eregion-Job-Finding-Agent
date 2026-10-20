@@ -37,6 +37,9 @@ _WAKE = object()
 # questions cite it as {"$ref": ID}. Only values this request cites are included, so every
 # request is self-contained. The question sentence itself always stays inline.
 WIRE_PROTOCOL = 'jev-wire-2-shared-values'
+# Stages whose whole input is the posting (requirement extraction, its refinement, and whether a
+# requirement is a personal condition). Matching stages read the resume and stay bound to it.
+POSTING_ONLY = frozenset({'extract_requirements', 'refine_extraction_yes_no', 'condition_category_yes_no'})
 SHARED_FIELDS = ('span', 'section', 'requirement', 'subject', 'excerpt', 'context_rule')
 SHARED_MINIMUM = 24
 SHARED_RULE = ('In questions, {"$ref": ID} stands exactly for shared_values[ID]. A shared value is part of each '
@@ -206,7 +209,11 @@ class Broker:
         from eregion.domain.reasoning import resolve, escalation_enabled
         # State + question contain the full semantic input. The consumer's job
         # ID/hash must not prevent reuse of the same resume/requirement decision.
-        scope={k:v for k,v in p.scope.items() if k!='job'}
+        # Posting-only stages read the JD and requirement text, never the resume or the user's facts:
+        # their decisions stay valid when only those change, within the same owner. A state that ever
+        # carries evidence keeps the resume and facts in its key.
+        posting_only = p.purpose in POSTING_ONLY and 'evidence' not in p.state
+        scope={k:v for k,v in p.scope.items() if k!='job' and not (posting_only and k in ('resume','facts'))}
         # The key holds the complete question; the wire protocol versions the encoding it was asked in.
         return digest([self.signature, scope, p.purpose, p.state, q, WIRE_PROTOCOL,
                        resolve(self.config.reasoning, p.purpose), escalation_enabled()])

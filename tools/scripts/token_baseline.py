@@ -281,6 +281,34 @@ def scoring(args):
                       'by_purpose': by_purpose}, indent=2))
 
 
+def scoring_cache(args):
+    """Cold and warm cache, reported separately: one decision cache, resume A cold, resume B warm, A warm again."""
+    from eregion.domain.jev_fit.service import JevFitService
+    from eregion.domain.jev_fit.settings import Settings
+    no_network()
+    jobs = [{'id': j['id'], 'job_description': j['job_description']} for j in frozen_jobs(Path(args.snapshots)) if j['query'] == 0]
+    resumes = [path.read_text(encoding='utf-8') for path in RESUMES]
+    passes = []
+    with tempfile.TemporaryDirectory() as temp:
+        config = Settings(key='baseline-not-a-key', cache_path=Path(temp) / 'decisions.sqlite3')
+        for label, resume in (('resume_a_cold', resumes[0]), ('resume_b_warm', resumes[1]), ('resume_a_warm', resumes[0])):
+            endpoint = FakeJev()
+            JevFitService(config, transport=httpx.MockTransport(endpoint)).analyze_many(resume_text=resume, jobs=jobs)
+            stages = {}
+            for req in endpoint.requests:
+                stage = next(iter({STAGE_OF.get(k, 'unclassified') for k in req['kinds']}))
+                row = stages.setdefault(stage, {'requests': 0, 'bytes': 0, 'questions': 0})
+                row['requests'] += 1
+                row['bytes'] += req['size']['bytes']
+                row['questions'] += req['question_count']
+            passes.append({'pass': label, 'requests': len(endpoint.requests),
+                           'bytes': sum(r['size']['bytes'] for r in endpoint.requests), 'by_stage': stages})
+    report = {'label': args.label, 'kind': 'scoring-cache', 'jobs': len(jobs), 'passes': passes}
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    Path(args.out).write_text(json.dumps(report, indent=2), encoding='utf-8')
+    print(json.dumps(passes, indent=1))
+
+
 def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest='command', required=True)
@@ -289,9 +317,15 @@ def main():
     s.add_argument('--snapshots', default=str(SNAPSHOTS))
     s.add_argument('--label', default='current')
     s.add_argument('--repeat', type=int, default=3)
+    c = sub.add_parser('scoring-cache')
+    c.add_argument('--out', required=True)
+    c.add_argument('--snapshots', default=str(SNAPSHOTS))
+    c.add_argument('--label', default='current')
     args = parser.parse_args()
     if args.command == 'scoring':
         scoring(args)
+    elif args.command == 'scoring-cache':
+        scoring_cache(args)
 
 
 if __name__ == '__main__':
