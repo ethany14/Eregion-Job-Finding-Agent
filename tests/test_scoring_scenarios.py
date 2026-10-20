@@ -253,8 +253,10 @@ def test_score_results_are_compact_with_every_jobs_status_and_survive_archiving(
     scored, unscored = result['jobs'], result.get('unscored') or []
     assert scored and unscored and result['scoring']['scored'] == len(scored) == 4
     assert result['scoring']['unscored_for_budget'] == len(unscored) == 2
+    # Guidance shared by every scored job is stated once beside the list, not repeated per job.
+    assert 'inspect_job' in result['detail'] and 'Scoring is complete' in result['decision_brief_note']
     for entry in scored:
-        assert entry['scoring_status'] == 'scored' and 'inspect_job' in entry['detail']
+        assert entry['scoring_status'] == 'scored' and 'detail' not in entry and 'note' not in entry['decision_brief']
         assert 'match_report' not in entry and 'description' not in entry and entry['match_score'] is not None
     assert all(u['scoring_status'] == 'unscored_for_budget' and 'Not recommendations' in u['reason'] for u in unscored)
     # The full report is still one call away.
@@ -262,4 +264,5 @@ def test_score_results_are_compact_with_every_jobs_status_and_survive_archiving(
     assert full.get('match_report') or full.get('match_overview')
     # Archived or not, the scoring state stays visible.
     summary = ContextArchive().tool_result(json.loads(json.dumps(result, default=str)))
-    assert {'scoring', 'unscored'} <= set(summary) and all(j.get('scoring_status') == 'scored' for j in summary['jobs'])
+    assert {'scoring', 'unscored', 'detail', 'decision_brief_note'} <= set(summary)
+    assert all(j.get('scoring_status') == 'scored' for j in summary['jobs'])

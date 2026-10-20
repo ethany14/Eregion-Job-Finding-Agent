@@ -104,7 +104,7 @@ def run(harness,task_id,args,call_id):
                     save(pending=None)
                 except (ValueError,LookupError) as exc:
                     item.update(status='import_failed',error=str(exc)[:400]);save(pending=None)
-            scored,unscored,interrupted,notes,unscored_entries=[],[],[],[],[]
+            scored,unscored,interrupted,notes,unscored_entries,guidance=[],[],[],[],[],{}
             for start in range(0,len(apps),16):
                 group=apps[start:start+16]
                 result=invoke('score_jobs',{'application_ids':group})
@@ -113,17 +113,19 @@ def run(harness,task_id,args,call_id):
                     # this group stays imported but unscored (never a recommendation).
                     pending=[a for a in apps[start:] if a not in {j.get('application_id') for j in scored}]
                     save(pending=None,failure=result)
-                    return {**result,'jobs':scored,'candidates':items,'unscored_for_budget':pending,
+                    return {**result,**guidance,'jobs':scored,'candidates':items,'unscored_for_budget':pending,
                             'budget_note':'Imported and qualified but not scored. Not recommendations; paid scoring '
                                           'decisions already made are cached and are not paid again on a retry.'}
                 scored.extend(result['jobs'])
+                # Guidance stated once beside a group's jobs stays with the merged list.
+                guidance.update({k:result[k] for k in ('decision_brief_note','detail') if k in result})
                 unscored.extend(result.get('unscored_for_budget') or [])
                 interrupted.extend(result.get('interrupted_chunk') or [])
                 unscored_entries.extend(result.get('unscored') or [])
                 if result.get('budget_note'):notes.append(result['budget_note'])
                 if not result.get('no_new_evidence'):changed=True
             save(pending=None,completed=True,failure=None)
-            return {'jobs':scored,'candidates':items,'qualified_count':len(apps),
+            return {'jobs':scored,**guidance,'candidates':items,'qualified_count':len(apps),
                     'scoring':{'scored':len(scored),'unscored_for_budget':len(unscored),'interrupted':len(interrupted),
                                'note':'jobs lists scored jobs only; unscored lists the rest. Scores are not recommendations.'},
                     **({'unscored':unscored_entries} if unscored_entries else {}),

@@ -429,7 +429,9 @@ class ContextArchive:
                     'completed_steps', 'failed_step', 'fallback', 'opening_level', 'qualification_evidence',
                     'seniority_warning', 'score_range', 'analysis_status', 'decision', 'decision_brief', 'pending', 'rejection_code',
                     # Scoring state stays visible when a scoring result is archived (layer-2 run 2).
-                    'scoring', 'unscored', 'unscored_for_budget', 'budget_note', 'interrupted_chunk', 'measured_cost_per_job'):
+                    'scoring', 'unscored', 'unscored_for_budget', 'budget_note', 'interrupted_chunk', 'measured_cost_per_job',
+                    # Guidance stated once beside a scored list (no longer repeated per job).
+                    'decision_brief_note', 'detail'):
             if key in result:
                 value = result[key]
                 limit = (BRIEF_LIMIT if key == 'decision_brief' else 4000 if key in {'triage_evidence','match_overview',

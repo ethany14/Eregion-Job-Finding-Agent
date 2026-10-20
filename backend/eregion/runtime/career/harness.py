@@ -103,6 +103,31 @@ from .decisions import TOOL as DECIDE_JOB_TOOL
 
 TOOLS.append(DECIDE_JOB_TOOL)
 
+DECISION_NOTE = ('Scoring is complete. Statuses come from the scorer: partial means some supporting evidence, not '
+                 'automatically disqualifying; unknown means the scorer did not decide, so compare that requirement with '
+                 'the resume yourself. Use these items to choose the tier (priority, stretch, to_confirm) and to name '
+                 'the gaps that matter most and the items to confirm. For exact text or resume evidence of any item (listed, truncated '
+                 'or omitted) call inspect_job with requirement_ids.')
+SCORED_DETAIL = ('inspect_job(application_id) returns the full match report and posting; '
+                 'inspect_job(application_id, requirement_ids=[...]) returns exact requirements with resume evidence.')
+
+
+def shared_job_guidance(rows):
+    """The same guidance sentence on every scored job, stated once beside the list (rows keep their data)."""
+    if len(rows) < 2:
+        return rows, {}
+    shared, out = {}, []
+    for row in rows:
+        brief = row.get('decision_brief')
+        if isinstance(brief, dict) and brief.get('note') == DECISION_NOTE:
+            row = {**row, 'decision_brief': {k: v for k, v in brief.items() if k != 'note'}}
+            shared['decision_brief_note'] = DECISION_NOTE
+        if row.get('detail') == SCORED_DETAIL:
+            row = {k: v for k, v in row.items() if k != 'detail'}
+            shared['detail'] = SCORED_DETAIL
+        out.append(row)
+    return out, shared
+
 
 class ApplicationOwnedElsewhere(ValueError):
     """A structured ownership refusal: not a malformed argument, so it is never worth retrying."""
@@ -332,9 +357,14 @@ class CareerHarness:
         # document and interview inside each observation.
         from .decisions import statuses
         decision_rows=statuses(state)
+        pending_rows,guidance=shared_job_guidance([{**j,**decision_rows.get(j['application_id'],{})}
+            for j in state.get('scored_job_evidence',{}).values()
+            if decision_rows.get(j['application_id'],{}).get('decision_status')!='recommended'])
+        # The tier rule is part of every career system prompt; repeating it here sent it twice per request.
+        rule=('Apply the recommendation rule (tier definitions) from the system instructions.'
+              if RECOMMENDATION_RULE in getattr(self,'prompt','') else RECOMMENDATION_RULE)
         known={'request':latest,'jobs':list(state['jobs']),
-            'scored_not_recommended':[{**j,**decision_rows.get(j['application_id'],{})} for j in state.get('scored_job_evidence',{}).values()
-                if decision_rows.get(j['application_id'],{}).get('decision_status')!='recommended'],
+            'scored_not_recommended':pending_rows,**guidance,
             'materials':list(state['packs']), 'applications':list(state['application_runs']),
             'interviews':list(state['interviews']),
             'recent_outcomes':[{'tool':h['tool'],**{k:h.get('result',{})[k] for k in
@@ -342,7 +372,7 @@ class CareerHarness:
                 for h in state.get('history',[])[-4:]],
             'instruction':'Saved results by ID; scored is not recommended. Every scored job needs an outcome (decision_status): '
                 'recommend_job with its tier if it meets the requested role/location/seniority, or decide_job with the specific '
-                'exclusion or missing evidence; searching waits while any is pending. '+RECOMMENDATION_RULE+
+                'exclusion or missing evidence; searching waits while any is pending. '+rule+
                 ' Use exact qualification_evidence; never guess years or auto-recommend unverified/'
                 'ineligible jobs. Final results list each read/scored URL and actual score.'}
 
@@ -531,11 +561,7 @@ class CareerHarness:
                 'strengths':[r['requirement'][:100] for r in overview['matched'][:3]],
                 'required_unresolved':listed(unresolved),
                 'needs_confirmation':listed(confirm),
-                'note':'Scoring is complete. Statuses come from the scorer: partial means some supporting evidence, not '
-                       'automatically disqualifying; unknown means the scorer did not decide, so compare that requirement with '
-                       'the resume yourself. Use these items to choose the tier (priority, stretch, to_confirm) and to name '
-                       'the gaps that matter most and the items to confirm. For exact text or resume evidence of any item (listed, truncated '
-                       'or omitted) call inspect_job with requirement_ids.'}
+                'note':DECISION_NOTE}
 
     def requirement_details(self,application_id,requirement_ids):
         report=(self.job_summary(application_id,detail=True).get('match_report') or {})
@@ -783,8 +809,7 @@ class CareerHarness:
                                        'score_valid_until') if k in summary}
         return {**entry,'scoring_status':'scored',
                 **{k:evidence[k] for k in ('qualification_evidence','posting_conditions','request_near_misses') if k in evidence},
-                'detail':'inspect_job(application_id) returns the full match report and posting; '
-                         'inspect_job(application_id, requirement_ids=[...]) returns exact requirements with resume evidence.'}
+                'detail':SCORED_DETAIL}
 
     def save_scored_evidence(self,task_id,identifiers):
         results={identifier:{k:v for k,v in self.job_summary(identifier).items() if k in {
@@ -1325,7 +1350,8 @@ class CareerHarness:
             unscored=[{**{k:v for k,v in self.job_summary(a).items() if k in ('application_id','title','company','url')},
                        'scoring_status':'interrupted' if a in interrupted else 'unscored_for_budget','reason':note}
                       for a in queue]
-            return {'jobs':[self.scored_entry(a,evidence.get(a,{})) for a in scored],
+            entries,guidance=shared_job_guidance([self.scored_entry(a,evidence.get(a,{})) for a in scored])
+            return {'jobs':entries,**guidance,
                     'scoring':{'scored':len(scored),'unscored_for_budget':len(queue),'interrupted':len(interrupted),
                                'note':'jobs lists scored jobs only; unscored lists the rest. Scores are not recommendations.'},
                     **({'unscored':unscored,'unscored_for_budget':queue,'budget_note':note} if queue else {}),
