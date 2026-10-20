@@ -196,3 +196,17 @@ def review_gaps(state):
         if evidence.get(ref, {}).get('fact_version') != record_version(state, ref):
             result.append(f'Record {ref} has no current verified completion evidence.')
     return result
+
+
+def ready_to_advance(fields, state, page=None):
+    """Whether a work/education page may go to Next without another model turn.
+
+    Every candidate record of a kind this page shows must be complete (bound, every peer field read
+    back against its fact or saved decision) or explicitly omitted by a still-valid model plan. A
+    record not yet on the page (its row never added) is pending, so a page showing one of two jobs
+    does not advance however complete its visible fields are. Pending, needs_input, conflicting or
+    unread records all block. Evidence only; which records belong is the model's plan.
+    """
+    kinds = exposed_kinds(fields, state, page)
+    rows = [row for row in coverage(fields, state) if row['record'].split(':')[0] in kinds]
+    return bool(kinds and rows) and all(row['plan'] == 'omit' or row['complete'] for row in rows)

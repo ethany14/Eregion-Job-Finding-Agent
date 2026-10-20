@@ -533,3 +533,135 @@ def test_revealed_end_date_inherits_the_rows_record_and_host_autofill_fills_it(m
         assert not state.get('field_decisions')
     finally:b.close()
 
+
+def _loop_page(add_rows=True):
+    b = PageBrowser(URL)
+    if add_rows:
+        b.page.locator('#addWork').click(); b.page.locator('#addSchool').click()
+    b.page.evaluate('''() => document.addEventListener('submit', () => {
+        window.valuesBeforeNext = Object.fromEntries([...document.querySelectorAll('input[id], select[id]')]
+            .map(e => [e.id, e.type === 'checkbox' ? e.checked : e.value]));
+    }, true)''')
+    state = {'automation_mode': 'hybrid', 'answers': {}, 'status': 'running', 'chat_revision': 1, 'messages': [], 'profile': {'experience': [
+        {'id': 'one', 'title': 'Research', 'company': 'University', 'start_date': 'Aug 2026', 'current': 'Present'},
+        {'id': 'two', 'title': 'Intern', 'company': 'Employer', 'start_date': 'Jul 2022', 'end_date': 'Aug 2022'}],
+        'education': [{'id': 'a', 'school': 'School A', 'degree': 'Masters', 'field_of_study': 'Systems Engineering'},
+                      {'id': 'b', 'school': 'School B', 'degree': 'Bachelors', 'field_of_study': 'Computer Science'}]}}
+    return b, state
+
+
+def _record_turn(rows):
+    """One reply binding each listed row: work rows without their end dates (left to the row's
+    saved binding), current boxes to current_status, degrees as exact options, majors left empty."""
+    work = {'jobTitle': 'title', 'companyName': 'company', 'startDate-dateSectionMonth-input': 'start_month',
+            'startDate-dateSectionYear-input': 'start_year', 'current': 'current_status'}
+
+    def turn(s):
+        calls, fill = [], []
+        for n, record in rows['work']:
+            bindings = [{'field_key': s['_key'](f'workExperience-{n}--{d}'), 'component': c} for d, c in work.items()]
+            calls.append(('bind_experience', {'experience_id': record, 'fields': bindings}))
+            fill += [x['field_key'] for x in bindings]
+        for n, record, degree in rows['education']:
+            school, degree_key, major = (s['_key'](f'education-{n}--{d}') for d in ('schoolName', 'degree', 'fieldOfStudy'))
+            calls += [('bind_education', {'education_id': record, 'fields': [{'field_key': school, 'component': 'school'},
+                                                                            {'field_key': degree_key, 'component': 'degree'}]}),
+                      ('resolve_field', {'field_key': degree_key, 'mode': 'equivalent', 'value': degree,
+                                         'source_refs': [f'education:{record}:degree'], 'reason': 'Scripted exact option.'}),
+                      ('resolve_field', {'field_key': major, 'mode': 'leave_empty', 'value': '', 'source_refs': [],
+                                         'reason': 'Scripted optional-field decision.'})]
+            fill.append(school)
+        return calls + [('autofill', {'field_keys': fill})]
+    return turn
+
+
+def _run_loop(b, state, turns, monkeypatch):
+    import json
+    from langchain_core.messages import AIMessage, HumanMessage
+    from eregion.runtime.auto_apply.agent import HybridApplicationAgent
+    monkeypatch.setattr('eregion.runtime.auto_apply.fast_options.fill_options', lambda *a, **k: [])
+    scripted, invoked = iter(turns), []
+    keys = {f.get('dom_id'): f['key'] for f in b.observe()}  # Playwright stays on this thread
+
+    class Model:
+        def invoke(self, messages, tools):  # runs on the provider thread: no browser calls here
+            snap = json.loads(next(m.content for m in reversed(messages) if isinstance(m, HumanMessage) and isinstance(m.content, str)))
+            invoked.append(len(invoked))
+            snap['_key'] = keys.__getitem__
+            try:
+                calls = next(scripted)(snap)
+            except StopIteration:
+                calls = [('ask_user', {'text': 'Scripted end.', 'field_keys': []})]
+            for name, args in calls:
+                if name not in ('autofill', 'ask_user', 'say'):
+                    args.setdefault('observation_id', snap['observation_id'])
+            return AIMessage(content='', tool_calls=[{'id': f'{len(invoked)}-{i}', 'name': n, 'args': a}
+                                                     for i, (n, a) in enumerate(calls)])
+
+    class NoPaidDecisions:
+        enabled, timeout = True, 10
+
+        def evaluate(self, *args, **kwargs):
+            pytest.fail('No semantic provider in this scripted run.')
+    finished = lambda: b.page.evaluate('window.nextCount > 0')
+    result = HybridApplicationAgent(model_factory=lambda: Model(), decisions=NoPaidDecisions()).run(
+        b, state, autofill=lambda: autofill(b, state, lambda: b''), active=lambda: not finished(),
+        reserve=lambda kind: True, report=lambda *a: None)
+    return result, invoked
+
+
+ALL_ROWS = {'work': [(1, 'one'), (2, 'two')], 'education': [(1, 'a', 'Masters'), (2, 'b', 'Bachelors')]}
+
+
+def test_host_advances_a_complete_record_page_after_one_model_turn(monkeypatch):
+    """P3: one reply binds all four records; the host fills the inherited end date, checks every
+    record's readback and presses Next. No second model turn, no submit."""
+    b, state = _loop_page()
+    try:
+        _, invoked = _run_loop(b, state, [_record_turn(ALL_ROWS)], monkeypatch)
+        assert len(invoked) == 1  # one model turn; the host pressed Next (a pre-turn Next would leave none)
+        assert b.page.evaluate('window.nextCount === 1 && window.submitCount === 0')
+        values = b.page.evaluate('window.valuesBeforeNext')
+        assert values['workExperience-1--current'] is True and values['workExperience-2--current'] is False
+        assert (values['workExperience-2--endDate-dateSectionMonth-input'],
+                values['workExperience-2--endDate-dateSectionYear-input']) == ('8', '2022')
+        assert (values['education-1--schoolName'], values['education-2--degree']) == ('School A', 'Bachelors')
+        assert set(state['record_completion']) == {'work:one', 'work:two', 'education:a', 'education:b'}
+        assert state['record_completion']['work:two']['direct_facts']
+    finally:
+        b.close()
+
+
+def test_host_does_not_advance_while_a_record_has_no_row(monkeypatch):
+    """The Adobe re-test 08 defect: one job and one school visible and complete, the second of each
+    never added. Every visible required field is filled; Next must not be pressed."""
+    b, state = _loop_page(add_rows=False)
+    try:
+        _, invoked = _run_loop(b, state, [_record_turn({'work': [(1, 'one')], 'education': [(1, 'a', 'Masters')]})], monkeypatch)
+        assert b.page.evaluate('window.nextCount') == 0 and len(invoked) == 2  # the model got the page back
+        assert b.page.locator('form').evaluate('(e) => e.checkValidity()')  # visible fields alone would pass
+        from eregion.runtime.auto_apply.record_coverage import coverage
+        pending = {row['record'] for row in coverage(b.observe(), state) if not row['complete']}
+        assert pending == {'work:two', 'education:b'}
+    finally:
+        b.close()
+
+
+def test_host_waits_for_a_model_turn_on_the_current_chat_revision(monkeypatch):
+    """A complete page restored after a restart is not advanced before the model reads the latest
+    chat revision (the user may have asked to stay or to change something)."""
+    b, state = _loop_page()
+    try:
+        _run_loop(b, state, [_record_turn(ALL_ROWS)], monkeypatch)
+    finally:
+        b.close()
+    b, restarted = _loop_page()
+    try:
+        restarted.update({k: state[k] for k in ('experience_bindings', 'education_bindings', 'field_decisions', 'record_plan')
+                          if k in state})
+        restarted['chat_revision'] = 2
+        _, invoked = _run_loop(b, restarted, [lambda s: [('say', {'text': 'Checked the latest message.'})]], monkeypatch)
+        assert len(invoked) == 1  # the page was already complete, yet Next waited for this turn
+        assert b.page.evaluate('window.nextCount === 1 && window.submitCount === 0')
+    finally:
+        b.close()

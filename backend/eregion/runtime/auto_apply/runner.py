@@ -403,11 +403,19 @@ class ApplicationHost:
                 except BrowserBlocked:
                     return snapshot
                 raise LoopStop('ready', chat_revision=snapshot.get('chat_revision', 0))
-            if record_page(session.fields, session.state, page) or undecided_optional_question(session.fields, session.state):
-                # Adobe re-test 08: the host advanced My Experience with one of two jobs and one of
-                # two schools; empty required fields were its only completeness test. Whether a
-                # record section is complete is the model's call (record_coverage shows it).
+            if undecided_optional_question(session.fields, session.state):
                 return snapshot
+            if record_page(session.fields, session.state, page):
+                # Adobe re-test 08: the host advanced My Experience with one of two jobs and one of
+                # two schools; empty required fields were its only completeness test. A record page
+                # advances only when every candidate record of the kinds it shows is complete or
+                # omitted by the model's plan, and a model turn has read the latest chat revision.
+                from .record_coverage import ready_to_advance
+                revision = snapshot.get('chat_revision', 0)
+                seen = any(not str(h.get('tool', '')).startswith('host:') and h.get('chat_revision') == revision
+                           for h in self.history)
+                if not seen or not ready_to_advance(session.fields, session.state, page):
+                    return snapshot
             controls = [c for c in page.get('controls', []) if c['kind'] == 'next' and not c.get('disabled')]
             if len(controls) != 1 or fingerprint in self.advanced_pages:
                 return snapshot
