@@ -6,6 +6,10 @@ the production code built (system prompt, tools, replayed history, live snapshot
 returns fixed tool calls. Nothing reaches a provider or a real site.
 
 Reports characters and UTF-8 bytes only (no token estimate). Outputs hold sizes and hashes, never text.
+Each request also records the production usage label of its turn and what the observed fields still
+needed (runtime/auto_apply/field_work.py: done / direct / model / unsourced / optional / failed), and the
+report carries a fingerprint: HEAD, a hash of the uncommitted tracked diff, the system prompt and tool
+definitions, and the non-secret model settings (secret-looking keys are skipped, URLs hashed).
 Hand-off waiting makes no model call by construction (tests/test_verification_handoff.py), so it has no
 request to measure here.
 
@@ -104,15 +108,25 @@ def measure(messages, tools):
 def run_scenario(name, fixture, state, turns, setup=None, done=None):
     """turns: functions snapshot -> [(tool, args)]; after them the model asks the user, which ends the run."""
     from langchain_core.messages import AIMessage, HumanMessage
+    from eregion.runtime.auto_apply import field_work
     from eregion.runtime.auto_apply.agent import HybridApplicationAgent
     from eregion.runtime.auto_apply.autofill import autofill
+    from eregion.runtime.provider_usage import current_scope
     browser = fixture_browser(fixture, setup)
-    requests, scripted = [], iter(turns)
+    requests, scripted, works = [], iter(turns), []
+    labelled = field_work.turn_purpose
+
+    def recorded(snapshot, fields, state, failed=frozenset()):
+        work = field_work.classify(fields, state, failed)
+        works.append({kind: len(keys) for kind, keys in work.items()})
+        return labelled(snapshot, fields, state, failed)
+    field_work.turn_purpose = recorded
 
     class Model:
         def invoke(self, messages, tools):
             snap = json.loads(next(m.content for m in reversed(messages) if isinstance(m, HumanMessage) and isinstance(m.content, str)))
-            requests.append(measure(messages, tools))
+            requests.append({**measure(messages, tools), 'purpose': current_scope().get('purpose'),
+                             'field_work': works[-1] if works else None})
             try:
                 calls = next(scripted)(snap)
             except StopIteration:
@@ -133,6 +147,7 @@ def run_scenario(name, fixture, state, turns, setup=None, done=None):
         if (returned or {}).get('reason') == 'internal_error':
             raise SystemExit(f'token_baseline_apply: scenario {name} ended with an internal error')
     finally:
+        field_work.turn_purpose = labelled
         browser.close()
     history = state.get('decision_history', [])
     errors = [h['tool'] + ':' + str((h.get('result') or {}).get('error_code') or 'error')
@@ -244,12 +259,33 @@ SCENARIOS = {
 }
 
 
+def fingerprint():
+    """Code, prompt and setting versions of this baseline. No secret values: secret-looking keys are
+    skipped and URLs are hashed."""
+    import re
+    import subprocess
+    from dotenv import dotenv_values
+    from eregion.runtime.auto_apply.agent import TOOLS
+    from eregion.runtime.auto_apply.prompt import SYSTEM
+    git = lambda *a: subprocess.run(['git', *a], cwd=ROOT, capture_output=True, text=True, encoding='utf-8').stdout
+    settings = {}
+    for key, value in sorted(dotenv_values(ROOT / '.env').items()):
+        if re.search(r'KEY|TOKEN|SECRET|PASSWORD|COOKIE', key) or not re.search(r'MODEL|REASONING|^JOB_AGENT_|^JEV_|URL', key):
+            continue
+        settings[key] = ('sha256:' + sha(value or '')[:16]) if 'URL' in key else value
+    tools = json.dumps(TOOLS, sort_keys=True)
+    return {'head': git('rev-parse', 'HEAD').strip(), 'tracked_diff_sha256': sha(git('diff', 'HEAD')),
+            'system_prompt': {'sha256': sha(SYSTEM), **size(SYSTEM)},
+            'tools': {'sha256': sha(tools), 'count': len(TOOLS), **size(TOOLS)}, 'settings': settings}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--out', required=True)
     parser.add_argument('--label', default='current')
     parser.add_argument('--only', default='')
     args = parser.parse_args()
+    stamp = fingerprint()  # before no_network(), which isolates the settings files
     no_network()
     import eregion.runtime.auto_apply.fast_options as fast_options
     fast_options.fill_options = lambda *a, **k: []  # no nested paid option decisions in a baseline
@@ -257,8 +293,11 @@ def main():
     results = [SCENARIOS[name]() for name in SCENARIOS if not only or name in only]
     summary = {r['scenario']: {'requests': r['request_count'], 'total_request_bytes': r['total_request_bytes'],
                                'first_request_bytes': r['requests'][0]['request']['bytes'] if r['requests'] else 0,
+                               'purposes': [q['purpose'] for q in r['requests']],
+                               'field_work': [q['field_work'] for q in r['requests']],
                                'outcome': r['outcome']} for r in results}
     report = {'label': args.label, 'kind': 'apply', 'units': 'characters and UTF-8 bytes; no token estimate',
+              'fingerprint': stamp,
               'inputs': {'resume_sha256': sha(RESUME), 'profile_sha256': sha(json.dumps(PROFILE, sort_keys=True))},
               'summary': summary, 'scenarios': results}
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

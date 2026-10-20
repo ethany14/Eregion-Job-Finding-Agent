@@ -440,11 +440,16 @@ class ApplicationHost:
         self.session.state['step_budgets'] = self.pending['step_budgets'] = budgets
         self.session.state['page_calls'] = self.pending['page_calls'] = record
         started = time.monotonic()
+        from eregion.runtime.provider_usage import usage_scope
+        from .field_work import turn_purpose
+        # A descriptive usage label only (never 'agent', which the reply reserve exempts).
+        purpose = 'apply_turn:' + turn_purpose(turn.snapshot, self.session.fields, self.session.state, self.session.failed_fields)
         try:
-            result = self.requests.call(lambda: self.model.invoke_turn(messages, tools, turn.snapshot) if hasattr(self.model, 'invoke_turn') else self.model.invoke(messages, tools),
-                active=lambda: self.active() and self.revision() == turn.revision,
-                timeout=min(getattr(self.model, 'timeout', 45) + 2, max(.01, self.deadline - time.monotonic())),
-                pump=getattr(self.browser, 'pump', None))
+            with usage_scope(purpose=purpose):
+                result = self.requests.call(lambda: self.model.invoke_turn(messages, tools, turn.snapshot) if hasattr(self.model, 'invoke_turn') else self.model.invoke(messages, tools),
+                    active=lambda: self.active() and self.revision() == turn.revision,
+                    timeout=min(getattr(self.model, 'timeout', 45) + 2, max(.01, self.deadline - time.monotonic())),
+                    pump=getattr(self.browser, 'pump', None))
         except ModelInterrupted:
             return None
         except Exception as exc:
@@ -463,12 +468,14 @@ class ApplicationHost:
             return DecisionBatch(status='budget')
         revision, started = self.revision(), time.monotonic()
         result = DecisionBatch(status='interrupted')
+        from eregion.runtime.provider_usage import usage_scope
         try:
-            result = self.requests.call(
-                lambda: self.fast.evaluate(state, questions, purpose='form_options'),
-                active=lambda: self.active() and self.revision() == revision,
-                timeout=min(self.fast.timeout + .5, max(.01, self.deadline - time.monotonic())),
-                pump=getattr(self.browser, 'pump', None))
+            with usage_scope(purpose='apply_form_options'):
+                result = self.requests.call(
+                    lambda: self.fast.evaluate(state, questions, purpose='form_options'),
+                    active=lambda: self.active() and self.revision() == revision,
+                    timeout=min(self.fast.timeout + .5, max(.01, self.deadline - time.monotonic())),
+                    pump=getattr(self.browser, 'pump', None))
             return result
         except (ModelInterrupted, TimeoutError):
             return result
@@ -487,10 +494,12 @@ class ApplicationHost:
             raise LoopStop('agent_limit', stage='answer_verification')
         started, revision = time.monotonic(), self.revision()
         failed, error_code = True, None
+        from eregion.runtime.provider_usage import usage_scope
         try:
-            result = self.requests.call(lambda: self.model.verify_answers(answers, context=context),
-                active=lambda: self.active() and self.revision() == revision,
-                timeout=timeout+2, pump=getattr(self.browser, 'pump', None))
+            with usage_scope(purpose='apply_answer_verification'):
+                result = self.requests.call(lambda: self.model.verify_answers(answers, context=context),
+                    active=lambda: self.active() and self.revision() == revision,
+                    timeout=timeout+2, pump=getattr(self.browser, 'pump', None))
             failed = False
             return result
         except ModelInterrupted as exc:
