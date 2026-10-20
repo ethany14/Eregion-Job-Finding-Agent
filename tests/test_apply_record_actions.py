@@ -57,8 +57,10 @@ def test_invalid_plan_refused_without_effect(issue):
 def test_overlap_and_bad_components_rejected_before_execution():
     _, s, call = setup()
     call['args']['fill_fields'].append('current')
-    with pytest.raises(ToolArgumentsError, match='overlap'):
-        ApplicationHost.validate_batch(SimpleNamespace(session=s), expand(s, call), None)
+    host = SimpleNamespace(session=s)
+    ApplicationHost.validate_batch(host, expand(s, call), None)
+    (remaining, dropped), = host.autofill_trims.values()  # the decided field leaves the literal fill
+    assert dropped == ['current'] and 'current' not in remaining
     call['args']['fill_fields'].pop()
     call['args']['bindings'][0]['component'] = 'invented'
     with pytest.raises(ToolArgumentsError):

@@ -160,6 +160,7 @@ class ApplicationHost:
         self.pending, self.started, self.fingerprint = {}, None, None
         self.context_archive = None
         self.text_turns = 0
+        self.autofill_trims = {}  # call id -> (remaining field_keys, keys other calls in the batch write)
         self.first_observation = True
         self.host_autofill = None
         self.visual_requested, self.pending_screen = False, None
@@ -295,7 +296,11 @@ class ApplicationHost:
                 if any(key not in observed for key in keys):
                     raise ToolArgumentsError('Observe a newly revealed field before batching an action for it.')
                 if set(keys) & seen:
-                    raise ToolArgumentsError('Batch rejected: autofill field_keys overlap another write in this turn.')
+                    # Adobe 2026-10-20 (twice): the model wrote fields and also named them in its closing
+                    # autofill, and the whole batch (5-6 actions) was refused. The other calls already
+                    # write those fields: this autofill runs on the remaining keys only.
+                    trims = self.__dict__.setdefault('autofill_trims', {})
+                    trims[call.get('id')] = ([k for k in keys if k not in seen], sorted(set(keys) & seen))
                 continue
             args = call['args']
             if any(not isinstance(item, dict) for key in ('answers', 'fields') for item in args.get(key) or []):
@@ -585,6 +590,12 @@ class ApplicationHost:
         if call['name'] == 'apply_record':
             raise ToolArgumentsError('Use apply_record alone in a reply; its actions must be expanded by AgentLoop.')
         name, args = call['name'], call['args']
+        trim = self.__dict__.setdefault('autofill_trims', {}).pop(call['id'], None) if name == 'autofill' else None
+        if trim and not trim[0]:
+            return {'skipped': True, 'dropped_overlap': trim[1],
+                    'next': 'Every field_key of this autofill was written by another call in this turn; nothing else to fill.'}
+        if trim:
+            args = {**args, 'field_keys': trim[0]}
         if not self.active() or self.revision() != turn.revision:
             raise LoopStop('steered', chat_revision=turn.revision)
         if not self.reserve('tool'):
@@ -649,6 +660,8 @@ class ApplicationHost:
         self.text_turns = 0
         session._cached_fields = None
         outcome = session.execute(name, args)
+        if trim:
+            outcome = {**outcome, 'dropped_overlap': trim[1]}
         if (name == 'view_browser' or name.startswith('computer_')) and isinstance(outcome.get('image'), bytes):
             # Host.observe owns screenshot delivery and freshness. Do not also
             # place this image in the kernel's generic one-turn image queue.

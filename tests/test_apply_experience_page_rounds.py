@@ -78,7 +78,6 @@ def test_writes_then_one_page_action_fit_one_turn():
     [('resolve_field', {'field_key': 'a'}), ('type_from_source', {'field_key': 'a'})],          # two writes
     [('resolve_field', {'field_key': 'a'}), ('bind_experience', {'fields': [{'field_key': 'a'}]})],  # bind after write
     [('autofill', {'field_keys': ['a']}), ('resolve_field', {'field_key': 'b'})],               # autofill not last
-    [('resolve_field', {'field_key': 'a'}), ('autofill', {'field_keys': ['a']})],                # overlapping write
     [('resolve_field', {'field_key': 'b'}), ('autofill', {})],                                  # unscoped in a batch
     [('resolve_field', {'field_key': 'new'})],                                                  # unobserved field
 ])
@@ -86,6 +85,21 @@ def test_unsafe_batches_are_rejected(calls):
     from eregion.runtime.core.engine import ToolArgumentsError
     with pytest.raises(ToolArgumentsError):
         batch(*calls)
+
+
+def test_an_autofill_overlapping_earlier_writes_runs_on_the_other_keys_only():
+    # Adobe 2026-10-20: these batches were refused whole (5-6 actions each).
+    from eregion.runtime.auto_apply.runner import ApplicationHost
+    host = Host([field('a'), field('b'), field('c', kind='checkbox')])
+    calls = [{'id': '1', 'name': 'resolve_field', 'args': {'field_key': 'a'}},
+             {'id': '2', 'name': 'autofill', 'args': {'field_keys': ['a', 'b']}}]
+    ApplicationHost.validate_batch(host, calls, None)
+    assert host.autofill_trims == {'2': (['b'], ['a'])}
+    assert calls[1]['args'] == {'field_keys': ['a', 'b']}  # the model's call as sent stays in its history
+    only = [{'id': '3', 'name': 'resolve_field', 'args': {'field_key': 'a'}},
+            {'id': '4', 'name': 'autofill', 'args': {'field_keys': ['a']}}]
+    ApplicationHost.validate_batch(host, only, None)
+    assert host.autofill_trims['4'] == ([], ['a'])
 
 
 def test_attempt_count_survives_search_results_and_unrelated_changes():
@@ -310,3 +324,28 @@ def test_writes_that_depend_on_an_unseen_read_are_refused_with_a_split(calls, sp
 
 def test_readback_after_a_write_is_allowed():
     batch(('resolve_field', {'field_key': 'a'}), ('read_field', {'field_key': 'a'}))
+
+
+def test_the_trimmed_batch_runs_through_the_loop_and_reports_the_dropped_keys():
+    from langchain_core.messages import AIMessage
+    from eregion.runtime.auto_apply.agent import HybridApplicationAgent
+    from eregion.runtime.auto_apply.autofill import autofill
+    from test_auto_apply_agent import RepairBrowser, state
+    turns = iter([
+        lambda snap: [{'id': 'w', 'name': 'type_from_source', 'args': {'observation_id': snap['observation_id'],
+                       'field_key': 'First name', 'source_ref': 'profile:first_name'}},
+                      {'id': 'f', 'name': 'autofill', 'args': {'field_keys': ['First name']}}],
+        lambda snap: [{'id': 'end', 'name': 'request_input', 'args': {'field_keys': ['Country']}}]])
+
+    class Model:
+        def invoke(self, messages, tools):
+            import json
+            from langchain_core.messages import HumanMessage
+            snap = json.loads(next(m.content for m in reversed(messages) if isinstance(m, HumanMessage) and isinstance(m.content, str)))
+            return AIMessage(content='', tool_calls=next(turns)(snap))
+    browser, saved = RepairBrowser(), state()
+    HybridApplicationAgent(model_factory=Model).run(browser, saved, autofill=lambda: autofill(browser, saved, lambda: b''),
+        active=lambda: True, reserve=lambda kind: True, report=lambda *a: None)
+    results = {h['call_id']: h['result'] for h in saved['decision_history'] if h.get('call_id') in {'w', 'f'}}
+    assert 'error' not in results['w'] and browser.observe()[0]['value'] == 'Test'
+    assert results['f']['skipped'] and results['f']['dropped_overlap'] == ['First name']
