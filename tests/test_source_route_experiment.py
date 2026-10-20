@@ -69,7 +69,10 @@ def test_layer2_builds_isolated_routes_from_frozen_snapshots_and_dry_runs_withou
     out = tmp_path / 'layer2'
     for route in ('A', 'B'):
         done = run(script('source_route_scoring.py'), 'dry', '--snapshot', str(layer1 / f'snapshot-{route}.json'), '--out', str(out))
-        assert done.returncode == 0, done.stdout[-2000:] + done.stderr[-2000:]
+        exit_record = out / f'exit-dry-{route}' / 'exit.json'
+        # The guard writes the exception into exit.json, which tmp_path deletes; keep it in the failure message.
+        assert done.returncode == 0, (done.stdout[-2000:] + done.stderr[-2000:]
+                                      + (exit_record.read_text(encoding='utf-8')[-4000:] if exit_record.exists() else ''))
         record = json.loads((out / f'exit-dry-{route}' / 'exit.json').read_text(encoding='utf-8'))
         result = record['result']
         assert record['outcome'] == 'completed' and result['task_usage']['calls'] == 0 and result['board_hosts_refused'] == []
