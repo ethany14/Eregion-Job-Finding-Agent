@@ -2,7 +2,7 @@
 from .browser import BrowserBlocked
 from .decisions import active_decision, source_value
 from .education import binding as education_binding
-from .experience import binding as work_binding
+from .experience import binding as work_binding, bound_value as work_value
 from .observation import record_identity
 from eregion.runtime.telemetry import outcome_fingerprint
 
@@ -92,8 +92,8 @@ def coverage(fields, state):
                 pending.append({'key': key, 'reason': 'invalid'}); continue
             if chosen and chosen['mode'] == 'leave_empty':
                 good = not f.get('required') and f.get('value') in ('', None, False)
-            elif f['kind'] == 'checkbox' and not chosen:
-                good = False
+            elif f['kind'] == 'checkbox' and not chosen and work_value(f, state) is None:
+                good = False  # a checkbox needs a decision unless bound to a determined current_status
             else:
                 target = desired_answer(f, state)
                 good = target is not None and matches(f, target)
@@ -146,9 +146,38 @@ def effective_state(state):
     return {**state, 'profile': profile}
 
 
+def direct_support(field, state):
+    """Evidence for a value code wrote without a model decision: the bound fact, its value and the
+    conversion applied. None when a saved decision or no binding supports the field."""
+    if active_decision(field, state):
+        return None
+    saved = work_binding(field, state) or education_binding(field, state)
+    if not saved:
+        return None
+    component = saved.get('component') or saved['source_ref'].rsplit(':', 1)[-1]
+    if component == 'current_status':
+        from .experience import current_basis
+        conversion = 'boolean:' + str(current_basis(state['profile'], state.get('experience_answer_overrides'),
+                                                     saved['experience_id']))
+    else:
+        conversion = 'date_part' if component.endswith(('_month', '_year')) else 'format_only'
+    return {'source_ref': saved['source_ref'], 'source_value': source_value(state, saved['source_ref']),
+            'conversion': conversion}
+
+
 def completion_evidence(fields, state):
-    return {row['record']: {'fact_version': record_version(state, row['record']),
-            'verified_fields': row['verified']} for row in coverage(fields, state) if row['complete']}
+    """Per complete record: its fact version, the verified fields, and for each field written from a
+    bound fact without a model decision, that fact and conversion (model decisions stay in
+    field_decisions; nothing here is recorded as one)."""
+    by_key = {f['key']: f for f in fields}
+    result = {}
+    for row in coverage(fields, state):
+        if not row['complete']:
+            continue
+        direct = {key: support for key in row['verified'] if (support := direct_support(by_key[key], state))}
+        result[row['record']] = {'fact_version': record_version(state, row['record']),
+                                 'verified_fields': row['verified'], **({'direct_facts': direct} if direct else {})}
+    return result
 
 
 def review_gaps(state):

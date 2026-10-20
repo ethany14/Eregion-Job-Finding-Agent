@@ -6,6 +6,7 @@ when it fills a field; this module only stores, normalizes and exposes the evide
 """
 import hashlib
 import json
+import re
 
 COMPONENTS = ('title', 'company', 'location', 'start_date', 'end_date', 'current', 'description')
 LIMITS = {'description': 2000}
@@ -29,8 +30,72 @@ def normalize_records(records):
     return result
 
 
+_CURRENT = {'present', 'current', 'currently', 'now', 'ongoing', 'to date', 'true', 'yes', 'y'}
+_NOT_CURRENT = {'false', 'no', 'n'}
+_ONGOING_END = {'present', 'current', 'now', 'ongoing', 'to date'}
+_UNSETTLED = re.compile(r'(expected|anticipated|projected|planned|future|tbd)', re.I)
+
+
+def _marker(text):
+    value = ' '.join(str(text or '').casefold().split())
+    return None if not value else True if value in _CURRENT else False if value in _NOT_CURRENT else 'unreadable'
+
+
+def _past(end_date, now):
+    """True for an end date before this month (or before this year when no month is written)."""
+    from .education import date_parts
+    if not end_date or _UNSETTLED.search(end_date):
+        return None
+    parts = date_parts(end_date)
+    if 'year' not in parts:
+        return None
+    year = int(parts['year'])
+    if 'month' in parts:
+        return (year, int(parts['month'])) < (now.year, now.month)
+    return True if year < now.year else None if year == now.year else False
+
+
+def current_status(values, *, now):
+    """(bool, basis) for a current-employment checkbox, or (None, None).
+
+    True only for an explicit current marker ('Present', or a confirmed yes); False for an explicit
+    no or an end date that has passed. A missing end date is not "current", a future or expected end
+    date is undecided, and a marker contradicting the end date is a conflict: those stay with the
+    model or the user. Only the representation changes; nothing is interpreted from free text.
+    """
+    stated = _marker(values.get('current'))
+    end = str(values.get('end_date') or '').strip()
+    if stated == 'unreadable':
+        return None, None
+    ongoing = stated is True or ' '.join(end.casefold().split()) in _ONGOING_END
+    past = None if ' '.join(end.casefold().split()) in _ONGOING_END else _past(end, now)
+    if ongoing:
+        return (None, None) if stated is False or past is True else (True, 'current_marker')
+    if stated is False:
+        return False, 'stated_not_current'
+    return (False, 'past_end_date') if past is True else (None, None)
+
+
+def current_basis(profile, overrides, record_id):
+    """Why current_status holds for one record ('current_marker', 'past_end_date', ...), or None."""
+    record = next((r for r in profile.get('experience') or [] if r.get('id') == record_id), None)
+    if record is None:
+        return None
+    values = {k: record.get(k, '') for k in COMPONENTS}
+    values.update({k: item['value'] for k, item in (overrides or {}).get(record_id, {}).items()
+                   if item.get('value') is not None and k in COMPONENTS})
+    return current_status(values, now=_now(profile))[1]
+
+
+def _now(profile):
+    from datetime import date
+    from .agent import current_clock  # imported here: agent imports this module
+    return date.fromisoformat(current_clock(profile)['date'])
+
+
 def facts(profile, overrides=None):
-    """Every stated component, plus month/year parts of stated dates."""
+    """Every stated component, plus month/year parts of stated dates, and current_status when an
+    explicit marker or a past end date determines it (see current_status)."""
     from .education import date_parts
     result = {}
     for record in profile.get('experience') or []:
@@ -40,13 +105,16 @@ def facts(profile, overrides=None):
         for part in ('start', 'end'):
             values.update({f'{part}_{k}': v for k, v in date_parts(values[f'{part}_date']).items()})
         values.update(confirmed)
+        status, _ = current_status(values, now=_now(profile))
+        if status is not None:
+            values['current_status'] = status
         for component, value in values.items():
             if value is not None and value != "":
                 result[f"experience:{record['id']}:{component}"] = value
     return result
 
 
-BINDING_COMPONENTS = (*COMPONENTS, 'start_month', 'start_year', 'end_month', 'end_year')
+BINDING_COMPONENTS = (*COMPONENTS, 'start_month', 'start_year', 'end_month', 'end_year', 'current_status')
 
 
 def binding(field, state):
@@ -60,9 +128,13 @@ def bound_value(field, state):
     saved = binding(field, state)
     if not saved:
         return None
-    # A textual employment fact is not a boolean decision. The model must interpret it.
-    if field['kind'] == 'checkbox':
+    # A textual employment fact is not a boolean decision. The model must interpret it; only the
+    # derived current_status (an explicit marker or a past end date) drives a checkbox directly.
+    if (field['kind'] == 'checkbox') != (saved['component'] == 'current_status'):
         return None
+    if field['kind'] == 'checkbox':
+        value = facts(state['profile'], state.get('experience_answer_overrides')).get(saved['source_ref'])
+        return value if isinstance(value, bool) else None
     from .education import format_date
     return format_date(field, facts(state['profile'], state.get('experience_answer_overrides')).get(saved['source_ref']),
                        saved['component'].rsplit('_', 1)[-1])

@@ -462,3 +462,40 @@ def test_add_another_shows_the_new_row_and_keeps_saved_work_through_the_producti
         assert {k:json.dumps(state.get(k),sort_keys=True,default=str) for k in keep}==keep
         assert b.page.evaluate('window.nextCount===0 && window.submitCount===0')
     finally:b.close()
+
+
+def test_bound_current_status_fills_both_checkbox_directions_without_a_model_decision(monkeypatch):
+    """P1 (selective-model plan): a checkbox bound to current_status is written and read back by
+    code: checked for the 'Present' record, unchecked for the record whose end date has passed."""
+    monkeypatch.setattr('eregion.runtime.auto_apply.fast_options.fill_options',lambda *a,**k:pytest.fail('No paid models'))
+    b=PageBrowser(URL)
+    state={'automation_mode':'hybrid','answers':{},'profile':{'experience':[
+        {'id':'one','title':'Research','company':'University','start_date':'Aug 2026','current':'Present'},
+        {'id':'two','title':'Intern','company':'Employer','start_date':'Jul 2022','end_date':'Aug 2022'}],'education':[]}}
+    s=AgentTools(b,state,autofill=lambda:autofill(b,state,lambda:b''),active=lambda:True)
+    def key(dom):
+        s.observe();return next(f['key'] for f in s.fields if f.get('dom_id')==dom)
+    try:
+        b.page.locator('#addWork').click()
+        b.page.locator('[id="workExperience-2--current"]').check()
+        def fill(record,components):
+            bindings=[{'field_key':key(dom),'component':component} for dom,component in components.items()]
+            s.observe();s.execute('bind_experience',{'observation_id':s.observation_id,'experience_id':record,'fields':bindings})
+            s.fast_choices=None
+            result=s.execute('autofill',{'field_keys':[x['field_key'] for x in bindings],'literal_only':True})
+            assert not result['failed'],result
+            return result
+        for n,record in [(1,'one'),(2,'two')]:
+            prefix=f'workExperience-{n}--'
+            result=fill(record,{prefix+'jobTitle':'title',prefix+'companyName':'company',prefix+'startDate-dateSectionMonth-input':'start_month',
+                                prefix+'startDate-dateSectionYear-input':'start_year',prefix+'current':'current_status'})
+            assert key(prefix+'current') in result['verified_fields']
+        # Unchecking row 2 revealed its end date: bound and filled in the next step, as a model would.
+        fill('two',{'workExperience-2--endDate-dateSectionMonth-input':'end_month','workExperience-2--endDate-dateSectionYear-input':'end_year'})
+        assert b.page.locator('[id="workExperience-1--current"]').is_checked()
+        assert not b.page.locator('[id="workExperience-2--current"]').is_checked()  # a pre-checked box is corrected
+        assert not state.get('field_decisions')
+        from eregion.runtime.auto_apply.record_coverage import coverage
+        s.observe()
+        assert all(row['complete'] for row in coverage(s.fields,state) if row['record'].startswith('work:'))
+    finally:b.close()

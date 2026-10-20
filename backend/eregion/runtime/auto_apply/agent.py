@@ -41,7 +41,7 @@ COORD = {"type":"number", "minimum":0, "exclusiveMaximum":1000,
 POINT = {"x":COORD, "y":COORD}
 VISUAL_TOOLS = {"view_browser", "view_field", "computer_click", "computer_move", "computer_scroll",
                 "computer_drag", "computer_key", "computer_type", "computer_wait"}
-from .experience import BINDING_COMPONENTS, binding as experience_binding, facts as experience_facts, coverage as experience_coverage, gaps as experience_gaps
+from .experience import BINDING_COMPONENTS, binding as experience_binding, bound_value as experience_value, facts as experience_facts, coverage as experience_coverage, gaps as experience_gaps
 
 TOOLS = [
     tool('enable_browser_tools', 'Expose ordinary low-level browser tools when form tools are insufficient. This only changes tool visibility; it performs no browser action and relaxes no safety checks.'),
@@ -58,7 +58,7 @@ TOOLS = [
              'type': 'object', 'properties': {'record': TEXT, 'status': {'type': 'string', 'enum': ['include', 'omit', 'needs_input']},
                  'reason': TEXT, 'source_refs': {'type': 'array', 'items': TEXT}},
              'required': ['record', 'status', 'reason', 'source_refs'], 'additionalProperties': False}}}),
-    tool('bind_experience', 'Bind observed fields to one saved work-experience record. Every component must exist in available_components; otherwise the entire batch is refused. Omit a missing current component from bindings, then interpret existing dated facts using resolve_field. You choose the correspondence. For current-employment checkboxes, then use resolve_field with your explicit yes/no interpretation and cited fact; binding does not decide the boolean.',
+    tool('bind_experience', 'Bind observed fields to one saved work-experience record. Every component must exist in available_components; otherwise the entire batch is refused. Omit a missing current component from bindings, then interpret existing dated facts using resolve_field. You choose the correspondence. A current-employment checkbox may be bound to current_status when listed (an explicit current marker or a past end date); otherwise use resolve_field with your explicit yes/no interpretation and cited fact.',
          {'observation_id':TEXT, 'experience_id':TEXT, 'fields':{'type':'array','items':{'type':'object',
           'properties':{'field_key':TEXT,'component':{'type':'string','enum':list(BINDING_COMPONENTS)}},
           'required':['field_key','component'],'additionalProperties':False}}}),
@@ -116,7 +116,7 @@ TOOLS = [
              "required": ["field_key", "message_id", "quote", "value"], "additionalProperties": False}}}),
     tool("update_plan", "Save the remaining steps and the current approach for this application.",
          {"steps": {"type": "array", "items": TEXT}, "approach": TEXT}),
-    tool("autofill", "Fill the observed field_keys you choose. Scope persists until you select new fields; unrelated failures are not this operation's failures. Boolean/semantic decisions still require resolve_field. Omit field_keys only to reuse the saved scope (or initial page scope). literal_only=true skips nested semantic option choices; unresolved controls remain for your decision.", optional={'field_keys':{'type':'array','items':TEXT,'minItems':1,'maxItems':100}, 'literal_only':{'type':'boolean'}}),
+    tool("autofill", "Fill the observed field_keys you choose. Scope persists until you select new fields; unrelated failures are not this operation's failures. Other boolean/semantic decisions still require resolve_field; a checkbox bound to current_status is written from that fact. Omit field_keys only to reuse the saved scope (or initial page scope). literal_only=true skips nested semantic option choices; unresolved controls remain for your decision.", optional={'field_keys':{'type':'array','items':TEXT,'minItems':1,'maxItems':100}, 'literal_only':{'type':'boolean'}}),
     tool("observe", "Read the latest form values, missing fields and validation errors."),
     tool("say", "Send a short progress explanation or question to the user in the application chat.", {"text": TEXT}),
     tool("use_chat_answer", "Legacy literal-only answer tool; prefer record_answers for natural conversation.",
@@ -305,7 +305,7 @@ def record_status(fields, state):
                     continue
                 bound.append(key)
                 decision = active_decision(field, state)
-                if field['kind'] == 'checkbox' and decision is None:
+                if field['kind'] == 'checkbox' and decision is None and (kind != 'work' or experience_value(field, state) is None):
                     undecided.append(key)
                     continue
                 if decision and decision['mode'] == 'leave_empty' and not field.get('required'):
