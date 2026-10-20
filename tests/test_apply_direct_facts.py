@@ -115,3 +115,47 @@ def test_completion_evidence_names_the_bound_fact_and_conversion_and_saves_no_de
     assert evidence['direct_facts'][month['key']]['conversion'] == 'date_part'
     assert evidence['direct_facts'][title['key']]['conversion'] == 'format_only'
     assert not state.get('field_decisions')  # direct writes are not recorded as model decisions
+
+
+def row_field(n, suffix, kind='text'):
+    return {**field(f'{kind}:workExperience-{n}--{suffix}', kind, suffix, required=False), 'dom_id': f'workExperience-{n}--{suffix}'}
+
+
+def test_controls_revealed_in_a_bound_row_inherit_its_record(monkeypatch):
+    import eregion.runtime.auto_apply.experience as experience
+    from eregion.runtime.auto_apply.experience import inherited_bindings
+    monkeypatch.setattr(experience, '_now', lambda profile: NOW)
+    state = work_state()
+    title, month, year = row_field(2, 'jobTitle'), row_field(2, 'endDate-dateSectionMonth-input'), row_field(2, 'endDate-dateSectionYear-input')
+    other, box, odd = row_field(3, 'endDate-dateSectionMonth-input'), row_field(2, 'currentlyWorkHere', 'checkbox'), row_field(2, 'notes')
+    state['_fields'] = [title, month, year, other, box, odd]
+    bind(state, title['key'], 'two', 'title')
+    inherited = inherited_bindings(state['_fields'], state)
+    assert {k: (b['source_ref'], b['origin']) for k, b in inherited.items()} == {
+        month['key']: ('experience:two:end_month', 'row_structure'), year['key']: ('experience:two:end_year', 'row_structure'),
+        box['key']: ('experience:two:current_status', 'row_structure')}  # row 3 has no owner; 'notes' is no known id
+
+
+def test_no_inheritance_for_a_contested_row_a_decided_field_or_a_missing_fact(monkeypatch):
+    import eregion.runtime.auto_apply.experience as experience
+    from eregion.runtime.auto_apply.experience import inherited_bindings
+    monkeypatch.setattr(experience, '_now', lambda profile: NOW)
+    state = work_state()
+    title, company, month = row_field(2, 'jobTitle'), row_field(2, 'companyName'), row_field(2, 'endDate-dateSectionMonth-input')
+    state['_fields'] = [title, company, month]
+    bind(state, title['key'], 'two', 'title')
+    bind(state, company['key'], 'one', 'company')  # the model bound one row to two records
+    assert inherited_bindings(state['_fields'], state) == {}
+    state = work_state()
+    title, end, box = row_field(3, 'jobTitle'), row_field(3, 'endDate-dateSectionYear-input'), row_field(3, 'currentlyWorkHere', 'checkbox')
+    state['_fields'] = [title, end, box]
+    bind(state, title['key'], 'three', 'title')
+    assert inherited_bindings(state['_fields'], state) == {}  # record three has no end date and no current_status
+    state = work_state()
+    title, month = row_field(2, 'jobTitle'), row_field(2, 'endDate-dateSectionMonth-input')
+    state['_fields'] = [title, month]
+    bind(state, title['key'], 'two', 'title')
+    from eregion.runtime.auto_apply.decisions import signature
+    state['field_decisions'] = {month['key']: {'field': signature(month), 'value': '9', 'mode': 'format',
+                                               'sources': {}, 'original_answer': None, 'reason': 'x'}}
+    assert inherited_bindings(state['_fields'], state) == {}

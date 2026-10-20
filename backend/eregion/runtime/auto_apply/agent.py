@@ -341,6 +341,7 @@ class AgentTools:
         self._cached_fields = None
         self._previous_observation = None
         self._observation_revision = 0
+        self.inherited_now = []
 
     def observe(self):
         if self.refresh: self.state = self.refresh()
@@ -367,6 +368,19 @@ class AgentTools:
             self._save_decisions(observation_scope=None, observation_scope_page=None)
         if previous != structure:
             self._save_decisions(observation_structure=structure)
+        from .experience import inherited_bindings
+        inherited = inherited_bindings(self.fields, self.state)
+        self.inherited_now = sorted(inherited)  # the host writes these from their facts (runner._prepare_page)
+        if inherited:
+            self._save_decisions(experience_bindings={**self.state.get('experience_bindings', {}), **inherited})
+            # A revealed control of a row in the model's autofill scope belongs to that selection.
+            scope = self.state.get('autofill_scope')
+            if scope is not None:
+                from .observation import record_identity
+                rows = {record_identity(f) for f in self.fields if f['key'] in scope} - {None}
+                added = [k for k in inherited if record_identity(next(f for f in self.fields if f['key'] == k)) in rows]
+                if added:
+                    self._save_decisions(autofill_scope=list(dict.fromkeys([*scope, *added])))
         if repeatable_education(self.page_context) and self.state['profile'].get('education') and not self.state.get('education_required'):
             self._save_decisions(education_required=True)
         self._reconcile_paths()

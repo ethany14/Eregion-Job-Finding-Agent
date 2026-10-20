@@ -140,6 +140,49 @@ def bound_value(field, state):
                        saved['component'].rsplit('_', 1)[-1])
 
 
+# Workday's structural automation ids for the controls of one work row (ids, not label wording).
+ROW_COMPONENTS = {'jobTitle': 'title', 'companyName': 'company', 'location': 'location',
+                  'roleDescription': 'description', 'currentlyWorkHere': 'current_status', 'current': 'current_status',
+                  'startDate-dateSectionMonth-input': 'start_month', 'startDate-dateSectionYear-input': 'start_year',
+                  'endDate-dateSectionMonth-input': 'end_month', 'endDate-dateSectionYear-input': 'end_year'}
+
+
+def inherited_bindings(fields, state):
+    """Bindings for controls that appear in a work row the model already bound to one record.
+
+    Unchecking "I currently work here" reveals the end date; the row's owner is already the model's
+    saved choice, so a revealed control whose structural id names a component that record has is
+    bound to it, marked origin=row_structure. Nothing is inherited for a row bound to several records,
+    a field with a saved decision or binding, an unknown id, a missing fact, or a checkbox other than
+    current_status. Which record a row is stays the model's decision.
+    """
+    from .decisions import active_decision, signature
+    from .observation import record_identity
+    owners = {}
+    for field in fields:
+        saved, row = binding(field, state), record_identity(field)
+        if saved and row and row.startswith('workExperience-'):
+            owners.setdefault(row, set()).add(saved['experience_id'])
+    if not owners:
+        return {}
+    available = facts(state['profile'], state.get('experience_answer_overrides'))
+    existing = state.get('experience_bindings', {})
+    result = {}
+    for field in fields:
+        row = record_identity(field)
+        if not row or len(owners.get(row, ())) != 1 or field['key'] in existing or active_decision(field, state):
+            continue
+        component = ROW_COMPONENTS.get((field.get('dom_id') or '')[len(row) + 2:])
+        if not component or (component == 'current_status') != (field['kind'] == 'checkbox'):
+            continue
+        record = next(iter(owners[row]))
+        ref = f'experience:{record}:{component}'
+        if ref in available:
+            result[field['key']] = {'experience_id': record, 'component': component, 'source_ref': ref,
+                                    'field': signature(field), 'origin': 'row_structure'}
+    return result
+
+
 def coverage(state):
     """Advisory record coverage, not a semantic completion decision or navigation gate."""
     bindings = state.get('experience_bindings', {})

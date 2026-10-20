@@ -371,7 +371,8 @@ class ApplicationHost:
             if page.get('authentication_required') or (callable(check) and check()):
                 return snapshot
             fingerprint = self._page_fingerprint()
-            if self.first_observation or fingerprint != self.autofill_fingerprint:
+            # Also after this observation reused a row's binding for controls it had not bound.
+            if self.first_observation or fingerprint != self.autofill_fingerprint or getattr(session, 'inherited_now', None):
                 self.first_observation = False
                 self.autofill_fingerprint = fingerprint
                 # Page entry may copy literal facts, but semantic option work needs

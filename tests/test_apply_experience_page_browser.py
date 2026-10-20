@@ -499,3 +499,37 @@ def test_bound_current_status_fills_both_checkbox_directions_without_a_model_dec
         s.observe()
         assert all(row['complete'] for row in coverage(s.fields,state) if row['record'].startswith('work:'))
     finally:b.close()
+
+
+def test_revealed_end_date_inherits_the_rows_record_and_host_autofill_fills_it(monkeypatch):
+    """P2: unchecking row 2's current box reveals its end date; the row's saved binding is reused and
+    page-entry style autofill fills it, with no further model binding."""
+    monkeypatch.setattr('eregion.runtime.auto_apply.fast_options.fill_options',lambda *a,**k:pytest.fail('No paid models'))
+    b=PageBrowser(URL)
+    state={'automation_mode':'hybrid','answers':{},'profile':{'experience':[
+        {'id':'one','title':'Research','company':'University','start_date':'Aug 2026','current':'Present'},
+        {'id':'two','title':'Intern','company':'Employer','start_date':'Jul 2022','end_date':'Aug 2022'}],'education':[]}}
+    s=AgentTools(b,state,autofill=lambda:autofill(b,state,lambda:b''),active=lambda:True)
+    def key(dom):
+        s.observe();return next(f['key'] for f in s.fields if f.get('dom_id')==dom)
+    try:
+        b.page.locator('#addWork').click()
+        b.page.locator('[id="workExperience-2--current"]').check()
+        p='workExperience-2--'
+        bindings=[{'field_key':key(p+d),'component':c} for d,c in {'jobTitle':'title','companyName':'company',
+            'startDate-dateSectionMonth-input':'start_month','startDate-dateSectionYear-input':'start_year','current':'current_status'}.items()]
+        s.observe();s.execute('bind_experience',{'observation_id':s.observation_id,'experience_id':'two','fields':bindings})
+        s.fast_choices=None
+        assert not s.execute('autofill',{'field_keys':[x['field_key'] for x in bindings],'literal_only':True})['failed']
+        s.observe()  # the end date is visible now
+        inherited={k:v for k,v in state['experience_bindings'].items() if v.get('origin')=='row_structure'}
+        assert sorted(v['component'] for v in inherited.values())==['end_month','end_year']
+        s._host_literal_autofill=True
+        result=s.execute('autofill',{})
+        s._host_literal_autofill=False
+        assert set(inherited)<=set(result['filled'])
+        assert b.page.locator('[id="workExperience-2--endDate-dateSectionMonth-input"]').input_value()=='8'
+        assert b.page.locator('[id="workExperience-2--endDate-dateSectionYear-input"]').input_value()=='2022'
+        assert not state.get('field_decisions')
+    finally:b.close()
+
