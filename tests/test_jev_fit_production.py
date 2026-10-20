@@ -13,6 +13,7 @@ import httpx
 from eregion.api.services.fit_analysis_service import FitAnalysisService
 from eregion.domain.jev_fit.service import JevFitError
 from eregion.domain.jev_fit.settings import Settings
+from eregion.domain.jev_fit.transport import decode_wire
 
 
 class NoMainModel:
@@ -28,7 +29,9 @@ class JevEndpoint:
         self.unknown = False
 
     def __call__(self, request):
+        # Like the service, read each request's complete questions (repeated values arrive by reference).
         payload = json.loads(request.content)
+        payload['state'], payload['questions'] = decode_wire(payload['state'], payload['questions'])
         self.requests.append(payload)
         if self.failure == 'timeout':
             raise httpx.ReadTimeout('injected', request=request)
@@ -128,6 +131,7 @@ class JevProductionTests(unittest.TestCase):
         original=self.endpoint.__call__
         def endpoint(request):
             payload=json.loads(request.content)
+            payload['state'],payload['questions']=decode_wire(payload['state'],payload['questions'])
             if 'cases' in payload['state']:
                 for q in payload['questions'].values():
                     args=q['instructions'];own=payload['state']['cases'][args['context_case']]
