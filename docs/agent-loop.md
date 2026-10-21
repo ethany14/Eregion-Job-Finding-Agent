@@ -1,7 +1,7 @@
 # Agent architecture
 
 [Home](../README.md) · [Configuration](configuration.md) ·
-[Development](development.md)
+[Development](development.md) · [Internals in detail](internals/README.md)
 
 Eregion combines a shared decision loop with a career-specific harness. The model
 chooses tools and work order. Domain services own candidate facts, document

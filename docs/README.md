@@ -9,6 +9,9 @@
 ## Building on Eregion
 
 - [Single AgentLoop architecture](agent-loop.md)
+- [How Eregion works inside](internals/README.md): the decision loop, context
+  engineering, prompts, memory, models and budgets, tools and safety, the
+  application agent and the career workflows, in detail
 - [Runtime directory map](../backend/eregion/runtime/README.md)
 - [Backend namespace and startup](../backend/README.md)
 - [Development and repository map](development.md)
