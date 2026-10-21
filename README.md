@@ -15,6 +15,10 @@
 </p>
 
 <p align="center">
+  <b>English</b> · <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <b><a href="#get-started">Get started</a></b> ·
   <a href="https://ethany14.github.io/Eregion-Job-Finding-Agent/guide.html">User guide</a> ·
   <a href="docs/configuration.md">Configuration</a> ·
@@ -77,7 +81,9 @@ and **nothing is ever submitted without you**.
 
 Job alerts run recurring searches and send you digests, and **The Lookout**
 shows the agent's browser so you can take control. Switch between parchment
-**Day** and holly-green **Night** from the sidebar.
+**Day** and holly-green **Night**, and between **English and Simplified Chinese**
+(中文), from the sidebar. The language choice is remembered in your browser; a
+Chinese browser starts in Chinese.
 
 ## How a job search works
 
@@ -363,6 +369,10 @@ Real-Chrome tests are opt-in: set `JOB_AGENT_BROWSER_TESTS=1` (and
 `JOB_AGENT_BROWSER_DRIVER=patchright` to repeat them with Patchright). Tests
 that load the CAPTCHA providers' official test widgets also need
 `JOB_AGENT_OFFICIAL_WIDGETS=1`.
+
+Interface text is written in English in `frontend/web_app`; the Chinese
+translations live in [`frontend/web_app/i18n-zh.js`](frontend/web_app/i18n-zh.js).
+Wrap new interface text in `t()` and add its translation there.
 
 The running server also serves [API docs](http://localhost:8000/docs) and a
 [health check](http://localhost:8000/health).

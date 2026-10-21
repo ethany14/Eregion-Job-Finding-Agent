@@ -15,6 +15,10 @@ Extend the implemented design when adding or repairing features.
   Without a saved choice, the app follows the system setting; the base palette
   is Night.
 - `chat-typography.css` owns message typography and Markdown presentation.
+- `i18n.js` owns the English / Simplified Chinese interface (`eregion.lang`, the 中/EN switch
+  beside Day/Night). Write interface text in English inside `t()` / `tn()` and add its
+  translation to `i18n-zh.js`; `tests/test_i18n.mjs` fails on a missing one. Never translate
+  chat messages, employer form labels or option values, or the person's own data.
 - `career-chat.js`, `apply-answers.js`, `pages.js`, `insights.js`, and
   `conversations.js` own cards, questions, views, and workspace interactions.
 - When available locally, `../../design/v4-final/` contains reference mockups and

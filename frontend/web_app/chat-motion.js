@@ -1,5 +1,6 @@
 // Chat motion: replies that arrive while the conversation is open are revealed progressively,
 // and a running agent shows a thinking line. Reduced motion shows everything at once.
+import {t} from './i18n.js';
 const reduced=()=>{try{return matchMedia('(prefers-reduced-motion: reduce)').matches;}catch{return false;}};
 const BLOCKS='p,li,h1,h2,h3,h4,h5,h6,pre,blockquote,.code-block,.message-table,hr,ul,ol';
 const active=new Set();
@@ -73,7 +74,7 @@ export function thinking(text,doc=document){
   const line=doc.createElement('p');line.className='status-line thinking';line.setAttribute('role','status');
   const dots=doc.createElement('span');dots.className='thinking-dots';dots.setAttribute('aria-hidden','true');
   for(let i=0;i<3;i++)dots.append(doc.createElement('i'));
-  const label=doc.createElement('span');label.className='thinking-text';label.textContent=text||'Thinking';
+  const label=doc.createElement('span');label.className='thinking-text';label.textContent=text||t('Thinking');
   line.append(dots,label);
   return line;
 }

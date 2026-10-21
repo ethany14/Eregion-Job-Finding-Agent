@@ -30,7 +30,7 @@ def test_general_browsing_without_resume_has_preview_in_existing_chat(career,tmp
     app.state.auto_apply=c.applications;app.state.career_agent=service
     with TestClient(app,base_url='http://localhost') as client,sync_playwright() as p:
         browser=p.chromium.launch(channel='chrome',headless=True)
-        page=browser.new_page(viewport={'width':1440,'height':1000});errors=[]
+        page=browser.new_page(locale='en-US',viewport={'width':1440,'height':1000});errors=[]
         page.on('pageerror',lambda error:errors.append(str(error)))
         def route(r):
             if not r.request.url.startswith('http://localhost/'):return r.abort()
@@ -118,7 +118,7 @@ def test_default_chat_searches_scores_reviews_applies_and_interviews(career,tmp_
     errors,requests=[],[]
     with TestClient(app,base_url='http://localhost') as client,sync_playwright() as playwright:
         browser=playwright.chromium.launch(channel='chrome',headless=True)
-        page=browser.new_page(viewport={'width':1440,'height':1000})
+        page=browser.new_page(locale='en-US',viewport={'width':1440,'height':1000})
         page.on('pageerror',lambda error:errors.append(str(error)))
         def handle(route):
             request=route.request;requests.append((request.method,request.url,request.post_data))
@@ -183,7 +183,7 @@ def test_chat_surfaces_model_outage_and_recovers_a_greeting(career):
     app.state.auto_apply=c.applications;app.state.career_agent=service
     with TestClient(app,base_url='http://localhost') as client,sync_playwright() as playwright:
         browser=playwright.chromium.launch(channel='chrome',headless=True)
-        page=browser.new_page()
+        page=browser.new_page(locale='en-US')
         def handle(route):
             request=route.request
             response=client.request(request.method,request.url,content=request.post_data,

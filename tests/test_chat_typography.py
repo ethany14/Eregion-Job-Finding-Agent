@@ -67,7 +67,7 @@ def test_chat_markdown_readability_copy_and_untrusted_content(tmp_path,width):
     errors,requests=[],[]
     with TestClient(create_app(run_service=object()),base_url='http://localhost') as client,sync_playwright() as playwright:
         browser=playwright.chromium.launch(channel='chrome',headless=True)
-        page=browser.new_page(viewport={'width':width,'height':1000},device_scale_factor=1)
+        page=browser.new_page(locale='en-US',viewport={'width':width,'height':1000},device_scale_factor=1)
         page.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.copiedReply=text}}})")
         page.on('pageerror',lambda error:errors.append(str(error)))
         def handle(route):

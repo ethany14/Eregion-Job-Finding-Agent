@@ -1,4 +1,5 @@
 // Direct user input to the local browser. Never send these values through chat.
+import {t} from './i18n.js';
 export function createBrowserControl({current, refresh, resume}) {
   const dialog = document.querySelector('#browser-control-dialog');
   const image = dialog.querySelector('#control-image');
@@ -17,7 +18,7 @@ export function createBrowserControl({current, refresh, resume}) {
       headers:{'Content-Type':'application/json'}, body:JSON.stringify(body),
       signal:AbortSignal.timeout(body.action === 'start' ? 90000 : 15000)});
     const data = await response.json();
-    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Browser control needs attention.');
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : t('Browser control needs attention.'));
     return data;
   }
   async function show(next, expected) {
@@ -30,7 +31,7 @@ export function createBrowserControl({current, refresh, resume}) {
     if (tabs.dataset.signature !== signature) {
       tabs.replaceChildren(...next.tabs.map((tab, i) => {
         const option = document.createElement('option'); option.value = tab.id;
-        option.textContent = `${i+1}. ${tab.url || 'New tab'}`; option.selected = tab.active;
+        option.textContent = `${i+1}. ${tab.url || t('New tab')}`; option.selected = tab.active;
         return option;
       }));
       tabs.dataset.signature = signature;
@@ -44,7 +45,7 @@ export function createBrowserControl({current, refresh, resume}) {
       const result = await post({...payload, session:previous.session,
         ...(payload.action === 'frame' ? {} : {frame_id:previous.frame_id})}, destination);
       await show(result, version);
-      if (generation === version && !quiet) note('You have control. The agent is paused.');
+      if (generation === version && !quiet) note(t('You have control. The agent is paused.'));
     } catch (error) {
       if (generation === version) {
         note(error.message);
@@ -59,7 +60,7 @@ export function createBrowserControl({current, refresh, resume}) {
     }
   }
   async function close(continueTask = false) {
-    if (busy) { note('Wait for the current browser action to finish.'); return; }
+    if (busy) { note(t('Wait for the current browser action to finish.')); return; }
     const destination = target, session = frame?.session;
     ++generation; clearInterval(timer); timer = null; target = frame = pointer = null;
     field.value = ''; field.type = 'password'; dialog.querySelector('#control-show-text').checked = false;
@@ -76,11 +77,11 @@ export function createBrowserControl({current, refresh, resume}) {
     const version = ++generation;
     target = {id:item.run_id, url:`/api/${item.career?'career/tasks':'auto-apply'}/${item.run_id}/browser-control`};
     frame = null; busy = true; pointer = null; field.value = ''; controls();
-    image.hidden = true; dialog.showModal(); note('Pausing the agent and connecting to your current browser…');
+    image.hidden = true; dialog.showModal(); note(t('Pausing the agent and connecting to your current browser…'));
     try {
       await show(await post({action:'start',expected_version:item.career?item.task_version:item.version}), version);
       if (generation === version) {
-        note('You have control. Click the page, scroll, or type below. The agent is paused.');
+        note(t('You have control. Click the page, scroll, or type below. The agent is paused.'));
         image.focus();
         timer = setInterval(() => {
           if (!document.hidden && !pointer && document.activeElement !== tabs) action({action:'frame'}, true);
@@ -118,7 +119,7 @@ export function createBrowserControl({current, refresh, resume}) {
     else if ((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a') {event.preventDefault();action({action:'key',key:'ControlOrMeta+A'});}
     else if (event.key.length===1&&!event.ctrlKey&&!event.metaKey&&!event.altKey) {
       event.preventDefault(); field.focus(); field.value += event.key;
-      note('Type here, then choose Type text to send the complete value to the selected page field.');
+      note(t('Type here, then choose Type text to send the complete value to the selected page field.'));
     }
   });
   dialog.querySelector('#control-text-form').addEventListener('submit',event=>{

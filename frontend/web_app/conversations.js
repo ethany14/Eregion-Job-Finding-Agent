@@ -1,4 +1,5 @@
 // Conversation organisation: API calls, the row menu, dialogs, the undo toast and sidebar grouping.
+import {t,tServer} from './i18n.js';
 
 export async function api(url,{method='GET',body}={}){
   const response=await fetch(url,{method,headers:{'Content-Type':'application/json'},
@@ -7,7 +8,7 @@ export async function api(url,{method='GET',body}={}){
   const data=await response.json().catch(()=>({}));
   if(!response.ok){
     const detail=data.detail;
-    throw new Error(typeof detail==='string'?detail:Array.isArray(detail)?'Check the details and try again.':detail?.message||'Something went wrong. Try again.');
+    throw new Error(typeof detail==='string'?tServer(detail):Array.isArray(detail)?t('Check the details and try again.'):tServer(detail?.message)||t('Something went wrong. Try again.'));
   }
   return data;
 }
@@ -27,14 +28,14 @@ export function toggleGroup(id){
 }
 
 // Needs you → Pinned → groups → Recent. A chat that needs the person is never hidden inside a group.
-export function sidebarSections(attempts,groups,needsYou,recentLabel='Recent'){
+export function sidebarSections(attempts,groups,needsYou,recentLabel=t('Recent')){
   const waiting=attempts.filter(needsYou),rest=attempts.filter(a=>!needsYou(a));
   const known=new Set(groups.map(g=>g.group_id));
   const pinned=rest.filter(a=>a.pinned_at).sort((a,b)=>b.pinned_at.localeCompare(a.pinned_at));
   const unpinned=rest.filter(a=>!a.pinned_at);
   return [
-    {key:'needs',label:'Needs you',items:waiting},
-    {key:'pinned',label:'Pinned',items:pinned},
+    {key:'needs',label:t('Needs you'),items:waiting},
+    {key:'pinned',label:t('Pinned'),items:pinned},
     ...groups.map(g=>({key:`group:${g.group_id}`,label:g.name,group:g,items:unpinned.filter(a=>a.group_id===g.group_id)})),
     {key:'recent',label:recentLabel,items:unpinned.filter(a=>!a.group_id||!known.has(a.group_id))},
   ].filter(s=>s.items.length||s.group);
@@ -104,7 +105,7 @@ export function toast(text,{undo}={}){
   if(!node){node=document.createElement('div');node.id='toast';node.className='toast';node.setAttribute('role','status');document.body.append(node);}
   clearTimeout(toastTimer);node.replaceChildren();
   const label=document.createElement('span');label.textContent=text;node.append(label);
-  if(undo){const b=document.createElement('button');b.type='button';b.textContent='Undo';
+  if(undo){const b=document.createElement('button');b.type='button';b.textContent=t('Undo');
     b.addEventListener('click',()=>{node.hidden=true;clearTimeout(toastTimer);undo();});node.append(b);}
   node.hidden=false;toastTimer=setTimeout(()=>{node.hidden=true;},5000);
 }
@@ -122,17 +123,17 @@ function modal(build){
 }
 function actions(form,{confirmLabel,danger}){
   const row=document.createElement('div');row.className='dialog-actions';
-  const cancel=document.createElement('button');cancel.type='submit';cancel.value='cancel';cancel.className='text-button';cancel.textContent='Cancel';cancel.formNoValidate=true;
+  const cancel=document.createElement('button');cancel.type='submit';cancel.value='cancel';cancel.className='text-button';cancel.textContent=t('Cancel');cancel.formNoValidate=true;
   const ok=document.createElement('button');ok.type='submit';ok.value='ok';ok.className=danger?'primary-button danger-button':'primary-button';ok.textContent=confirmLabel;
   row.append(cancel,ok);form.append(row);return ok;
 }
-export function confirmDialog({title,text,confirmLabel='Confirm',danger=false}){
+export function confirmDialog({title,text,confirmLabel=t('Confirm'),danger=false}){
   return modal((form,set)=>{
     const h=document.createElement('h2');h.textContent=title;const p=document.createElement('p');p.textContent=text;
     form.append(h,p);actions(form,{confirmLabel,danger});set(true);
   }).then(Boolean);
 }
-export function nameDialog({title,label,value='',confirmLabel='Save'}){
+export function nameDialog({title,label,value='',confirmLabel=t('Save')}){
   return modal((form,set)=>{
     const h=document.createElement('h2');h.textContent=title;
     const field=document.createElement('label');field.className='field';field.textContent=label;

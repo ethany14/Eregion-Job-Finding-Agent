@@ -35,7 +35,7 @@ def test_result_cards_are_chronological_after_reply_poll_and_reload(tmp_path, th
     errors, sent = [], []
     with sync_playwright() as p:
         browser = p.chromium.launch(channel='chrome', headless=True)
-        page = browser.new_page(viewport={'width': width, 'height': 900}, timezone_id='America/New_York')
+        page = browser.new_page(viewport={'width': width, 'height': 900}, timezone_id='America/New_York', locale='en-US')
         page.add_init_script(f"localStorage.setItem('eregion.theme','{theme}')")
         page.on('pageerror', lambda error: errors.append(str(error)))
 

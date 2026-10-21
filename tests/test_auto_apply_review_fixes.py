@@ -188,7 +188,7 @@ class ChromeChecks(unittest.TestCase):
         cls.playwright.stop()
 
     def setUp(self):
-        self.page = self.chrome.new_page()
+        self.page = self.chrome.new_page(locale='en-US')
         self.browser = ApplicationBrowser.__new__(ApplicationBrowser)
         self.browser.page = self.browser.scope = self.page
         self.browser._check_page = lambda: None
@@ -245,6 +245,7 @@ class ChromeChecks(unittest.TestCase):
         self.page.evaluate('''() => {
             window.$ = s => document.querySelector(s);
             window.el = (tag, text) => {const e=document.createElement(tag);e.textContent=text||'';return e;};
+            window.t = window.tServer = text => text;  // interface translation (i18n.js), English here
             window.requests=[];
             window.request=async(path,body,method)=>{
                 if(method){window.requests.push({path,body,method});return {};}

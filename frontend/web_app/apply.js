@@ -11,16 +11,20 @@ import {initTheme} from './theme.js';
 import {initModelSettings} from './model-settings.js';
 const careerMode=new URLSearchParams(location.search).get('mode')!=='application';
 import {AnswerDrafts,renderAnswerBatch,renderPendingQuestion} from './apply-answers.js';
+import {t,tn,tServer,lang,locale,initLanguage,initLanguageToggle} from './i18n.js';
+initLanguage();
 const answerDrafts=new AnswerDrafts();
 const $ = s => document.querySelector(s);
 const el = (tag,text='',cls='') => {const n=document.createElement(tag);n.textContent=text;n.className=cls;return n;};
 const terminal=new Set(['submitted','submission_unknown','cancelled','failed']);
-const labels={first_name:'First name',last_name:'Last name',email:'Email',phone:'Phone',linkedin:'LinkedIn',github:'GitHub',website:'Website',school:'School',degree:'Degree',country:'Country',city:'City'};
-const statuses={waiting:'Working with your application',completed:'Ready for your next request',queued:'Getting started',running:'Working on your request',needs_input:'Waiting for your input',awaiting_review:'Ready for your review',submitting:'Submitting once — waiting for confirmation',submitted:'Application received',submission_unknown:'Check the employer confirmation',cancelled:'Application cancelled',failed:'Application stopped'};
-const toolNames={browser_open:'Open page',browser_read:'Read page',browser_click:'Click control',browser_type:'Type text',browser_select:'Select option',browser_check:'Set checkbox',browser_key:'Press key',browser_back:'Go back',browser_tabs:'Manage tabs',browser_frame:'Inspect frame',browser_scroll:'Scroll page',browser_wait:'Wait for loading',browser_screenshot:'Look at page',browser_click_at:'Click visible target',ask_user:'Ask you a question',wait_for_user:'Wait for your reply',draft_answer:'Draft an answer from your resume',view_browser:'Look at browser',computer_click:'Click visible target',computer_move:'Move pointer',computer_scroll:'Scroll browser',computer_drag:'Drag visible control',computer_type:'Type confirmed answer',computer_key:'Press key',computer_wait:'Wait for page',resolve_field:'Adapt answer to this form',explore_option:'Explore option category',click_page_action:'Navigate application',autofill:'Fill known details',inspect_field:'Read options',search_options:'Search options',choose_option:'Choose option',type_from_source:'Type answer',use_chat_answer:'Apply your answer',click_field:'Open control',view_field:'Inspect control',ready_for_review:'Check completion',request_input:'Ask for missing information',say:'Update',observe:'Inspect page',update_plan:'Update plan'};
+// Interface labels are translated once; their keys and values sent to the server are not.
+const local=o=>Object.fromEntries(Object.entries(o).map(([k,v])=>[k,t(v)]));
+const labels=local({first_name:'First name',last_name:'Last name',email:'Email',phone:'Phone',linkedin:'LinkedIn',github:'GitHub',website:'Website',school:'School',degree:'Degree',country:'Country',city:'City'});
+const statuses=local({waiting:'Working with your application',completed:'Ready for your next request',queued:'Getting started',running:'Working on your request',needs_input:'Waiting for your input',awaiting_review:'Ready for your review',submitting:'Submitting once — waiting for confirmation',submitted:'Application received',submission_unknown:'Check the employer confirmation',cancelled:'Application cancelled',failed:'Application stopped'});
+const toolNames=local({browser_open:'Open page',browser_read:'Read page',browser_click:'Click control',browser_type:'Type text',browser_select:'Select option',browser_check:'Set checkbox',browser_key:'Press key',browser_back:'Go back',browser_tabs:'Manage tabs',browser_frame:'Inspect frame',browser_scroll:'Scroll page',browser_wait:'Wait for loading',browser_screenshot:'Look at page',browser_click_at:'Click visible target',ask_user:'Ask you a question',wait_for_user:'Wait for your reply',draft_answer:'Draft an answer from your resume',view_browser:'Look at browser',computer_click:'Click visible target',computer_move:'Move pointer',computer_scroll:'Scroll browser',computer_drag:'Drag visible control',computer_type:'Type confirmed answer',computer_key:'Press key',computer_wait:'Wait for page',resolve_field:'Adapt answer to this form',explore_option:'Explore option category',click_page_action:'Navigate application',autofill:'Fill known details',inspect_field:'Read options',search_options:'Search options',choose_option:'Choose option',type_from_source:'Type answer',use_chat_answer:'Apply your answer',click_field:'Open control',view_field:'Inspect control',ready_for_review:'Check completion',request_input:'Ask for missing information',say:'Update',observe:'Inspect page',update_plan:'Update plan'});
 const busyStatuses=new Set(['running','queued','waiting','submitting']);
 const starterPrompts=[['Find roles','Find roles that match my resume.'],['Check my fit','Check my fit for this job: '],
-  ['Tailor my resume','Tailor my resume and cover letter for a job I want to apply to.'],['Practise an interview','Start interview practice for my target role.']];
+  ['Tailor my resume','Tailor my resume and cover letter for a job I want to apply to.'],['Practise an interview','Start interview practice for my target role.']].map(([label,text])=>[t(label),t(text)]);
 const icon=name=>{const svg=document.createElementNS('http://www.w3.org/2000/svg','svg'),use=document.createElementNS('http://www.w3.org/2000/svg','use');svg.setAttribute('class','i');svg.setAttribute('aria-hidden','true');use.setAttribute('href',`#i-${name}`);svg.append(use);return svg;};
 // "Needs you" means the agent cannot continue without the person.
 const needsYou=item=>Boolean(item)&&!terminal.has(item.status)&&!item.pause_requested&&item.status!=='submitting'&&
@@ -50,20 +54,20 @@ async function removeResume(){
   const taskId=current?.career?current.run_id:null;
   extractionVersion++;resume=null;profile={};draft.id=crypto.randomUUID();draft.payload=null;$('#resume-file').value='';render();
   candidateWrites=candidateWrites.catch(()=>{}).then(()=>request('/candidate',undefined,'DELETE'));
-  try{await candidateWrites;await resourceChanged('I removed my saved resume and details.',taskId);}catch(e){error(e.message);}
+  try{await candidateWrites;await resourceChanged(t('I removed my saved resume and details.'),taskId);}catch(e){error(e.message);}
 }
 
 async function request(path='',body,method=body===undefined?'GET':'POST') {
   const routed=careerRoute(path,body,{enabled:careerMode,current,attempts});body=routed.body;
   const response=await fetch(routed.url,{method,headers:{'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(path==='/resume-profile'?120000:30000)});
-  const data=await response.json();if(!response.ok){const failure=new Error(typeof data.detail==='string'?data.detail:data.detail?.message||'Please check the job link and profile details.');failure.existingRunId=data.detail?.existing_run_id;throw failure;}return data;
+  const data=await response.json();if(!response.ok){const failure=new Error(typeof data.detail==='string'?data.detail:data.detail?.message||t('Please check the job link and profile details.'));failure.existingRunId=data.detail?.existing_run_id;throw failure;}return data;
 }
 function error(text=''){$('#apply-error').textContent=text;$('#apply-error').hidden=!text;}
-function company(item){if(item.career)return item.title||'Career task';try{const u=new URL(item.url);return /greenhouse\.io$|lever\.co$/.test(u.hostname)?u.pathname.split('/').filter(Boolean)[0]:u.hostname.endsWith('.myworkdayjobs.com')?u.hostname.split('.')[0]:u.hostname;}catch{return 'Application';}}
+function company(item){if(item.career)return item.title||t('Career task');try{const u=new URL(item.url);return /greenhouse\.io$|lever\.co$/.test(u.hostname)?u.pathname.split('/').filter(Boolean)[0]:u.hostname.endsWith('.myworkdayjobs.com')?u.hostname.split('.')[0]:u.hostname;}catch{return t('Application');}}
 function browserHost(item){try{return item.browser?.url&&item.preview_url?.includes('/browser/preview')?new URL(item.browser.url).hostname:'';}catch{return '';}}
 // A conversation about one job is named after that job; anything broader keeps its task title.
 function displayTitle(value,limit=90){
-  const text=(value||'Career task').trim();
+  const text=(value||t('Career task')).trim();
   if(text.length<=limit)return text;
   const prefix=text.slice(0,limit-1),boundary=prefix.lastIndexOf(' ');
   return (boundary>0?prefix.slice(0,boundary):'').trimEnd()+'…';
@@ -75,14 +79,14 @@ function heading(item){
   // Older automatic titles were sliced mid-word in persistence. Recover the
   // source goal only for automatic prefix titles; never overwrite a custom name.
   if(item.career)return {title:displayTitle(item.goal?.startsWith(item.title)?item.goal:company(item)),subtitle:''};
-  return {title:displayTitle(`Applying at ${browserHost(item)||company(item)}`),subtitle:''};
+  return {title:displayTitle(t('Applying at {name}',{name:browserHost(item)||company(item)})),subtitle:''};
 }
 function statusText(item){
-  if(item.status==='cancelled'&&item.career&&!item.application_run_id)return 'Cancelled';
-  if(item.reopening)return 'Reopening your saved application';
-  if(item.pause_requested&&!terminal.has(item.status))return 'Paused — send “continue” when ready';
-  if(item.task_error)return 'Needs attention';
-  if(item.model_activity?.phase==='retrying')return 'Retrying model connection';
+  if(item.status==='cancelled'&&item.career&&!item.application_run_id)return t('Cancelled');
+  if(item.reopening)return t('Reopening your saved application');
+  if(item.pause_requested&&!terminal.has(item.status))return t('Paused — send “continue” when ready');
+  if(item.task_error)return t('Needs attention');
+  if(item.model_activity?.phase==='retrying')return t('Retrying model connection');
   return statuses[item.status]||item.status;
 }
 function button(text,action,cls='secondary-button'){const b=el('button',text,cls);b.type='button';b.addEventListener('click',action);return b;}
@@ -153,7 +157,7 @@ const pageContext={el,button,icon,error:text=>error(text),groups:()=>groups,refr
     if(!owner){location.href=`/apply?application=${encodeURIComponent(applicationId)}`;return;}
     select(owner.run_id);if(text){$('#chat-text').value=text;growComposer();$('#chat-text').focus();}
   },send:text=>{showView('chat');reset();$('#chat-text').value=text;$('#chat-text').focus();},
-  menuToggle:()=>{const b=button('',()=>$('#history-panel').classList.toggle('open'),'icon-button mobile-only');b.setAttribute('aria-label','Show conversation history');b.append(icon('menu'));return b;}};
+  menuToggle:()=>{const b=button('',()=>$('#history-panel').classList.toggle('open'),'icon-button mobile-only');b.setAttribute('aria-label',t('Show conversation history'));b.append(icon('menu'));return b;}};
 window.addEventListener('popstate',event=>showView(event.state?.view||new URLSearchParams(location.search).get('view')||'chat',{push:false}));
 
 let counts={archived:0,trash:0};
@@ -179,37 +183,37 @@ async function trashConversation(item){
   const busy=busyStatuses.has(item.status)||busyStatuses.has(item.task_status);
   try{if(busy)await api(`/api/career/tasks/${encodeURIComponent(item.run_id)}/cancel`,{method:'POST'});}
   catch(e){error(e.message);return;}
-  await changeConversation(item,{trashed:true},'Moved to Trash',{trashed:false});
+  await changeConversation(item,{trashed:true},t('Moved to Trash'),{trashed:false});
 }
 async function newGroupFor(item){
-  const name=await nameDialog({title:'New group',label:'Group name',confirmLabel:'Create'});
+  const name=await nameDialog({title:t('New group'),label:t('Group name'),confirmLabel:t('Create')});
   if(!name)return;
-  try{const group=await createGroup(name);groups=[...groups,group];if(item)await changeConversation(item,{group_id:group.group_id},`Moved to ${name}`);else await refresh();}
+  try{const group=await createGroup(name);groups=[...groups,group];if(item)await changeConversation(item,{group_id:group.group_id},t('Moved to {name}',{name}));else await refresh();}
   catch(e){error(e.message);}
 }
 function conversationMenu(item,anchor,position){
   const busy=busyStatuses.has(item.status)||busyStatuses.has(item.task_status);
   openMenu(anchor,[
-    {label:'Rename',hint:'F2',action:()=>startRename(item)},
-    {label:item.pinned_at?'Unpin':'Pin to top',action:()=>changeConversation(item,{pinned:!item.pinned_at})},
-    {label:'Move to group',submenu:[
-      ...groups.map(g=>({label:g.name,checked:item.group_id===g.group_id,action:()=>changeConversation(item,{group_id:g.group_id},`Moved to ${g.name}`,{group_id:item.group_id||null})})),
-      {label:'No group',checked:!item.group_id,action:()=>changeConversation(item,{group_id:null})},
-      {separator:true},{label:'New group…',action:()=>newGroupFor(item)}]},
-    {label:'Archive',action:()=>changeConversation(item,{archived:true},'Archived',{archived:false})},
+    {label:t('Rename'),hint:'F2',action:()=>startRename(item)},
+    {label:item.pinned_at?t('Unpin'):t('Pin to top'),action:()=>changeConversation(item,{pinned:!item.pinned_at})},
+    {label:t('Move to group'),submenu:[
+      ...groups.map(g=>({label:g.name,checked:item.group_id===g.group_id,action:()=>changeConversation(item,{group_id:g.group_id},t('Moved to {name}',{name:g.name}),{group_id:item.group_id||null})})),
+      {label:t('No group'),checked:!item.group_id,action:()=>changeConversation(item,{group_id:null})},
+      {separator:true},{label:t('New group…'),action:()=>newGroupFor(item)}]},
+    {label:t('Archive'),action:()=>changeConversation(item,{archived:true},t('Archived'),{archived:false})},
     {separator:true},
-    {label:busy?'Stop and move to Trash':'Move to Trash',hint:'Del',danger:true,action:()=>trashConversation(item)},
+    {label:busy?t('Stop and move to Trash'):t('Move to Trash'),hint:'Del',danger:true,action:()=>trashConversation(item)},
   ],position);
 }
 function groupMenu(group,anchor){
   openMenu(anchor,[
-    {label:'Rename group',action:async()=>{const name=await nameDialog({title:'Rename group',label:'Group name',value:group.name});
+    {label:t('Rename group'),action:async()=>{const name=await nameDialog({title:t('Rename group'),label:t('Group name'),value:group.name});
       if(!name)return;try{await renameGroup(group.group_id,name);await refresh();}catch(e){error(e.message);}}},
-    {label:'New group…',action:()=>newGroupFor(null)},
+    {label:t('New group…'),action:()=>newGroupFor(null)},
     {separator:true},
-    {label:'Delete group',danger:true,action:async()=>{
-      if(!await confirmDialog({title:`Delete “${group.name}”?`,text:'The group is removed. Its conversations move back to Recent; nothing else is deleted.',confirmLabel:'Delete group',danger:true}))return;
-      try{await deleteGroup(group.group_id);await refresh();toast('Group deleted');}catch(e){error(e.message);}}},
+    {label:t('Delete group'),danger:true,action:async()=>{
+      if(!await confirmDialog({title:t('Delete “{name}”?',{name:group.name}),text:t('The group is removed. Its conversations move back to Recent; nothing else is deleted.'),confirmLabel:t('Delete group'),danger:true}))return;
+      try{await deleteGroup(group.group_id);await refresh();toast(t('Group deleted'));}catch(e){error(e.message);}}},
   ]);
 }
 let renaming=null;
@@ -234,20 +238,21 @@ function dropTarget(node,groupId){
   node.addEventListener('drop',e=>{
     e.preventDefault();node.classList.remove('drop');
     const item=attempts.find(a=>a.run_id===e.dataTransfer.getData('text/x-northstar-task'));
-    if(item&&(item.group_id||null)!==groupId)changeConversation(item,{group_id:groupId},groupId?`Moved to ${groups.find(g=>g.group_id===groupId)?.name}`:'Removed from group');
+    if(item&&(item.group_id||null)!==groupId)changeConversation(item,{group_id:groupId},groupId?t('Moved to {name}',{name:groups.find(g=>g.group_id===groupId)?.name}):t('Removed from group'));
   });
 }
 function attemptRow(item){
-  const name=heading(item).title.replace(/^Applying at /,'');
+  // Browser attempts show the employer host alone, without the "Applying at" heading.
+  const name=item.career||item.custom_title?heading(item).title:displayTitle(browserHost(item)||company(item));
   const b=button('',()=>select(item.run_id),'attempt');b.setAttribute('aria-current',String(view==='chat'&&selected===item.run_id));b.title=statusText(item);
   if(needsYou(item))b.append(el('span','','dot'));else if(busyStatuses.has(item.status))b.append(el('span','','busy'));
   b.append(el('span',name,'name'),el('span',`, ${statusText(item)}`,'sr-only'));
   // Browser attempts started outside a conversation have no conversation record to organise.
   if(!item.career)return b;
   const row=el('div','','attempt-row');row.dataset.id=item.run_id;
-  if(renaming===item.run_id){const input=el('input','','rename');input.value=name;input.maxLength=120;input.setAttribute('aria-label','Conversation name');row.append(input);return row;}
+  if(renaming===item.run_id){const input=el('input','','rename');input.value=name;input.maxLength=120;input.setAttribute('aria-label',t('Conversation name'));row.append(input);return row;}
   const more=button('',()=>conversationMenu(item,more),'more');more.append(icon('dots'));
-  more.setAttribute('aria-label',`Options for ${name}`);more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');
+  more.setAttribute('aria-label',t('Options for {name}',{name}));more.setAttribute('aria-haspopup','menu');more.setAttribute('aria-expanded','false');
   b.addEventListener('contextmenu',e=>{e.preventDefault();conversationMenu(item,more,{x:e.clientX,y:e.clientY});});
   b.addEventListener('keydown',e=>{if(e.key==='F2'){e.preventDefault();startRename(item);}else if(e.key==='Delete'){e.preventDefault();trashConversation(item);}});
   row.draggable=true;row.addEventListener('dragstart',e=>{e.dataTransfer.setData('text/x-northstar-task',item.run_id);e.dataTransfer.effectAllowed='move';});
@@ -265,21 +270,21 @@ function renderSidebar(force=false){
   if(!force&&renaming&&nav.querySelector('input.rename'))return;
   nav.replaceChildren();
   const collapsed=collapsedGroups();
-  for(const section of sidebarSections(attempts,careerMode?groups:[],needsYou,careerMode?'Recent':'Applications')){
+  for(const section of sidebarSections(attempts,careerMode?groups:[],needsYou,careerMode?t('Recent'):t('Applications'))){
     if(section.group){
       const id=section.group.group_id,head=el('div','','side-group'),open=!collapsed.has(id);
       const toggle=button('',()=>{toggleGroup(id);renderSidebar(true);},'side-group-toggle');
       toggle.setAttribute('aria-expanded',String(open));toggle.append(icon(open?'chevd':'chev'),el('span',section.label));
       const more=button('',()=>groupMenu(section.group,more),'more');more.append(icon('dots'));
-      more.setAttribute('aria-label',`Options for group ${section.label}`);more.setAttribute('aria-haspopup','menu');
+      more.setAttribute('aria-label',t('Options for group {name}',{name:section.label}));more.setAttribute('aria-haspopup','menu');
       head.append(toggle,more);dropTarget(head,id);nav.append(head);
       if(!open)continue;
-      if(!section.items.length)nav.append(el('p','Drag conversations here','side-empty'));
+      if(!section.items.length)nav.append(el('p',t('Drag conversations here'),'side-empty'));
     }else{const label=el('p',section.label,'side-label');if(section.key==='recent')dropTarget(label,null);nav.append(label);}
     for(const item of section.items){const row=attemptRow(item);if(section.group)row.classList.add('in-group');nav.append(row);}
   }
   const name=[profile.first_name,profile.last_name].filter(Boolean).join(' ');
-  $('#profile-name').textContent=name||'Your details';
+  $('#profile-name').textContent=name||t('Your details');
   $('#profile-initials').textContent=(profile.first_name?.[0]||'')+(profile.last_name?.[0]||'')||'·';
 }
 // Match › Materials › Apply › Interview, derived from what this conversation has produced so far.
@@ -288,21 +293,21 @@ function journeyStages(item){
   const jobs=item.jobs||[],docs=(item.materials||[]).flatMap(p=>(p.items||[]).map(i=>({...i,stale:p.status==='stale'})));
   const applied=jobs.some(j=>['applied','interviewing','offer'].includes(j.status));
   const stages=[
-    ['Weighed',jobs.some(j=>j.match_score!=null)?'done':jobs.length?'active':''],
-    ['Forged',docs.length&&docs.every(d=>d.status==='approved'&&!d.stale)?'done':docs.length?'active':''],
-    ['Applying',applied?'done':item.application_run_id?'active':''],
-    ['Interview',(item.interviews||[]).length?'active':''],
+    [t('Weighed'),jobs.some(j=>j.match_score!=null)?'done':jobs.length?'active':''],
+    [t('Forged'),docs.length&&docs.every(d=>d.status==='approved'&&!d.stale)?'done':docs.length?'active':''],
+    [t('Applying'),applied?'done':item.application_run_id?'active':''],
+    [t('Interview'),(item.interviews||[]).length?'active':''],
   ];
   if(!stages.some(([,state])=>state))return null;
   const now=stages.map(([,state])=>state).lastIndexOf('active');
   return stages.map(([label,state],i)=>({label,state:i===now?'now':state==='done'?'done':''}));
 }
 function renderHeader(messages){
-  const view=current?heading(current):{title:careerMode?'New conversation':'Your next opportunity',subtitle:''};
+  const view=current?heading(current):{title:careerMode?t('New conversation'):t('Your next opportunity'),subtitle:''};
   $('#chat-title').textContent=view.title;$('#chat-subtitle').textContent=view.subtitle;
   const status=$('#agent-status');
   // A finished career chat needs no status; everything else says what the agent is doing.
-  status.textContent=extracting?'Reading your resume…':current&&!(current.career&&current.status==='completed'&&!current.task_error)?statusText(current):'';
+  status.textContent=extracting?t('Reading your resume…'):current&&!(current.career&&current.status==='completed'&&!current.task_error)?statusText(current):'';
   status.hidden=!status.textContent;status.classList.toggle('attention',needsYou(current));
   const stages=journeyStages(current),list=$('#journey');list.replaceChildren();list.hidden=!stages;
   for(const stage of stages||[]){
@@ -318,7 +323,7 @@ function renderHeader(messages){
   if(empty&&careerMode)renderChronicle();
   $('#starters').hidden=!(empty&&careerMode);
   const notice=$('#needs-you');notice.hidden=!needsYou(current);
-  if(!notice.hidden)notice.textContent=current.account_request?'Waiting for you to sign in':current.status==='awaiting_review'?'Ready for your review':'Waiting for your answer';
+  if(!notice.hidden)notice.textContent=current.account_request?t('Waiting for you to sign in'):current.status==='awaiting_review'?t('Ready for your review'):t('Waiting for your answer');
 }
 let traceSignature='';
 // The way: the last few distinct steps the agent took, then where it stands now.
@@ -330,7 +335,7 @@ function renderTrace(){
   for(const a of actions){const name=toolNames[a.tool]||a.tool;if(names.at(-1)!==name)names.push(name);}
   const busy=busyStatuses.has(current.status)||busyStatuses.has(current.task_status);
   const stations=names.slice(-5).map(label=>({label,state:'done'}));
-  if(needsYou(current))stations.push({label:current.status==='awaiting_review'?'Your review':'Your answer',state:'wait'});
+  if(needsYou(current))stations.push({label:current.status==='awaiting_review'?t('Your review'):t('Your answer'),state:'wait'});
   else if(busy)stations[stations.length-1].state='now';
   trace.querySelector('.trail').replaceChildren(...stations.map(({label,state})=>{const li=el('li','',`st ${state}`);li.append(el('i'),el('span',label));return li;}));
   trace.querySelector('.log').replaceChildren(...actions.slice(-12).map(a=>el('li',`${toolNames[a.tool]||a.tool}${a.label?` · ${a.label}`:''}${a.outcome?` · ${a.outcome}`:''}`)));
@@ -342,9 +347,9 @@ function placeComposer(home){
   if(composerWrap.parentElement!==target)target.append(composerWrap);
 }
 const numberWords=['No','One','Two','Three','Four','Five','Six','Seven','Eight','Nine'];
-const greeting=()=>{const h=new Date().getHours();return h<5?'Good evening':h<12?'Good morning':h<18?'Good afternoon':'Good evening';};
+const greeting=()=>{const h=new Date().getHours();return t(h<5?'Good evening':h<12?'Good morning':h<18?'Good afternoon':'Good evening');};
 const sameDay=(iso,day=new Date())=>{const d=new Date(iso);return d.getFullYear()===day.getFullYear()&&d.getMonth()===day.getMonth()&&d.getDate()===day.getDate();};
-const clock=iso=>new Date(iso).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',hour12:false});
+const clock=iso=>new Date(iso).toLocaleTimeString(locale,{hour:'2-digit',minute:'2-digit',hour12:false});
 let roadData=null,roadLoadedAt=0,chronicleSignature='';
 async function loadRoad(){
   if(Date.now()-roadLoadedAt<30000)return;roadLoadedAt=Date.now();
@@ -363,10 +368,10 @@ function renderChronicle(){
   loadRoad();
   const first=profile.first_name?.trim();
   $('#chron-date').hidden=false;
-  $('#chron-date').textContent=new Date().toLocaleDateString('en',{weekday:'long',day:'numeric',month:'long'});
-  $('#welcome h2').textContent=`${greeting()}${first?`, ${first}`:''}.`;
+  $('#chron-date').textContent=new Date().toLocaleDateString(locale,{weekday:'long',day:'numeric',month:'long'});
+  $('#welcome h2').textContent=first?t('{greeting}, {name}.',{greeting:greeting(),name:first}):t('{greeting}.',{greeting:greeting()});
   const lit=waiting.length;
-  $('#welcome h2 + p').textContent=lit?`${numberWords[lit]||lit} ${lit===1?'beacon is':'beacons are'} lit.`:'All quiet. Where does the road lead next?';
+  $('#welcome h2 + p').textContent=lit?(lang==='zh'?t('{n} beacons are lit.',{n:lit}):`${numberWords[lit]||lit} ${lit===1?'beacon is':'beacons are'} lit.`):t('All quiet. Where does the road lead next?');
   // Today's chronicle: what moved today, newest first.
   const today=careers.filter(a=>a.updated_at&&sameDay(a.updated_at)).sort((a,b)=>b.updated_at.localeCompare(a.updated_at)).slice(0,6);
   const list=$('#chron-today .vtrail');list.replaceChildren();
@@ -378,24 +383,24 @@ function renderChronicle(){
     text.append(el('time',clock(item.updated_at)),el('b',name),el('small',statusText(item)));
     li.append(el('i'),text);list.append(li);
   }
-  if(!today.length)list.append(el('li','Quiet so far today. Write to Eregion to begin.','empty'));
+  if(!today.length)list.append(el('li',t('Quiet so far today. Write to Eregion to begin.'),'empty'));
   // Beacons lit.
   $('#chron-side').hidden=!careers.length&&!roadData?.applications?.length;
   const beacons=$('#chron-beacons .rows');beacons.replaceChildren();
-  $('#chron-beacons .tag').textContent=lit?`${lit} need you`:'';$('#chron-beacons .tag').hidden=!lit;
+  $('#chron-beacons .tag').textContent=lit?t('{n} need you',{n:lit}):'';$('#chron-beacons .tag').hidden=!lit;
   for(const item of waiting.slice(0,4)){
     const row=el('div','','row'),info=el('div');info.append(el('b',heading(item).title),el('span',statusText(item)));
-    row.append(info,button(item.status==='awaiting_review'?'Review':'Answer',()=>select(item.run_id),'secondary-button'));beacons.append(row);
+    row.append(info,button(item.status==='awaiting_review'?t('Review'):t('Answer'),()=>select(item.run_id),'secondary-button'));beacons.append(row);
   }
-  if(!lit)beacons.append(el('p','No beacons lit. Nothing is waiting on you.','empty'));
+  if(!lit)beacons.append(el('p',t('No beacons lit. Nothing is waiting on you.'),'empty'));
   // On the road: active applications as trails.
   const needs=pageContext.needsYou(),road=$('#chron-road .rows');road.replaceChildren();
   const active=(roadData?.applications||[]).filter(a=>!['rejected','withdrawn','archived'].includes(a.status)).sort((a,b)=>b.updated_at.localeCompare(a.updated_at));
   for(const app of active.slice(0,5)){
     const row=el('button','','road-row');row.type='button';row.addEventListener('click',()=>pageContext.openApplication(app.application_id));
-    row.append(el('span',app.company||app.title||'Application'),stageTrail(app.status,needs.has(app.application_id)));road.append(row);
+    row.append(el('span',app.company||app.title||t('Application')),stageTrail(app.status,needs.has(app.application_id)));road.append(row);
   }
-  if(!active.length)road.append(el('p','No applications on the road yet.','empty'));
+  if(!active.length)road.append(el('p',t('No applications on the road yet.'),'empty'));
   $('#count-road').textContent=active.length||'';
 }
 function render(){
@@ -421,11 +426,11 @@ function render(){
       const previous=existing.get(m.id);
       if(previous?.dataset.text===m.text&&previous.dataset.role===m.role)continue;
       const bubble=el('div','',`message ${m.role}`);bubble.dataset.messageId=m.id;bubble.dataset.text=m.text;bubble.dataset.role=m.role;
-      bubble.append(el('span',m.role==='user'?'You':'Eregion','speaker'));
+      bubble.append(el('span',m.role==='user'?t('You'):'Eregion','speaker'));
       const body=m.role==='assistant'?renderMarkdown(m.text):el('p',m.text);bubble.append(body);let revealing=null;
       if(m.role==='assistant'){
-        const copy=button('Copy',async()=>{revealing?.finish();try{await navigator.clipboard.writeText(body.innerText);copy.textContent='Copied';}catch{copy.textContent='Select text to copy';}setTimeout(()=>{copy.textContent='Copy';},1800);},'message-copy');
-        copy.setAttribute('aria-label','Copy reply');bubble.append(copy);
+        const copy=button(t('Copy'),async()=>{revealing?.finish();try{await navigator.clipboard.writeText(body.innerText);copy.textContent=t('Copied');}catch{copy.textContent=t('Select text to copy');}setTimeout(()=>{copy.textContent=t('Copy');},1800);},'message-copy');
+        copy.setAttribute('aria-label',t('Copy reply'));bubble.append(copy);
       }
       if(previous)previous.replaceWith(bubble);else log.append(bubble);
       if(animate&&!previous){
@@ -436,11 +441,11 @@ function render(){
     }
   }
   renderHeader(messages);
-  $('#pause-agent').hidden=!current||terminal.has(current.status)||current.status==='submitting';$('#pause-agent').textContent=current?.pause_requested?'Resume':'Pause';$('#pause-agent').disabled=actionBusy||current?.reopening;
+  $('#pause-agent').hidden=!current||terminal.has(current.status)||current.status==='submitting';$('#pause-agent').textContent=current?.pause_requested?t('Resume'):t('Pause');$('#pause-agent').disabled=actionBusy||current?.reopening;
   $('#send-message').disabled=chatBusy||starting||restoring||current?.reopening||current?.status==='submitting';$('#attach-resume').disabled=extracting||restoring;$('#profile-toggle').disabled=extracting||restoring;
   const attachment=$('#attachment');attachment.replaceChildren();attachment.hidden=!resume&&!extracting;
-  if(extracting)attachment.append(icon('file'),el('span','Reading your resume…'));
-  else if(resume){const remove=button('×',removeResume,'text-button');remove.setAttribute('aria-label','Remove resume');attachment.append(icon('file'),el('span',resume.name),remove);}
+  if(extracting)attachment.append(icon('file'),el('span',t('Reading your resume…')));
+  else if(resume){const remove=button('×',removeResume,'text-button');remove.setAttribute('aria-label',t('Remove resume'));attachment.append(icon('file'),el('span',resume.name),remove);}
   decisions();renderWorkspace();renderTrace();autoOpenWorkspace(current);
   const careerSig=JSON.stringify([current?.run_id,current?.jobs,current?.recommendations,current?.materials,current?.interviews,chatBusy,actionBusy]);
   const resultsChanged=careerSig!==careerSignature;
@@ -469,30 +474,30 @@ function decisions(){
   const item=current,id=item.run_id;
   if(item.career&&item.task_error&&!item.pause_requested){
     const box=el('div','','decision model-error');box.setAttribute('role','alert');
-    box.append(el('p',item.task_error.message));
-    const retry=button('Try again',()=>send('continue'));retry.disabled=chatBusy||actionBusy;box.append(retry);container.append(box);
+    box.append(el('p',tServer(item.task_error.message)));
+    const retry=button(t('Try again'),()=>send('continue'));retry.disabled=chatBusy||actionBusy;box.append(retry);container.append(box);
     if(!item.application_run_id)return;
   }
-  if(item.career&&item.status==='completed'){container.append(chatBusy?thinking('Thinking'):el('p','You can keep working on these jobs or send a new request.','status-line'));return;}
+  if(item.career&&item.status==='completed'){container.append(chatBusy?thinking(t('Thinking')):el('p',t('You can keep working on these jobs or send a new request.'),'status-line'));return;}
   // The agent's decisions to leave optional questions empty are shown as soon as they are made.
   const leftEmpty=Object.entries(item.field_decisions||{}).filter(([,d])=>d?.mode==='leave_empty');
-  if(leftEmpty.length&&!terminal.has(item.status)){const note=el('div','','decision left-empty');note.append(el('p',`Left empty by the agent (${leftEmpty.length})`,'eyebrow'));for(const [key,d] of leftEmpty){const field=(item.fields||[]).find(f=>f.key===key);note.append(el('p',`${field?.label||d.field?.label||key}: ${d.reason}`));}container.append(note);}
+  if(leftEmpty.length&&!terminal.has(item.status)){const note=el('div','','decision left-empty');note.append(el('p',t('Left empty by the agent ({n})',{n:leftEmpty.length}),'eyebrow'));for(const [key,d] of leftEmpty){const field=(item.fields||[]).find(f=>f.key===key);note.append(el('p',`${field?.label||d.field?.label||key}: ${d.reason}`));}container.append(note);}
   if(!terminal.has(item.status)&&renderPendingQuestion({item,container,drafts:answerDrafts,busy:chatBusy||actionBusy,reply:body=>act('reply',body,id),el,button,renderText:renderMarkdown}))return;
-  if(['running','queued','waiting','submitting'].includes(item.status)){container.append(thinking(item.message));return;}
-  if(terminal.has(item.status)){const box=el('div','','decision');box.append(el('h3',statuses[item.status]),el('p',item.confirmation?.text||item.message));if(item.can_reopen){const resumeButton=button('Resume application',()=>act('resume',{},id),'primary-button');resumeButton.disabled=chatBusy||actionBusy;box.append(resumeButton);}box.append(button('Next application',()=>reset()));container.append(box);return;}
+  if(['running','queued','waiting','submitting'].includes(item.status)){container.append(thinking(tServer(item.message)));return;}
+  if(terminal.has(item.status)){const box=el('div','','decision');box.append(el('h3',statuses[item.status]),el('p',item.confirmation?.text||tServer(item.message)));if(item.can_reopen){const resumeButton=button(t('Resume application'),()=>act('resume',{},id),'primary-button');resumeButton.disabled=chatBusy||actionBusy;box.append(resumeButton);}box.append(button(t('Next application'),()=>reset()));container.append(box);return;}
   if(item.status==='awaiting_review'){
     const answers=new Map((item.review_fields||[]).map(f=>[f.key,f]));for(const f of item.fields||[])answers.set(f.key,f);
     const all=[...answers.values()].filter(f=>f.kind!=='password'),isDefault=f=>item.field_decisions?.[f.key]?.mode==='default';
     const defaults=all.filter(isDefault),shown=[...defaults,...all.filter(f=>!isDefault(f))].slice(0,5);
     const box=el('div','','decision review-card');
-    box.append(el('p',`${all.length} ${all.length===1?'answer':'answers'}${defaults.length?` · ${defaults.length} to check`:''}`,'eyebrow'),
-      el('h3','Your application is ready'),
-      el('p',defaults.length?`I used a default for ${defaults.length===1?'one answer':`${defaults.length} answers`}. Check ${defaults.length===1?'it':'them'}, then I’ll submit once when you confirm.`:`Review the answers for ${company(item)}. I’ll submit once when you confirm.`));
+    box.append(el('p',tn(all.length,'{n} answer','{n} answers')+(defaults.length?t(' · {n} to check',{n:defaults.length}):''),'eyebrow'),
+      el('h3',t('Your application is ready')),
+      el('p',defaults.length?tn(defaults.length,'I used a default for one answer. Check it, then I’ll submit once when you confirm.','I used a default for {n} answers. Check them, then I’ll submit once when you confirm.'):t('Review the answers for {company}. I’ll submit once when you confirm.',{company:company(item)})));
     if(shown.length){
       const list=el('div','','review-list');
       for(const f of shown){
-        const row=el('div','','review-row'),value=el('span',typeof f.value==='boolean'?(f.value?'Yes':'No'):String(f.value||'Not filled'),'v');
-        if(isDefault(f))value.append(el('span','Agent default','flag'));
+        const row=el('div','','review-row'),value=el('span',typeof f.value==='boolean'?(f.value?t('Yes'):t('No')):String(f.value||t('Not filled')),'v');
+        if(isDefault(f))value.append(el('span',t('Agent default'),'flag'));
         row.append(el('span',f.label,'k'),value);list.append(row);
       }
       box.append(list);
@@ -500,40 +505,40 @@ function decisions(){
     const approvals=item.pending_approvals||[],choices=memoryChoices.get(id)||{remember:{},scopes:{}};memoryChoices.set(id,choices);
     const reused=all.filter(f=>item.answer_sources?.[f.key]?.type==='memory');
     if(approvals.length)box.append(memoryApprovals(approvals,choices));
-    if(reused.length){const saved=el('details','','saved-answers');saved.append(el('summary',`Filled from your saved answers (${reused.length})`));const list=el('div','','review-list');for(const f of reused){const row=el('div','','review-row');row.append(el('span',f.label,'k'),el('span',typeof f.value==='boolean'?(f.value?'Yes':'No'):String(f.value||'Not filled'),'v'));list.append(row);}saved.append(list);box.append(saved);}
-    if(item.unfilled_optional?.length){const empty=el('details','','saved-answers');empty.append(el('summary',`Optional questions left empty (${item.unfilled_optional.length})`));const list=el('div','','review-list');for(const f of item.unfilled_optional){const row=el('div','','review-row');row.append(el('span',f.label,'k'),el('span',f.set_aside?'No matching option; check it':'Left empty','v'));list.append(row);}empty.append(list);box.append(empty);}
-    const actions=el('div','','actions'),submit=button('Submit application',()=>act('continue',{confirm_submit:true,
+    if(reused.length){const saved=el('details','','saved-answers');saved.append(el('summary',t('Filled from your saved answers ({n})',{n:reused.length})));const list=el('div','','review-list');for(const f of reused){const row=el('div','','review-row');row.append(el('span',f.label,'k'),el('span',typeof f.value==='boolean'?(f.value?t('Yes'):t('No')):String(f.value||t('Not filled')),'v'));list.append(row);}saved.append(list);box.append(saved);}
+    if(item.unfilled_optional?.length){const empty=el('details','','saved-answers');empty.append(el('summary',t('Optional questions left empty ({n})',{n:item.unfilled_optional.length})));const list=el('div','','review-list');for(const f of item.unfilled_optional){const row=el('div','','review-row');row.append(el('span',f.label,'k'),el('span',f.set_aside?t('No matching option; check it'):t('Left empty'),'v'));list.append(row);}empty.append(list);box.append(empty);}
+    const actions=el('div','','actions'),submit=button(t('Submit application'),()=>act('continue',{confirm_submit:true,
       remember:Object.fromEntries(approvals.map(a=>[a.key,choices.remember[a.key]??true])),
       memory_scopes:Object.fromEntries(approvals.map(a=>[a.key,choices.scopes[a.key]||a.scope]))},id),'primary-button');submit.disabled=chatBusy||actionBusy;
-    actions.append(submit,button('Review answers',()=>{workspace();$('#answer-list').parentElement.open=true;}),el('span','Submits once','lock-note'));
+    actions.append(submit,button(t('Review answers'),()=>{workspace();$('#answer-list').parentElement.open=true;}),el('span',t('Submits once'),'lock-note'));
     box.append(actions);container.append(box);return;
   }
-  if(item.pause_requested){const box=el('div','','decision');box.append(el('p','Paused. Use Control browser in Agent activity if you need to interact with the page, then resume when ready.'),button('Resume',()=>send('continue')));container.append(box);return;}
+  if(item.pause_requested){const box=el('div','','decision');box.append(el('p',t('Paused. Use Control browser in Agent activity if you need to interact with the page, then resume when ready.')),button(t('Resume'),()=>send('continue')));container.append(box);return;}
   if(item.status==='needs_input'&&item.agent_reason==='application_budget'){
     // A grant of more model calls is always an explicit user action (W4).
-    const box=el('div','','decision');box.append(el('p',item.message));
-    const more=button('Allow 100 more model calls',()=>act('continue',{extend_budget:true},id),'primary-button');more.disabled=chatBusy||actionBusy;
+    const box=el('div','','decision');box.append(el('p',tServer(item.message)));
+    const more=button(t('Allow 100 more model calls'),()=>act('continue',{extend_budget:true},id),'primary-button');more.disabled=chatBusy||actionBusy;
     box.append(more);container.append(box);return;
   }
   if(item.status==='needs_input'){
-    if(item.account_request){const box=el('div','','decision');box.append(el('p',item.account_request.origin,'eyebrow'),el('p',item.message));const actions=el('div','','actions');actions.append(button(item.account_request.mode==='register'?'Create candidate account':'Sign in securely',()=>openAccount(item),'primary-button'));const other=item.account_request.mode==='register'?'login':'register';actions.append(button(other==='register'?'Create an account instead':'Use an existing account',()=>act('account-mode',{origin:item.account_request.origin,mode:other},id)));box.append(actions);container.append(box);return;}
+    if(item.account_request){const box=el('div','','decision');box.append(el('p',item.account_request.origin,'eyebrow'),el('p',tServer(item.message)));const actions=el('div','','actions');actions.append(button(item.account_request.mode==='register'?t('Create candidate account'):t('Sign in securely'),()=>openAccount(item),'primary-button'));const other=item.account_request.mode==='register'?'login':'register';actions.append(button(other==='register'?t('Create an account instead'):t('Use an existing account'),()=>act('account-mode',{origin:item.account_request.origin,mode:other},id)));box.append(actions);container.append(box);return;}
     const last=[...(item.messages||[])].reverse().find(m=>m.role==='assistant'&&Array.isArray(m.question_keys));const keys=(last?.question_keys||[]).filter(key=>item.pending_fields?.includes(key)??true);
     renderAnswerBatch({container,id,fields:keys.map(key=>item.fields.find(f=>f.key===key)).filter(Boolean),drafts:answerDrafts,suggestions:item.answer_drafts,busy:chatBusy||actionBusy,submit:answers=>act('continue',{answers},id),el,button});
-    if(!keys.length){const box=el('div','','decision');box.append(el('p',item.message));const actions=el('div','','actions');actions.append(button('Try again',()=>send('continue')));if(!item.career||item.application_run_id||item.browser)actions.append(button('Open browser',()=>workspace()));box.append(actions);container.append(box);}
+    if(!keys.length){const box=el('div','','decision');box.append(el('p',tServer(item.message)));const actions=el('div','','actions');actions.append(button(t('Try again'),()=>send('continue')));if(!item.career||item.application_run_id||item.browser)actions.append(button(t('Open browser'),()=>workspace()));box.append(actions);container.append(box);}
   }
 }
 function memoryApprovals(approvals,choices){
   // Approve once: checked answers are reused automatically on later applications.
   const section=el('div','','memory-approvals');
-  section.append(el('p',`New ${approvals.length===1?'answer':'answers'} from our chat`,'eyebrow'),el('p','Checked answers are reused automatically next time, so you only approve them once.','hint'));
+  section.append(el('p',tn(approvals.length,'New answer from our chat','New answers from our chat'),'eyebrow'),el('p',t('Checked answers are reused automatically next time, so you only approve them once.'),'hint'));
   const list=el('div','','review-list');
   for(const a of approvals){
-    const row=el('div','','review-row approval-row'),value=el('span',typeof a.value==='boolean'?(a.value?'Yes':'No'):String(a.value),'v');
+    const row=el('div','','review-row approval-row'),value=el('span',typeof a.value==='boolean'?(a.value?t('Yes'):t('No')):String(a.value),'v');
     const keep=el('label','','remember-toggle'),box=el('input');box.type='checkbox';box.checked=choices.remember[a.key]??true;
     box.addEventListener('change',()=>{choices.remember[a.key]=box.checked;scope.disabled=!box.checked;});
-    keep.append(box,el('span','Remember'));
-    const scope=el('select','','memory-scope');scope.setAttribute('aria-label',`Where to reuse ${a.label}`);
-    for(const [v,t] of [['global','All jobs'],['employer','This employer only']]){const o=el('option',t);o.value=v;scope.append(o);}
+    keep.append(box,el('span',t('Remember')));
+    const scope=el('select','','memory-scope');scope.setAttribute('aria-label',t('Where to reuse {label}',{label:a.label}));
+    for(const [v,text] of [['global','All jobs'],['employer','This employer only']]){const o=el('option',t(text));o.value=v;scope.append(o);}
     scope.value=choices.scopes[a.key]||a.scope;scope.disabled=!box.checked;scope.addEventListener('change',()=>{choices.scopes[a.key]=scope.value;});
     const controls=el('span','','approval-controls');controls.append(keep,scope);value.append(controls);
     row.append(el('span',a.label,'k'),value);list.append(row);
@@ -548,51 +553,51 @@ function renderWorkspace(){
   $('#take-over').hidden=!canControl;$('#background-browser').hidden=true;$('#browser-mode-note').hidden=!canControl;
   $('#take-over').disabled=actionBusy||chatBusy;$('#background-browser').disabled=actionBusy||chatBusy;
   $('#cancel-attempt').hidden=!current||terminal.has(current.status)||current.status==='submitting';
-  $('#browser-caption').textContent=current?`${browserHost(current)||company(current)} · live view`:'The browser will appear here.';
-  const now=$('#workspace-now');now.hidden=!current;if(current)now.textContent=current.message||statusText(current);
+  $('#browser-caption').textContent=current?t('{host} · live view',{host:browserHost(current)||company(current)}):t('The browser will appear here.');
+  const now=$('#workspace-now');now.hidden=!current;if(current)now.textContent=tServer(current.message)||statusText(current);
   const perf=current?.perf_summary,usage=current?.usage_summary,summary=$('#perf-summary');summary.hidden=!perf&&!usage?.calls;
-  summary.textContent=usageText(usage)||(perf?`${perf.model_calls} model calls · ${Math.round(perf.model_seconds)} s model · ${Math.round(perf.browser_seconds)} s browser`:'');
+  summary.textContent=usageText(usage)||(perf?t('{calls} model calls · {model} s model · {browser} s browser',{calls:perf.model_calls,model:Math.round(perf.model_seconds),browser:Math.round(perf.browser_seconds)}):'');
   renderUsage($('#usage-details'),usage);
   if(!current)return;
-  for(const step of current.task_plan||[])$('#task-plan').append(el('li',step));if(!current.task_plan?.length)$('#task-plan').append(el('li',current.status==='awaiting_review'?'Review the completed application':current.message));
+  for(const step of current.task_plan||[])$('#task-plan').append(el('li',step));if(!current.task_plan?.length)$('#task-plan').append(el('li',current.status==='awaiting_review'?t('Review the completed application'):tServer(current.message)));
   for(const a of [...(current.actions||[])].slice(-20).reverse())$('#browser-actions').append(el('li',`${toolNames[a.tool]||a.tool} · ${a.label} · ${a.outcome}`));
   const answers=new Map((current.review_fields||[]).map(f=>[f.key,f]));for(const f of current.fields)answers.set(f.key,f);
-  for(const f of answers.values()){const row=el('div','','answer');row.append(el('strong',f.label),el('p',typeof f.value==='boolean'?(f.value?'Yes':'No'):String(f.value||'Not filled')));const decision=current.field_decisions?.[f.key];if(decision?.mode==='default')row.append(el('small',`Agent default: ${decision.reason}`));if(!terminal.has(current.status)&&current.status!=='submitting'&&f.kind!=='file')row.append(button('Correct in chat',()=>{$('#chat-text').value=`For “${f.label}”, use `;$('#chat-text').focus();},'quiet-button'));$('#answer-list').append(row);}
+  for(const f of answers.values()){const row=el('div','','answer');row.append(el('strong',f.label),el('p',typeof f.value==='boolean'?(f.value?t('Yes'):t('No')):String(f.value||t('Not filled'))));const decision=current.field_decisions?.[f.key];if(decision?.mode==='default')row.append(el('small',t('Agent default: {reason}',{reason:decision.reason})));if(!terminal.has(current.status)&&current.status!=='submitting'&&f.kind!=='file')row.append(button(t('Correct in chat'),()=>{$('#chat-text').value=t('For “{label}”, use ',{label:f.label});$('#chat-text').focus();},'quiet-button'));$('#answer-list').append(row);}
 }
 let previewPending=false;
 async function refreshPreview(item){if(previewPending)return;if(terminal.has(item.status)&&!item.browser||(item.career&&!item.application_run_id&&!item.browser))return;previewPending=true;try{const r=await fetch(item.preview_url||`/api/auto-apply/${item.application_run_id||item.run_id}/preview`,{cache:'no-store',signal:AbortSignal.timeout(5000)});if(r.status!==200)return;const blob=await r.blob();if(current?.run_id!==item.run_id)return;if(previewUrl)URL.revokeObjectURL(previewUrl);previewUrl=URL.createObjectURL(blob);$('#browser-preview').src=previewUrl;$('#browser-preview').hidden=false;$('#preview-placeholder').hidden=true;}catch{/* A preview delay does not stop the task. */}finally{previewPending=false;}}
-async function encode(file){if(!(file instanceof File)||!file.size||file.size>10*1024*1024)throw new Error('Attach a PDF resume no larger than 10 MB.');const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);}
+async function encode(file){if(!(file instanceof File)||!file.size||file.size>10*1024*1024)throw new Error(t('Attach a PDF resume no larger than 10 MB.'));const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(binary);}
 $('#resume-file').addEventListener('change',async event=>{
-  const file=event.target.files[0];if(!file)return;const taskId=current?.career?current.run_id:null;if(current&&!current.career)reset();draft.id=crypto.randomUUID();draft.payload=null;const version=++extractionVersion,id=draft.id;extracting=true;error();addDraft('user',`Attached ${file.name}`);
-  try{const encoded=await encode(file);if(version!==extractionVersion)return;resume={name:file.name,encoded};profile={};const result=await request('/resume-profile',{resume_base64:encoded,resume_name:file.name});if(version!==extractionVersion)return;profile=result.profile||{};await persistCandidate({resume_base64:encoded,resume_name:file.name,extracted:!result.warning});await resourceChanged(`I uploaded ${file.name}. Use my updated saved resume for this request.`,taskId);if(draft.id===id&&!selected){const name=[profile.first_name,profile.last_name].filter(Boolean).join(' ');ask(`I’ve saved your resume${name?` for ${name}`:''} for future applications.${profile.education?.length?` Found ${profile.education.length} education records; review them in Your details.`:''}${result.warning?' Some details need your help to complete.':''}`);}}
+  const file=event.target.files[0];if(!file)return;const taskId=current?.career?current.run_id:null;if(current&&!current.career)reset();draft.id=crypto.randomUUID();draft.payload=null;const version=++extractionVersion,id=draft.id;extracting=true;error();addDraft('user',t('Attached {name}',{name:file.name}));
+  try{const encoded=await encode(file);if(version!==extractionVersion)return;resume={name:file.name,encoded};profile={};const result=await request('/resume-profile',{resume_base64:encoded,resume_name:file.name});if(version!==extractionVersion)return;profile=result.profile||{};await persistCandidate({resume_base64:encoded,resume_name:file.name,extracted:!result.warning});await resourceChanged(t('I uploaded {name}. Use my updated saved resume for this request.',{name:file.name}),taskId);if(draft.id===id&&!selected){const name=[profile.first_name,profile.last_name].filter(Boolean).join(' ');ask((name?t('I’ve saved your resume for {name} for future applications.',{name}):t('I’ve saved your resume for future applications.'))+(profile.education?.length?t(' Found {n} education records; review them in Your details.',{n:profile.education.length}):'')+(result.warning?t(' Some details need your help to complete.'):''));}}
   catch(e){error(e.message);}finally{if(version===extractionVersion){extracting=false;render();if(view==='materials')renderPage('materials',$('#page-view'),pageContext);else if(!selected)advance();}}
 });
 function jobLink(text){return text.match(/https:\/\/[^\s<>"）)]+/)?.[0]?.replace(/[.,;，。；]+$/,'')||'';}
 async function advance(){
   if(careerMode){if((draft.url||draft.applicationId)&&!current&&!starting&&!restoring)await startCareer(draft.lastText||draft.url);return;}
   if(current||extracting||starting||restoring)return;
-  if(!resume){ask('Attach your resume PDF here, and I’ll use it to prepare the application.');return;}
-  if(!draft.url){ask('Send the job page you’d like to apply to. I can open the application and work through its steps with you.');return;}
+  if(!resume){ask(t('Attach your resume PDF here, and I’ll use it to prepare the application.'));return;}
+  if(!draft.url){ask(t('Send the job page you’d like to apply to. I can open the application and work through its steps with you.'));return;}
   draft.field=['first_name','last_name','email'].find(k=>!profile[k]?.trim())||null;
-  if(draft.field){ask(`What ${labels[draft.field].toLowerCase()} should I use? Send just that detail.`);return;}
-  const id=draft.id,version=epoch;starting=true;render();ask('I have what I need to start. I’ll open the application and keep you updated here.');
-  try{await candidateWrites;draft.payload ||= {url:draft.url,profile:{...profile},resume_base64:resume.encoded,resume_name:resume.name,auto_submit:false,automation_mode:'hybrid',consent_policy:'ask',reuse_answers:$('#reuse-answers').checked,visual_fallback:$('#visual-fallback').checked,idempotency_key:id,initial_message:draft.lastText||`Apply to ${draft.url} using ${resume.name}.`};const item=await request('',draft.payload);if(epoch===version&&draft.id===id){selected=item.run_id;current=item;logSignature='';actionSignature='';}await refresh();}
-  catch(e){if(e.existingRunId&&epoch===version&&draft.id===id){try{await openExisting(e.existingRunId);}catch(openError){error(openError.message);}}else{error(e.message);if(draft.id===id)ask('I couldn’t open this application yet. Check the message above, then send a corrected job link or tell me to try again.');}}finally{starting=false;render();}
+  if(draft.field){ask(t('What {field} should I use? Send just that detail.',{field:labels[draft.field].toLowerCase()}));return;}
+  const id=draft.id,version=epoch;starting=true;render();ask(t('I have what I need to start. I’ll open the application and keep you updated here.'));
+  try{await candidateWrites;draft.payload ||= {url:draft.url,profile:{...profile},resume_base64:resume.encoded,resume_name:resume.name,auto_submit:false,automation_mode:'hybrid',consent_policy:'ask',reuse_answers:$('#reuse-answers').checked,visual_fallback:$('#visual-fallback').checked,idempotency_key:id,initial_message:draft.lastText||t('Apply to {url} using {name}.',{url:draft.url,name:resume.name})};const item=await request('',draft.payload);if(epoch===version&&draft.id===id){selected=item.run_id;current=item;logSignature='';actionSignature='';}await refresh();}
+  catch(e){if(e.existingRunId&&epoch===version&&draft.id===id){try{await openExisting(e.existingRunId);}catch(openError){error(openError.message);}}else{error(e.message);if(draft.id===id)ask(t('I couldn’t open this application yet. Check the message above, then send a corrected job link or tell me to try again.'));}}finally{starting=false;render();}
 }
 async function prepare(text){
   if(careerMode){await startCareer(text);return;}
   const id=draft.id;draft.lastText=text;addDraft('user',text);const url=jobLink(text);
   if(url){draft.url=url;draft.id=crypto.randomUUID();draft.payload=null;await advance();return;}
   if(/^(continue|start|go|retry|开始|继续|重试)[.!。！]?$/i.test(text)){await advance();return;}
-  if(/^(pause|stop|暂停|停止)[.!。！]?$/i.test(text)){draft.url='';ask('Paused. Send the job link again when you want me to start.');return;}
+  if(/^(pause|stop|暂停|停止)[.!。！]?$/i.test(text)){draft.url='';ask(t('Paused. Send the job link again when you want me to start.'));return;}
   const result=await request('/prepare-message',{text,field:draft.field});if(draft.id!==id||selected)return;
-  if(Object.keys(result.profile||{}).length){Object.assign(profile,result.profile);await persistCandidate();draft.field=null;draft.id=crypto.randomUUID();draft.payload=null;ask('Got it. I’ve updated your saved details.');await advance();}else ask(result.message||'Send a job link or attach your resume to get started.');
+  if(Object.keys(result.profile||{}).length){Object.assign(profile,result.profile);await persistCandidate();draft.field=null;draft.id=crypto.randomUUID();draft.payload=null;ask(t('Got it. I’ve updated your saved details.'));await advance();}else ask(tServer(result.message)||t('Send a job link or attach your resume to get started.'));
 }
 async function send(text,key=null,expectedRun=null,context=null){
   text=text.trim();if(!text||chatBusy||starting)return;if(expectedRun&&current?.run_id!==expectedRun)return;
-  if(current&&!current.career&&terminal.has(current.status)){if(current.can_reopen&&/^(continue|resume|retry|继续|继续吧|恢复|重试)[.!。！]?$/i.test(text)){await act('resume',{});return;}const url=jobLink(text);if(url){reset(url);return;}error(current.can_reopen?'Use “Resume application” to continue with your saved progress.':'This application has ended. Check its submission status, or send a different job link.');return;}
+  if(current&&!current.career&&terminal.has(current.status)){if(current.can_reopen&&/^(continue|resume|retry|继续|继续吧|恢复|重试)[.!。！]?$/i.test(text)){await act('resume',{});return;}const url=jobLink(text);if(url){reset(url);return;}error(current.can_reopen?t('Use “Resume application” to continue with your saved progress.'):t('This application has ended. Check its submission status, or send a different job link.'));return;}
   if(current?.status==='submitting'||current?.reopening)return;
-  if(current&&/^(submit|confirm and submit|提交|确认提交)[.!。！]?$/i.test(text)){error('Use “Submit application” on the review card to confirm this application.');return;}
+  if(current&&/^(submit|confirm and submit|提交|确认提交)[.!。！]?$/i.test(text)){error(t('Use “Submit application” on the review card to confirm this application.'));return;}
   chatBusy=true;error();const runId=current?.run_id,version=epoch;render();
   try{if(!runId)await prepare(text);else{const id=failedMessage?.runId===runId&&failedMessage.text===text&&failedMessage.key===key&&JSON.stringify(failedMessage.context)===JSON.stringify(context)?failedMessage.id:crypto.randomUUID();optimistic.set(runId,[{id,role:'user',text,at:new Date().toISOString()}]);render();bottom();failedMessage={id,text,key,runId,context};await request(`/${runId}/chat`,{text,field_key:key,message_id:id,visual_fallback:$('#visual-fallback').checked,...(context?{context}:{})});failedMessage=null;optimistic.delete(runId);await refresh();}if(epoch===version&&$('#chat-text').value.trim()===text){$('#chat-text').value='';growComposer();}}
   catch(e){if(runId)optimistic.delete(runId);error(e.message);}finally{chatBusy=false;render();}
@@ -613,9 +618,9 @@ function openAccount(item){
   const auth=item.account_request;accountTarget={id:item.run_id,applicationId:item.application_run_id,origin:auth.origin,mode:auth.mode};
   $('#account-form').reset();$('#account-origin').textContent=auth.origin;
   $('#account-instructions').textContent=auth.instructions||'';
-  $('#account-title').textContent=auth.mode==='register'?'Create your candidate account':'Sign in to your candidate account';
+  $('#account-title').textContent=auth.mode==='register'?t('Create your candidate account'):t('Sign in to your candidate account');
   $('#account-username').value=profile.email||'';$('#account-password').autocomplete=auth.mode==='register'?'new-password':'current-password';
-  $('#account-submit').textContent=auth.mode==='register'?'Create account & continue':'Sign in & continue';
+  $('#account-submit').textContent=auth.mode==='register'?t('Create account & continue'):t('Sign in & continue');
   $('#account-consents').replaceChildren();
   for(const c of auth.consents){const label=el('label',c.label,'check-row'),input=el('input');input.type='checkbox';input.dataset.key=c.key;input.required=c.required;label.prepend(input);$('#account-consents').append(label);}
   $('#account-dialog').showModal();
@@ -624,7 +629,7 @@ $('#account-close').addEventListener('click',()=>$('#account-dialog').close());
 $('#account-dialog').addEventListener('close',()=>{$('#account-form').reset();accountTarget=null;});
 $('#account-form').addEventListener('submit',async event=>{
   event.preventDefault();if(actionBusy||!accountTarget)return;
-  const target=accountTarget;if(current?.run_id!==target.id||current.application_run_id!==target.applicationId||!current.account_request||current.account_request.origin!==target.origin||current.account_request.mode!==target.mode){$('#account-dialog').close();error('The account request changed. Reopen the current account form.');return;}
+  const target=accountTarget;if(current?.run_id!==target.id||current.application_run_id!==target.applicationId||!current.account_request||current.account_request.origin!==target.origin||current.account_request.mode!==target.mode){$('#account-dialog').close();error(t('The account request changed. Reopen the current account form.'));return;}
   const body={expected_version:current.version,origin:target.origin,mode:target.mode,username:$('#account-username').value,password:$('#account-password').value,consents:Object.fromEntries([...document.querySelectorAll('#account-consents input')].map(i=>[i.dataset.key,i.checked]))};
   $('#account-dialog').close();actionBusy=true;error();render();
   try{await request(`/${target.id}/account`,body);await refresh();}catch(e){error(e.message);}finally{body.password='';actionBusy=false;render();}
@@ -643,11 +648,11 @@ document.addEventListener('keydown',event=>{if(event.key!=='Escape'||document.qu
 const growComposer=()=>{const t=$('#chat-text');t.style.height='auto';t.style.height=`${Math.min(t.scrollHeight,200)}px`;};
 $('#chat-text').addEventListener('input',growComposer);
 for(const [label,text] of starterPrompts)$('#starters').append(button(label,()=>{const t=$('#chat-text');t.value=text;growComposer();t.focus();t.setSelectionRange(text.length,text.length);},''));
-const educationLabels={school:'School / university',degree:'Degree',field_of_study:'Major / field of study',start_date:'Start date (as written on resume)',end_date:'End / expected graduation date',graduation_status:'Graduation status (if known)'};
+const educationLabels=local({school:'School / university',degree:'Degree',field_of_study:'Major / field of study',start_date:'Start date (as written on resume)',end_date:'End / expected graduation date',graduation_status:'Graduation status (if known)'});
 function educationEditor(record={}){
-  const row=el('fieldset','','education-record');row.dataset.id=record.id||'';row.append(el('legend','Education'));
+  const row=el('fieldset','','education-record');row.dataset.id=record.id||'';row.append(el('legend',t('Education')));
   for(const [key,text] of Object.entries(educationLabels)){const label=el('label',text),input=el('input');input.dataset.component=key;input.value=record[key]||'';input.maxLength=['school','degree','field_of_study'].includes(key)?300:100;label.append(input);row.append(label);}
-  row.append(button('Remove education',()=>row.remove(),'quiet-button'));$('#education-fields').append(row);
+  row.append(button(t('Remove education'),()=>row.remove(),'quiet-button'));$('#education-fields').append(row);
 }
 $('#profile-toggle').addEventListener('click',()=>{
   $('#profile-fields').replaceChildren();for(const [key,label]of Object.entries(labels)){if(['school','degree'].includes(key)&&profile.education?.length)continue;const row=el('label',label),input=el('input');input.name=key;input.value=profile[key]||'';input.type=key==='email'?'email':'text';row.append(input);$('#profile-fields').append(row);}
@@ -658,11 +663,11 @@ async function loadStandardAnswers(){
   // Approved once here, then reused on every application without asking.
   const box=$('#standard-fields');box.replaceChildren();
   try{const{answers}=await request('/standard-answers');for(const item of answers){
-    const row=el('label',item.question);let input;
-    if(item.kind==='yes_no'){input=el('select');for(const [v,t] of [['','Ask me'],['Yes','Yes'],['No','No']]){const o=el('option',t);o.value=v;input.append(o);}}
-    else{input=el('input');input.type='text';input.placeholder='Ask me';}
+    const row=el('label',tServer(item.question));let input;
+    if(item.kind==='yes_no'){input=el('select');for(const [v,text] of [['','Ask me'],['Yes','Yes'],['No','No']]){const o=el('option',t(text));o.value=v;input.append(o);}}
+    else{input=el('input');input.type='text';input.placeholder=t('Ask me');}
     input.value=typeof item.value==='boolean'?(item.value?'Yes':'No'):String(item.value||'');input.dataset.topic=item.topic;input.dataset.originalValue=input.value.trim();row.append(input);box.append(row);}
-  }catch(e){box.append(el('p','Standard answers are unavailable right now.'));}
+  }catch(e){box.append(el('p',t('Standard answers are unavailable right now.')));}
 }
 async function saveStandardAnswers(){
   const inputs=[...$('#standard-fields').querySelectorAll('[data-topic]')].filter(i=>i.value.trim()!==i.dataset.originalValue);if(!inputs.length)return;
@@ -678,9 +683,9 @@ $('#profile-form').addEventListener('submit',async event=>{
   const education=[...form.querySelectorAll('.education-record')].map(row=>({id:row.dataset.id,...Object.fromEntries([...row.querySelectorAll('[data-component]')].map(i=>[i.dataset.component,i.value.trim()]))}));
   const hadEducation=Boolean(profile.education?.length);profile={...profile,...Object.fromEntries(new FormData(form)),education};
   if(education.length){profile.school=education[0].school;profile.degree=education[0].degree;}else if(hadEducation){profile.school='';profile.degree='';}
-  try{const result=await persistCandidate();profile=result.profile;await saveStandardAnswers();saveVisualPreference(visualFallback);$('#profile-dialog').close();await resourceChanged('I updated my saved candidate details. Use the current details.',current?.career?current.run_id:null,{visual_fallback:visualFallback});if(!current){draft.id=crypto.randomUUID();draft.payload=null;ask('Your details are saved for future applications.');advance();}}catch(e){error(e.message);}finally{save.disabled=false;}
+  try{const result=await persistCandidate();profile=result.profile;await saveStandardAnswers();saveVisualPreference(visualFallback);$('#profile-dialog').close();await resourceChanged(t('I updated my saved candidate details. Use the current details.'),current?.career?current.run_id:null,{visual_fallback:visualFallback});if(!current){draft.id=crypto.randomUUID();draft.payload=null;ask(t('Your details are saved for future applications.'));advance();}}catch(e){error(e.message);}finally{save.disabled=false;}
 });
-$('#answer-memory').addEventListener('toggle',async()=>{if(!$('#answer-memory').open||!current||(current.career&&!current.application_run_id))return;const id=current.run_id;try{const{memories}=await request(`/${id}/memory`);if(current?.run_id!==id)return;$('#memory-list').replaceChildren();if(!memories.length)$('#memory-list').append(el('p','No answers remembered yet.'));for(const m of memories){const row=el('div','','answer'),scope=el('select','','memory-scope');scope.setAttribute('aria-label',`Where to reuse ${m.question}`);for(const [v,t] of [['global','All jobs'],['employer','This employer only']]){const o=el('option',t);o.value=v;scope.append(o);}scope.value=m.scope||'global';scope.addEventListener('change',async()=>{try{await request(`/${id}/memory/${m.memory_id}`,{scope:scope.value},'PATCH');}catch(e){error(e.message);scope.value=m.scope||'global';}});row.append(el('strong',m.question),el('p',typeof m.value==='boolean'?(m.value?'Yes':'No'):String(m.value)),scope,button('Forget',async()=>{try{await request(`/${id}/memory/${m.memory_id}`,undefined,'DELETE');row.remove();}catch(e){error(e.message);}},'quiet-button'));$('#memory-list').append(row);}}catch(e){error(e.message);}});
+$('#answer-memory').addEventListener('toggle',async()=>{if(!$('#answer-memory').open||!current||(current.career&&!current.application_run_id))return;const id=current.run_id;try{const{memories}=await request(`/${id}/memory`);if(current?.run_id!==id)return;$('#memory-list').replaceChildren();if(!memories.length)$('#memory-list').append(el('p',t('No answers remembered yet.')));for(const m of memories){const row=el('div','','answer'),scope=el('select','','memory-scope');scope.setAttribute('aria-label',t('Where to reuse {label}',{label:m.question}));for(const [v,text] of [['global','All jobs'],['employer','This employer only']]){const o=el('option',t(text));o.value=v;scope.append(o);}scope.value=m.scope||'global';scope.addEventListener('change',async()=>{try{await request(`/${id}/memory/${m.memory_id}`,{scope:scope.value},'PATCH');}catch(e){error(e.message);scope.value=m.scope||'global';}});row.append(el('strong',m.question),el('p',typeof m.value==='boolean'?(m.value?t('Yes'):t('No')):String(m.value)),scope,button(t('Forget'),async()=>{try{await request(`/${id}/memory/${m.memory_id}`,undefined,'DELETE');row.remove();}catch(e){error(e.message);}},'quiet-button'));$('#memory-list').append(row);}}catch(e){error(e.message);}});
 async function restoreCandidate(){
   const version=extractionVersion;
   try{
@@ -688,16 +693,17 @@ async function restoreCandidate(){
     if(saved.resume_base64){resume={name:saved.resume_name||'resume.pdf',encoded:saved.resume_base64};render();
       if(saved.needs_extraction){extracting=true;render();const result=await request('/resume-profile',{resume_base64:resume.encoded,resume_name:resume.name});if(version!==extractionVersion)return;profile={...result.profile};await persistCandidate({resume_base64:resume.encoded,resume_name:resume.name,extracted:!result.warning});}
     }
-  }catch(e){error(`Could not restore saved details: ${e.message}`);}finally{restoring=false;if(version===extractionVersion)extracting=false;render();if(draft.url||draft.applicationId)advance();}
+  }catch(e){error(t('Could not restore saved details: {error}',{error:e.message}));}finally{restoring=false;if(version===extractionVersion)extracting=false;render();if(draft.url||draft.applicationId)advance();}
 }
 const initialParams=new URLSearchParams(location.search),initialUrl=initialParams.get('url'),initialApplication=initialParams.get('application');
-if(careerMode&&initialApplication){draft.applicationId=initialApplication;draft.lastText='Help me review this saved job.';addDraft('user',draft.lastText);}
-else if(initialUrl){draft.url=initialUrl;draft.lastText=careerMode?`Help me apply to ${initialUrl}.`:initialUrl;addDraft('user',initialUrl);}
+if(careerMode&&initialApplication){draft.applicationId=initialApplication;draft.lastText=t('Help me review this saved job.');addDraft('user',draft.lastText);}
+else if(initialUrl){draft.url=initialUrl;draft.lastText=careerMode?t('Help me apply to {url}.',{url:initialUrl}):initialUrl;addDraft('user',initialUrl);}
 if(careerMode){
   $('#side-nav').hidden=false;$('#side-footer-links').hidden=false;
   for(const link of document.querySelectorAll('[data-view]'))link.addEventListener('click',event=>{event.preventDefault();showView(link.dataset.view);});
 }
 initTheme();
+initLanguageToggle($('#lang-toggle'));
 void initModelSettings($('#model-settings'));
 render();refresh();restoreCandidate();refreshCounts();
 if(careerMode){
@@ -722,12 +728,12 @@ async function reviewMaterial(pack,material,approve){
   catch(e){error(e.message);}finally{actionBusy=false;render();}
 }
 if(careerMode){
-  $('#new-chat span').textContent='Chronicle';
+  $('#new-chat span').textContent=t('Chronicle');
   $('#new-chat use').setAttribute('href','#i-chronicle');
-  $('#new-chat').title='Chronicle · new conversation (Ctrl+K)';
-  $('#attempts').setAttribute('aria-label','Conversations');
-  $('#chat-text').placeholder='Write to Eregion…';
-  const errands=['Seek new roles','Weigh my fit','Forge a resume','Practise an interview'];
+  $('#new-chat').title=t('Chronicle · new conversation (Ctrl+K)');
+  $('#attempts').setAttribute('aria-label',t('Conversations'));
+  $('#chat-text').placeholder=t('Write to Eregion…');
+  const errands=['Seek new roles','Weigh my fit','Forge a resume','Practise an interview'].map(text=>t(text));
   [...$('#starters').children].forEach((chip,i)=>{if(errands[i])chip.textContent=errands[i];});
   // Council opens the conversation you were in, or the most recent one.
   $('#nav-council').addEventListener('click',event=>{event.preventDefault();const target=selected||attempts.find(a=>a.career&&!a.archived_at)?.run_id;if(target)select(target);else reset();});

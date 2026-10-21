@@ -190,7 +190,7 @@ def test_duplicate_new_chat_opens_cancelled_attempt_and_resume_works(database):
         with TestClient(app, base_url="http://localhost") as client, sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="chrome", headless=True)
             try:
-                page = browser.new_page()
+                page = browser.new_page(locale='en-US')
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 def handle(route):

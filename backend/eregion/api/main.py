@@ -61,7 +61,11 @@ class ChatAssets(StaticFiles):
         # HTML is served only by the chat route, including on case-insensitive Windows.
         if Path(path).suffix.lower() in {".html", ".htm"}:
             return chat_redirect(Request(scope))
-        return await super().get_response(path, scope)
+        response = await super().get_response(path, scope)
+        # Modules import each other without version tags (i18n.js -> i18n-zh.js); revalidate so an
+        # updated script is never mixed with a heuristically cached older one. Unchanged files are a 304.
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def create_app(

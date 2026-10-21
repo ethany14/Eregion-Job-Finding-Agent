@@ -1,4 +1,5 @@
 // Career orchestration reuses the existing application's secure controls and preview.
+import {t,tn} from './i18n.js';
 export function careerRoute(path,body,{enabled,current,attempts=[]}){
   const legacy={url:`/api/auto-apply${path}`,body};
   if(!enabled||['/candidate','/resume-profile','/prepare-message'].includes(path))return legacy;
@@ -8,19 +9,21 @@ export function careerRoute(path,body,{enabled,current,attempts=[]}){
   if(!item?.career)return legacy;
   if(action==='preview'&&item.preview_url)return {url:item.preview_url,body};
   if(['account','account-mode','memory','preview'].includes(action)){
-    if(!item.application_run_id)throw new Error('There is no browser application open for this task yet.');
+    if(!item.application_run_id)throw new Error(t('There is no browser application open for this task yet.'));
     return {url:`/api/auto-apply/${item.application_run_id}${path.slice(id.length+1)}`,body};
   }
   return {url:`/api/career/tasks${path}`,body:['reply','continue'].includes(action)?{...body,application_run_id:item.application_run_id}:body};
 }
 
-const stageLabels={saved:'Saved',analyzing:'Analyzing',analysis_failed:'Analysis failed',needs_evidence:'Needs your evidence',
+const local=o=>Object.fromEntries(Object.entries(o).map(([k,v])=>[k,t(v)]));
+const stageLabels=local({saved:'Saved',analyzing:'Analyzing',analysis_failed:'Analysis failed',needs_evidence:'Needs your evidence',
   materials_ready:'Materials ready',ready_to_apply:'Ready to apply',applied:'Applied',interviewing:'Interviewing',
-  offer:'Offer',rejected:'Rejected',withdrawn:'Withdrawn',archived:'Archived'};
-const materialTitles={tailored_resume:'Tailored resume',cover_letter:'Cover letter',application_answer:'Application answers'};
-const materialStatus={awaiting_review:'Ready for your review',approved:'Approved',failed:'Needs attention',rejected:'Revision requested'};
+  offer:'Offer',rejected:'Rejected',withdrawn:'Withdrawn',archived:'Archived'});
+const materialTitles=local({tailored_resume:'Tailored resume',cover_letter:'Cover letter',application_answer:'Application answers'});
+const materialStatus=local({awaiting_review:'Ready for your review',approved:'Approved',failed:'Needs attention',rejected:'Revision requested'});
 
-// The one action that moves this job forward; the others stay as quiet links.
+// The one action that moves this job forward; the others stay as quiet links. Names are
+// the English source keys; labels are translated where they are shown.
 function nextJobAction(job){
   if(['applied','interviewing','offer'].includes(job.status))return 'Practice interview';
   if(['materials_ready','ready_to_apply'].includes(job.status))return 'Apply';
@@ -42,123 +45,123 @@ export function renderCareerResults({container,item,el,button,send,review,busy=f
   for(const job of item.jobs||[]){
     const card=el('article','','card career-job'),head=el('div','','job-head'),title=el('div');
     const scored=job.match_score!==null&&job.match_score!==undefined;
-    if(scored)head.append(scoreNode(el,Math.round(job.match_score),100,'Match score'));
+    if(scored)head.append(scoreNode(el,Math.round(job.match_score),100,t('Match score')));
     else if(job.score_range?.length===2&&job.score_range.every(Number.isFinite))
-      head.append(scoreNode(el,job.score_range.map(Math.round).join('–'),100,'Estimated match range'));
-    title.append(el('h3',job.title||'Saved job'),el('p',[job.company,job.location].filter(Boolean).join(' · '),'sub'));
+      head.append(scoreNode(el,job.score_range.map(Math.round).join('–'),100,t('Estimated match range')));
+    title.append(el('h3',job.title||t('Saved job')),el('p',[job.company,job.location].filter(Boolean).join(' · '),'sub'));
     head.append(title);card.append(head);
     const counts=job.requirement_counts;
     if(counts){
       const line=el('p','','counts');
       for(const [key,label] of [['matched','matched'],['partial','partial'],['missing','missing'],['needs_confirmation','to confirm'],['unknown','unresolved']]){
         if(!counts[key]&&['needs_confirmation','unknown'].includes(key))continue;
-        const part=el('span');part.append(el('b',String(counts[key]||0)),el('span',label));line.append(part);
+        const part=el('span');part.append(el('b',String(counts[key]||0)),el('span',t(label)));line.append(part);
       }
       card.append(line);
     }
-    if(job.gaps?.length)card.append(el('p',`Gaps: ${job.gaps.join(', ')}.`,'gaps'));
-    if(job.analysis_status==='needs_review')card.append(el('p','Some requirements remain uncertain. Review the evidence before relying on this range.','sub'));
+    if(job.gaps?.length)card.append(el('p',t('Gaps: {list}.',{list:job.gaps.join(', ')}),'gaps'));
+    if(job.analysis_status==='needs_review')card.append(el('p',t('Some requirements remain uncertain. Review the evidence before relying on this range.'),'sub'));
     const unmet=job.match_overview?.confirmed_condition?.filter(c=>c.satisfied===false)||[];
-    if(unmet.length)card.append(el('p',`Unmet conditions: ${unmet.map(c=>c.requirement).join('; ')}.`,'gaps'));
+    if(unmet.length)card.append(el('p',t('Unmet conditions: {list}.',{list:unmet.map(c=>c.requirement).join('; ')}),'gaps'));
     const recommendation=item.recommendations?.find(r=>r.application_id===job.application_id);
     if(recommendation){
       // Same tier contract as the saved record: priority / stretch / to_confirm.
       const why=el('div','','recommendation-reason');
-      why.append(el('p',recommendation.tier_label||'Why this role','eyebrow'),el('p',recommendation.reason));
-      if(recommendation.gaps?.length)why.append(el('p',`Gaps: ${recommendation.gaps.join('; ')}.`,'gaps'));
-      if(recommendation.to_confirm?.length)why.append(el('p',`To confirm: ${recommendation.to_confirm.join('; ')}.`,'gaps'));
-      if(recommendation.next_steps?.length)why.append(el('p',`Next step: ${recommendation.next_steps[0]}`,'sub'));
+      why.append(el('p',t(recommendation.tier_label||'Why this role'),'eyebrow'),el('p',recommendation.reason));
+      if(recommendation.gaps?.length)why.append(el('p',t('Gaps: {list}.',{list:recommendation.gaps.join('; ')}),'gaps'));
+      if(recommendation.to_confirm?.length)why.append(el('p',t('To confirm: {list}.',{list:recommendation.to_confirm.join('; ')}),'gaps'));
+      if(recommendation.next_steps?.length)why.append(el('p',t('Next step: {step}',{step:recommendation.next_steps[0]}),'sub'));
       if(recommendation.score_meaning)why.append(el('p',recommendation.score_meaning,'sub'));
       if(recommendation.caveats)why.append(el('p',recommendation.caveats,'sub'));
       card.append(why);
     }
-    card.append(el('p',stageLabels[job.status]||'Saved','stage'));
+    card.append(el('p',stageLabels[job.status]||t('Saved'),'stage'));
     const actions=el('div','','actions'),primary=nextJobAction(job);
-    const choices=[['Compare fit',`Compare my fit for ${job.title}.`],['Prepare materials',`Prepare a tailored resume and cover letter for ${job.title}.`],
-      ['Apply',`Apply to ${job.title} using the approved materials if available.`],['Practice interview',`Start interview practice for ${job.title}.`]];
+    const choices=[['Compare fit',t('Compare my fit for {title}.',{title:job.title})],['Prepare materials',t('Prepare a tailored resume and cover letter for {title}.',{title:job.title})],
+      ['Apply',t('Apply to {title} using the approved materials if available.',{title:job.title})],['Practice interview',t('Start interview practice for {title}.',{title:job.title})]];
     choices.sort(([a],[b])=>(b===primary)-(a===primary));
     for(const [label,text] of choices){
-      const b=button(label,()=>send(text,{application_id:job.application_id},item.run_id),label===primary?'primary-button':'secondary-button');
+      const b=button(t(label),()=>send(text,{application_id:job.application_id},item.run_id),label===primary?'primary-button':'secondary-button');
       b.disabled=busy;actions.append(b);
     }
-    if(job.url?.startsWith('https://'))actions.append(link('Job posting ↗',job.url));
+    if(job.url?.startsWith('https://'))actions.append(link(t('Job posting ↗'),job.url));
     card.append(actions);add(card,`job:${job.application_id}`,job.result_at||job.created_at);
   }
   for(const pack of item.materials||[]){for(const material of pack.items||[]){
     const stale=pack.status==='stale',folded=material.status==='approved'&&!stale;
-    const title=materialTitles[material.artifact_type]||'Document';
-    const status=stale?'Needs updating':(materialStatus[material.status]||({generating:`Writing ${title.toLowerCase()}…`,verifying:`Checking ${title.toLowerCase()}…`,needs_revision:'Refining supported claims…'}[material.status]||'Preparing'));
+    const title=materialTitles[material.artifact_type]||t('Document');
+    const status=stale?t('Needs updating'):(materialStatus[material.status]||({generating:t('Writing {title}…',{title:title.toLowerCase()}),verifying:t('Checking {title}…',{title:title.toLowerCase()}),needs_revision:t('Refining supported claims…')}[material.status]||t('Preparing')));
     const card=el(folded?'details':'article','',folded?'card folded career-material':'card career-material');
-    if(folded){const summary=el('summary');summary.append(el('span',title),el('span',`Approved · v${material.version||1}`,'ok'));card.append(summary);}
+    if(folded){const summary=el('summary');summary.append(el('span',title),el('span',t('Approved · v{n}',{n:material.version||1}),'ok'));card.append(summary);}
     else{
       // Drafted → Tempered (your review) → Sealed, the same trail the Forge shows.
       const [at,state]=stale?[1,'wait']:{awaiting_review:[1,'wait'],failed:[0,'wait']}[material.status]||[0,'now'];
       const forge=el('ol','','trail forge');
-      ['Drafted','Tempered','Sealed'].forEach((name,i)=>{const st=el('li','',`st ${i<at?'done':i===at?state:''}`);st.append(el('i'),el('span',name));forge.append(st);});
-      card.append(el('p',`Version ${material.version||1} · ${status}`,'eyebrow'),el('h3',title),forge);
+      ['Drafted','Tempered','Sealed'].forEach((name,i)=>{const st=el('li','',`st ${i<at?'done':i===at?state:''}`);st.append(el('i'),el('span',t(name)));forge.append(st);});
+      card.append(el('p',t('Version {n} · {status}',{n:material.version||1,status}),'eyebrow'),el('h3',title),forge);
     }
     const verification=material.verification;
     if(verification){
       const issues=verification.issues?.length||0;
-      card.append(el('p',verification.passed?'Every claim verified against your resume':`${issues} ${issues===1?'claim needs':'claims need'} attention`,verification.passed?'verify':'verify warn'));
+      card.append(el('p',verification.passed?t('Every claim verified against your resume'):tn(issues,'{n} claim needs attention','{n} claims need attention'),verification.passed?'verify':'verify warn'));
     }
     if(material.text){
       if(folded)card.append(el('pre',material.text,'material-text'));
-      else{const details=el('details','','doc-text');details.append(el('summary','Read document'),el('pre',material.text,'material-text'));card.append(details);}
+      else{const details=el('details','','doc-text');details.append(el('summary',t('Read document')),el('pre',material.text,'material-text'));card.append(details);}
     }
     const actions=el('div','','actions');
     if(material.status==='awaiting_review'&&!stale){
-      const approve=button('Approve this version',()=>review(pack,material,true),'primary-button');approve.disabled=busy;actions.append(approve);
+      const approve=button(t('Approve this version'),()=>review(pack,material,true),'primary-button');approve.disabled=busy;actions.append(approve);
     }
-    const revise=button('Request changes',()=>send(`I want to revise this ${title.toLowerCase()}. Ask me what I would like to change.`,{pack_id:pack.pack_id,item_id:material.pack_item_id},item.run_id));revise.disabled=busy||['generating','verifying'].includes(material.status);actions.append(revise);
-    if(material.artifact_type==='tailored_resume'&&material.text)actions.append(link('Download PDF',`/api/packs/${pack.pack_id}/items/${material.pack_item_id}/resume.pdf`));
-    if(material.artifact_type==='cover_letter'&&material.text)actions.append(link('Download PDF',`/api/packs/${pack.pack_id}/items/${material.pack_item_id}/cover-letter.pdf`));
+    const revise=button(t('Request changes'),()=>send(t('I want to revise this {title}. Ask me what I would like to change.',{title:title.toLowerCase()}),{pack_id:pack.pack_id,item_id:material.pack_item_id},item.run_id));revise.disabled=busy||['generating','verifying'].includes(material.status);actions.append(revise);
+    if(material.artifact_type==='tailored_resume'&&material.text)actions.append(link(t('Download PDF'),`/api/packs/${pack.pack_id}/items/${material.pack_item_id}/resume.pdf`));
+    if(material.artifact_type==='cover_letter'&&material.text)actions.append(link(t('Download PDF'),`/api/packs/${pack.pack_id}/items/${material.pack_item_id}/cover-letter.pdf`));
     card.append(actions);add(card,`material:${material.pack_item_id}`,material.created_at);
   }}
   for(const practice of item.interviews||[]){
     const card=el('article','','card career-interview');
     const question=practice.question;
     if(question){
-      card.append(el('p','Interview question','eyebrow'));
-      const text=el('div','','interview-question');text.append(renderText(question.question_text||question.text||question.question||'Your next interview question is ready.'));card.append(text);
+      card.append(el('p',t('Interview question'),'eyebrow'));
+      const text=el('div','','interview-question');text.append(renderText(question.question_text||question.text||question.question||t('Your next interview question is ready.')));card.append(text);
       const actions=el('div','','actions');
-      actions.append(button('Answer in chat',()=>document.querySelector('#chat-text').focus(),'primary-button'));
-      for(const [label,verb] of [['Skip question','Skip the current question'],['End practice','End this practice and show my report']]){
-        const b=button(label,()=>send(`${verb}.`,{interview_id:practice.interview.mock_interview_id},item.run_id));b.disabled=busy;actions.append(b);
+      actions.append(button(t('Answer in chat'),()=>document.querySelector('#chat-text').focus(),'primary-button'));
+      for(const [label,verb] of [['Skip question','Skip the current question.'],['End practice','End this practice and show my report.']]){
+        const b=button(t(label),()=>send(t(verb),{interview_id:practice.interview.mock_interview_id},item.run_id));b.disabled=busy;actions.append(b);
       }
       card.append(actions);
     }
     const pending=(practice.feedback_jobs||[]).filter(job=>job.status==='pending').length;
-    if(pending)card.append(el('p',`Feedback is being prepared for ${pending} saved answer${pending===1?'':'s'}. You can continue with the next question.`,'hint'));
+    if(pending)card.append(el('p',tn(pending,'Feedback is being prepared for {n} saved answer. You can continue with the next question.','Feedback is being prepared for {n} saved answers. You can continue with the next question.'),'hint'));
     if((practice.feedback_jobs||[]).some(job=>job.status==='failed')){
-      card.append(el('p','Some feedback could not be prepared. Your answers are saved.','hint'));
-      card.append(button('Retry saved feedback',()=>send('Retry interview feedback.',{interview_id:practice.interview.mock_interview_id},item.run_id)));
+      card.append(el('p',t('Some feedback could not be prepared. Your answers are saved.'),'hint'));
+      card.append(button(t('Retry saved feedback'),()=>send(t('Retry interview feedback.'),{interview_id:practice.interview.mock_interview_id},item.run_id)));
     }
     const feedbacks=practice.feedback_history?.length?practice.feedback_history:
       practice.latest_feedback?[{evaluation:practice.latest_feedback}]:[];
     for(const feedback of feedbacks){
       const f=feedback.evaluation,row=el('div','','feedback'),dims=el('div','','dims');
-      card.append(el('p',feedback.answer_sequence?`Feedback on answer ${feedback.answer_sequence}`:'Answer feedback','eyebrow'));
+      card.append(el('p',feedback.answer_sequence?t('Feedback on answer {n}',{n:feedback.answer_sequence}):t('Answer feedback'),'eyebrow'));
       if(feedback.question_text)card.append(renderText(feedback.question_text));
-      row.append(scoreNode(el,f.overall_score,5,'Overall'));
+      row.append(scoreNode(el,f.overall_score,5,t('Overall')));
       for(const [key,label] of [['relevance_score','Relevance'],['specificity_score','Specificity'],['evidence_grounding_score','Evidence'],['structure_score','Structure'],['communication_score','Communication']]){
-        if(f[key]==null)continue;const dim=el('div');dim.append(el('span',label),el('b',String(f[key])));dims.append(dim);
+        if(f[key]==null)continue;const dim=el('div');dim.append(el('span',t(label)),el('b',String(f[key])));dims.append(dim);
       }
       row.append(dims);card.append(row);
       const notes=el('div','','notes');
       for(const [label,values] of [['Strengths',f.strengths],['Improve next',f.improvement_areas],['Missing details',f.missing_answer_elements]]){
         if(!values?.length)continue;
-        const section=el('div'),list=el('ul');section.append(el('h4',label));
+        const section=el('div'),list=el('ul');section.append(el('h4',t(label)));
         for(const value of values){const entry=el('li');entry.append(renderText(value));list.append(entry);}
         section.append(list);notes.append(section);
       }
       if(f.suggested_structure)notes.append(renderText(f.suggested_structure));
       card.append(notes);
     }
-    if(practice.report){const r=practice.report,details=el('details','','report');details.open=true;details.append(el('summary','Interview report'));
-      if(r.average_scores?.overall!=null)details.append(el('p',`Average score: ${r.average_scores.overall} / 5`));
+    if(practice.report){const r=practice.report,details=el('details','','report');details.open=true;details.append(el('summary',t('Interview report')));
+      if(r.average_scores?.overall!=null)details.append(el('p',t('Average score: {n} / 5',{n:r.average_scores.overall})));
       for(const priority of r.practice_priorities||[])details.append(renderText(priority));
-      for(const turn of r.question_answer_summaries||[])details.append(el('h4',turn.question),renderText(turn.answer||'Not answered'));
+      for(const turn of r.question_answer_summaries||[])details.append(el('h4',turn.question),renderText(turn.answer||t('Not answered')));
       card.append(details);
     }
     add(card,`interview:${practice.interview?.mock_interview_id||''}:${question?.question_id||'report'}`,

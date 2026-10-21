@@ -41,7 +41,19 @@ body { font-family: var(--sans); font-size: 14.5px; }
 .history-footer { border-top: 0; }
 .me-row { display: flex; align-items: center; gap: 6px; }
 .me-row .me { flex: 1; min-width: 0; }
+.me-row #profile-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .me .avatar { background: transparent; box-shadow: inset 0 0 0 1px var(--line-strong); font-family: var(--serif); font-size: 13px; color: var(--ink-2); }
+
+/* ---------- Language switch: names the other language, written in that language ---------- */
+.lang-toggle { flex: none; height: 32px; min-width: 34px; padding: 0 9px; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--faint); font-family: var(--sans); font-size: 12px; letter-spacing: .04em; transition: color .2s; }
+.lang-toggle:hover, .lang-toggle:focus-visible { color: var(--ink); }
+
+/* ---------- Chinese interface: CJK faces follow the Latin ones, so Latin text keeps its look ---------- */
+:root:lang(zh-CN) {
+  --serif: "EB Garamond", Garamond, Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
+  --map: "IM Fell English SC", "EB Garamond", Georgia, "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
+  --sans: Inter, ui-sans-serif, system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
 
 /* ---------- Day / Night toggle: Ithil (moon) and Anor (sun) ---------- */
 .theme-toggle { position: relative; display: inline-flex; flex: none; padding: 3px; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line-strong); }

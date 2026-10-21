@@ -162,7 +162,7 @@ def test_optional_demographic_controls_render_and_fill_real_dropdowns(database):
         with TestClient(app, base_url="http://localhost") as client, sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="chrome", headless=True)
             try:
-                page = browser.new_page(viewport={"width":1280, "height":1000})
+                page = browser.new_page(locale="en-US",viewport={"width":1280, "height":1000})
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 def handle(route):

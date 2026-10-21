@@ -1,4 +1,5 @@
 // Option clicks only edit a draft; submit sends the whole group once.
+import {t,tn} from './i18n.js';
 export class AnswerDrafts {
   constructor(){this.runs=new Map();this.steps=new Map();}
   // The visible question survives polling re-renders of the same batch.
@@ -29,20 +30,20 @@ export function renderAnswerBatch({container,id,fields,drafts,suggestions={},bus
   if(!fields.length)return;
   const stepped=fields.length>=STEP_THRESHOLD;
   const entries=drafts.sync(id,fields,suggestions),form=el('form','',stepped?'answer-batch stepped':'answer-batch');
-  const commit=el('button','Submit answers & continue','primary-button');commit.type='submit';
+  const commit=el('button',t('Submit answers & continue'),'primary-button');commit.type='submit';
   const progress=el('p','','fine-print'),counter=el('p','','qcount'),rows=[];
   let step=Math.min(drafts.step(id),fields.length-1);
-  const back=button('Back',()=>show(step-1),'text-button'),next=button('Next question',()=>show(step+1),'text-button');
+  const back=button(t('Back'),()=>show(step-1),'text-button'),next=button(t('Next question'),()=>show(step+1),'text-button');
   back.type='button';next.type='button';
   const update=()=>{
     commit.disabled=busy||!drafts.complete(id);
-    progress.textContent=`${Object.keys(drafts.payload(id)).length} of ${fields.length} ready. Your answers are sent together.`;
+    progress.textContent=t('{ready} of {total} ready. Your answers are sent together.',{ready:Object.keys(drafts.payload(id)).length,total:fields.length});
   };
   function show(index){
     step=Math.max(0,Math.min(fields.length-1,index));drafts.step(id,step);
     if(!stepped)return;
     rows.forEach((row,i)=>{row.hidden=i!==step;});
-    counter.textContent=`Question ${step+1} of ${fields.length}`;
+    counter.textContent=t('Question {n} of {total}',{n:step+1,total:fields.length});
     back.disabled=busy||step===0;next.disabled=busy||step===fields.length-1;
   }
   const advance=key=>{if(stepped&&fields[step]?.key===key&&step<fields.length-1)show(step+1);};
@@ -51,23 +52,23 @@ export function renderAnswerBatch({container,id,fields,drafts,suggestions={},bus
     const row=el('div','','question-choice'),label=el('label',f.label,'question-label');row.append(label);rows.push(row);
     const {value,suggestion}=entries.get(f.key);
     if(suggestion){
-      row.append(el('p','Drafted from your resume and details. Edit freely before sending.','draft-note'));
-      for(const detail of suggestion.missing_details||[])row.append(el('p',`Add if you can: ${detail}`,'draft-missing'));
+      row.append(el('p',t('Drafted from your resume and details. Edit freely before sending.'),'draft-note'));
+      for(const detail of suggestion.missing_details||[])row.append(el('p',t('Add if you can: {detail}',{detail}),'draft-missing'));
     }
-    const options=f.kind==='checkbox'?[{label:'Yes',value:true},{label:'No',value:false}]:(f.options||[]).filter(o=>!o.disabled&&String(o.value)!=='');
+    const options=f.kind==='checkbox'?[{label:t('Yes'),value:true},{label:t('No'),value:false}]:(f.options||[]).filter(o=>!o.disabled&&String(o.value)!=='');
     if(options.length&&options.length<=6){
       const choices=el('div','','question-actions');choices.setAttribute('role','group');choices.setAttribute('aria-label',f.label);
       for(const option of options){const answer=f.kind==='checkbox'?option.value:option.label;const b=button(option.label,()=>{drafts.set(id,f.key,answer);for(const other of choices.children)other.setAttribute('aria-pressed','false');b.setAttribute('aria-pressed','true');update();advance(f.key);});b.disabled=busy;b.setAttribute('aria-pressed',String(value===answer));choices.append(b);}row.append(choices);
     }else{
       const multiline=!options.length&&(f.kind==='textarea'||Boolean(suggestion));
       const input=el(options.length?'select':multiline?'textarea':'input');input.disabled=busy;input.id=`batch-${id}-${fields.indexOf(f)}`;label.htmlFor=input.id;
-      if(options.length){const placeholder=el('option','Choose an answer');placeholder.value='';input.append(placeholder);for(const o of options){const n=el('option',o.label);n.value=o.label;input.append(n);}}
-      else{if(multiline)input.rows=6;else input.type=f.kind==='date'?'date':'text';input.maxLength=Math.min(10000,Number(f.constraints?.max_length)>0?Number(f.constraints.max_length):10000);input.placeholder='Your answer';}
+      if(options.length){const placeholder=el('option',t('Choose an answer'));placeholder.value='';input.append(placeholder);for(const o of options){const n=el('option',o.label);n.value=o.label;input.append(n);}}
+      else{if(multiline)input.rows=6;else input.type=f.kind==='date'?'date':'text';input.maxLength=Math.min(10000,Number(f.constraints?.max_length)>0?Number(f.constraints.max_length):10000);input.placeholder=t('Your answer');}
       input.value=value??'';input.addEventListener(options.length?'change':'input',()=>{drafts.set(id,f.key,input.value);update();});row.append(input);
     }
     if(suggestion?.evidence?.length){
       const evidence=el('details','','draft-evidence');
-      evidence.append(el('summary',`Based on ${suggestion.evidence.length} ${suggestion.evidence.length===1?'line':'lines'} from your resume`));
+      evidence.append(el('summary',tn(suggestion.evidence.length,'Based on {n} line from your resume','Based on {n} lines from your resume')));
       for(const item of suggestion.evidence)evidence.append(el('p',`“${item.quote}”`));row.append(evidence);
     }
     form.append(row);
@@ -110,8 +111,8 @@ export function renderPendingQuestion({item,container,drafts,busy,reply,el,butto
   else {
     const inConversation=item.messages?.some(m=>m.role==='assistant'&&(m.id===question.id||m.text===question.text));
     if(item.career&&question.text&&!inConversation)container.append(renderText(question.text));
-    container.append(el('p','Reply in the chat below.','status-line'));
+    container.append(el('p',t('Reply in the chat below.'),'status-line'));
   }
-  if(['running','queued'].includes(item.status))container.append(el('p','I am continuing the independent steps while you answer.','status-line'));
+  if(['running','queued'].includes(item.status))container.append(el('p',t('I am continuing the independent steps while you answer.'),'status-line'));
   return true;
 }

@@ -218,7 +218,7 @@ def test_resume_draft_ui_edits_and_sends_through_real_api(database):
         with TestClient(app, base_url="http://localhost") as client, sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="chrome", headless=True)
             try:
-                page = browser.new_page(viewport={"width":1440, "height":1100})
+                page = browser.new_page(locale="en-US",viewport={"width":1440, "height":1100})
                 errors = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 def handle(route):

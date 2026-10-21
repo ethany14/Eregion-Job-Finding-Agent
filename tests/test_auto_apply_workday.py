@@ -126,7 +126,7 @@ def test_secure_account_ui_keeps_password_out_of_chat_and_clears_input():
     state={'run_id':'account-ui','version':3,'url':URL,'status':'needs_input','message':'Sign in securely.',
         'fields':[],'messages':[],'account_request':{'origin':'https://example.wd5.myworkdayjobs.com','mode':'login','consents':[]}}
     with sync_playwright() as p:
-        browser=p.chromium.launch(channel='chrome',headless=True);page=browser.new_page()
+        browser=p.chromium.launch(channel='chrome',headless=True);page=browser.new_page(locale='en-US')
         def route(r):
             path=urlsplit(r.request.url).path
             if path=='/api/auto-apply':r.fulfill(json={'attempts':[state]})

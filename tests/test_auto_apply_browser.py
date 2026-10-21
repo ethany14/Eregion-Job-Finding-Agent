@@ -58,7 +58,7 @@ def test_answering_during_background_work_keeps_focus_and_sends_one_batch(tmp_pa
     try:
         with TestClient(app,base_url='http://localhost') as client, sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel='chrome',headless=True)
-            page = browser.new_page()
+            page = browser.new_page(locale='en-US')  # English interface (i18n.js follows the browser)
             replies, errors = [], []
             page.on('pageerror',lambda error:errors.append(str(error)))
             def handle(route):
@@ -390,7 +390,7 @@ def test_web_application_flow_with_actual_api_and_offline_employer(tmp_path, mon
     try:
         with TestClient(app, base_url="http://localhost") as client, sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="chrome", headless=True)
-            page = browser.new_page(viewport={"width":1440,"height":1100})
+            page = browser.new_page(viewport={"width":1440,"height":1100},locale="en-US")
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             def handle(route):

@@ -5,10 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Eregion · Career agent</title>
 <script>try{const t=localStorage.getItem('eregion.theme');if(t==='light'||t==='night')document.documentElement.dataset.theme=t;}catch(e){}</script>
+<script>(function(){var l=null;try{l=localStorage.getItem('eregion.lang');}catch(e){}if(l!=='en'&&l!=='zh')l=/^zh/i.test(navigator.language||'')?'zh':'en';var r=document.documentElement;r.lang=l==='zh'?'zh-CN':'en';if(l==='zh'){r.classList.add('i18n-pending');setTimeout(function(){r.classList.remove('i18n-pending');},1500);}})();</script>
+<style>html.i18n-pending body{visibility:hidden}</style>
 <link rel="stylesheet" href="/web-assets/tokens.css?v=v4final-20261009">
 <link rel="stylesheet" href="/web-assets/apply.css?v=switches-20261019">
 <link rel="stylesheet" href="/web-assets/chat-typography.css?v=motion-20261019">
-<link rel="stylesheet" href="/web-assets/eregion.css?v=settings-20261019">
+<link rel="stylesheet" href="/web-assets/eregion.css?v=i18n-20261021">
 </head>
 <body>
 <svg class="sprite" aria-hidden="true" focusable="false">
@@ -67,6 +69,7 @@
       </div>
       <div class="me-row">
         <button id="profile-toggle" class="me" type="button" aria-label="Your details"><span class="avatar" id="profile-initials" aria-hidden="true"></span><span id="profile-name" aria-hidden="true">Your details</span></button>
+        <button id="lang-toggle" class="lang-toggle" type="button"></button>
         <div class="theme-toggle" role="group" aria-label="Theme"><span class="thumb" aria-hidden="true"></span><button class="night" type="button" aria-pressed="true" aria-label="Night theme" title="Night"><svg aria-hidden="true"><use href="#i-ithil"/></svg></button><button class="day" type="button" aria-pressed="false" aria-label="Day theme" title="Day"><svg aria-hidden="true"><use href="#i-anor"/></svg></button></div>
       </div>
     </div>
@@ -219,6 +222,6 @@
   </form>
 </dialog>
 
-<script type="module" src="/web-assets/apply.js?v=switches-20261019"></script>
+<script type="module" src="/web-assets/apply.js?v=i18n-20261021"></script>
 </body>
 </html>
