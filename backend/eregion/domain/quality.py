@@ -414,7 +414,16 @@ def validate_resume_structure(
     for section in resume.sections:
         claims = [claim for entry in section.entries for claim in entry.bullets]
         claims_by_section.setdefault(section.section_type, []).extend(claims)
-        if not section.entries or not claims:
+        # Education can consist entirely of school/degree/date metadata. Its
+        # ownership and exact metadata are validated against the source below.
+        metadata_only_education = (section.section_type == 'education'
+            and bool(section.entries)
+            and all(entry.entry_id in sources
+                    and sources[entry.entry_id].entry_type == 'education'
+                    and sources[entry.entry_id].heading
+                    and sources[entry.entry_id].organization
+                    for entry in section.entries))
+        if not section.entries or (not claims and not metadata_only_education):
             issues.append(ResumeQualityIssue(
                 code="empty_section", message=f"{section.title} contains no claims.",
                 section_type=section.section_type,

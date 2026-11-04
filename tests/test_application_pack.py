@@ -895,3 +895,69 @@ def test_activity_entries_are_accepted_under_experience_only_as_roles(organizati
     assert resume.sections[0].section_type == "experience"
     issues = validate_resume_structure(resume, [source], known_evidence_ids={"e1"})
     assert any(issue.code == "invalid_section_membership" for issue in issues) is not accepted
+
+
+def test_resume_provider_failure_is_terminal_and_explicit_retry_recovers(setup):
+    workflow, packs, _, _, saved, _ = setup
+    class Unavailable(FakePackModel):
+        calls = 0
+        def resume(self, state, preferences):
+            self.calls += 1
+            raise TimeoutError('synthetic provider timeout')
+    broken = Unavailable()
+    workflow._model = broken
+    pack = workflow.create(saved.application.application_id,
+        expected_version=saved.application.version, idempotency_key='timeout-pack')
+    workflow.generate_many(pack.pack_id, ['tailored_resume'], idempotency_key='first')
+    item = packs.items(pack.pack_id)[0]
+    assert item.status == ItemStatus.FAILED
+    assert broken.calls == 1
+    assert packs.artifact(pack.pack_id, item.pack_item_id) is None
+    workflow._model = FakePackModel()
+    workflow.generate_many(pack.pack_id, ['tailored_resume'], idempotency_key='explicit-retry')
+    recovered = packs.item(pack.pack_id, item.pack_item_id)
+    assert recovered.status == ItemStatus.AWAITING_REVIEW
+    assert recovered.verification.passed
+    assert len(packs.versions(pack.pack_id, item.pack_item_id)) == 1
+
+
+def test_resume_verifier_failure_preserves_draft_without_marking_ready(setup):
+    workflow, packs, _, _, saved, _ = setup
+    class UnavailableVerifier(FakePackModel):
+        calls = 0
+        def verify_resume(self, state):
+            self.calls += 1
+            raise ConnectionError('synthetic verifier connection error')
+    model = UnavailableVerifier()
+    workflow._model = model
+    pack = workflow.create(saved.application.application_id,
+        expected_version=saved.application.version, idempotency_key='verify-failure')
+    workflow.generate_many(pack.pack_id, ['tailored_resume'], idempotency_key='first')
+    item = packs.items(pack.pack_id)[0]
+    assert item.status == ItemStatus.FAILED
+    assert model.calls == 1
+    assert packs.artifact(pack.pack_id, item.pack_item_id)
+    assert not item.verification or not item.verification.passed
+
+
+def test_resume_unfixable_claim_stops_at_revision_limit(setup):
+    workflow, packs, _, _, saved, _ = setup
+    class Unsupported(FakePackModel):
+        calls = 0
+        def resume(self, state, preferences):
+            self.calls += 1
+            result = super().resume(state, preferences)
+            result.professional_summary[0].text = 'Managed 500 engineers and increased revenue by $10 million.'
+            return result
+    model = Unsupported()
+    workflow._model = model
+    pack = workflow.create(saved.application.application_id,
+        expected_version=saved.application.version, idempotency_key='unfixable')
+    workflow.generate_many(pack.pack_id, ['tailored_resume'], idempotency_key='first')
+    item = packs.items(pack.pack_id)[0]
+    assert item.status == ItemStatus.NEEDS_REVISION
+    assert item.revision_count == item.max_revisions == 1
+    assert model.calls == 2
+    workflow.generate_many(pack.pack_id, ['tailored_resume'], idempotency_key='repeat')
+    assert model.calls == 2
+    assert len(packs.versions(pack.pack_id, item.pack_item_id)) == 2

@@ -11,6 +11,7 @@ def complete_source_evidence(analysis, original):
     such as expected, incomplete, or coursework-only remain attached to the degree.
     IDs are temporary here; the normal ownership normalizer assigns stable IDs.
     """
+    analysis = _repair_unowned_education(analysis, original)
     evidence, entries = list(analysis.evidence), []
     for index, entry in enumerate(analysis.source_entries):
         ids = list(entry.evidence_ids)
@@ -88,6 +89,31 @@ def complete_source_evidence(analysis, original):
                 heading='Skills', evidence_ids=[evidence_id]))
             evidence.append(ResumeEvidence(evidence_id=evidence_id, source_section='Skills',
                 source_entry_id=source_id, exact_text=block))
+    return analysis.model_copy(update={'evidence': evidence, 'source_entries': entries})
+
+
+def _repair_unowned_education(analysis, original):
+    """Reparse legacy section-wide evidence only when every span has an owner."""
+    from eregion.domain.resume_layout import entry_spans
+    evidence, entries = list(analysis.evidence), []
+    for entry in analysis.source_entries:
+        owned = [e for e in evidence if e.evidence_id in entry.evidence_ids]
+        if (entry.entry_type != 'education' or entry.organization or entry.start_date
+                or entry.end_date or len(owned) != 1 or owned[0].exact_text not in original):
+            entries.append(entry)
+            continue
+        quote = owned[0].exact_text
+        spans = entry_spans(quote, 'education')
+        if not spans or not all(meta.get('organization') for _, _, meta in spans):
+            entries.append(entry)
+            continue
+        evidence.remove(owned[0])
+        for i, (start, end, meta) in enumerate(spans):
+            sid, eid = f'{entry.source_entry_id}-education-{i}', f'{owned[0].evidence_id}-education-{i}'
+            entries.append(ResumeSourceEntry(source_entry_id=sid, entry_type='education',
+                                            evidence_ids=[eid], **meta))
+            evidence.append(ResumeEvidence(evidence_id=eid, source_entry_id=sid,
+                source_section=owned[0].source_section, exact_text=quote[start:end].strip()))
     return analysis.model_copy(update={'evidence': evidence, 'source_entries': entries})
 
 

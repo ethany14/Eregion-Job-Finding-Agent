@@ -78,6 +78,24 @@ class EvidenceSelectionPolicy:
                           if item.current.source_type == EvidenceSourceType.RESUME]
         for item in source_entries:
             quote = normalize_text(item.current.claim_text)
+            # A repaired education section may now have separate, dated school
+            # entries. Retain its historical Vault record but do not write both
+            # the unowned section and its fully covering replacements.
+            current = item.current
+            if (current.category.value == 'education' and not any((
+                    current.employer_or_project, current.role, current.start_date, current.end_date))):
+                remaining = quote
+                replacements = {normalize_text(other.current.claim_text) for other in source_entries
+                    if other.evidence_id != item.evidence_id
+                    and other.current.source_reference == current.source_reference
+                    and other.current.category.value == 'education'
+                    and other.current.employer_or_project and other.current.end_date}
+                for replacement in sorted(replacements, key=len, reverse=True):
+                    if replacement:
+                        remaining = remaining.replace(replacement, '').strip()
+                if quote and not remaining:
+                    by_id.pop(item.evidence_id, None)
+                    continue
             if quote and any(other.evidence_id != item.evidence_id
                    and _same_source_entry(other.current, item.current)
                    and len(normalize_text(other.current.claim_text)) > len(quote)

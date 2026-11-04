@@ -22,7 +22,10 @@ def header_lines(text, preferred_name=None):
             or re.search(r'\b(?:confidential|fictional|synthetic|sample resume|curriculum vitae|do not distribute)\b', line, re.I)
             or section_name(line) in {'resume','cv'})
     def plausible(line):
-        words = line.split()
+        # A preferred name in parentheses is still part of the source name.
+        # Only a single, letter-only name group is accepted here.
+        name_line = re.sub(r"\(([A-Za-zÀ-ÖØ-öø-ÿ'’. -]+)\)", r'\1', line, count=1)
+        words = name_line.split()
         return (1 <= len(words) <= 5 and len(line) <= 80 and not noise(line)
                 and all(all(c.isalpha() or c in "-'’." for c in word) for word in words)
                 and not re.search(r'\b(?:engineer|analyst|developer|manager|resume|curriculum|vitae)\b',line,re.I))

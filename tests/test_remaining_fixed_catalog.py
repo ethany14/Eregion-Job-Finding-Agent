@@ -47,7 +47,9 @@ def test_default_main_service_uses_model_extraction_and_reuses_its_result(tmp_pa
     service=FitAnalysisService(JobAgentStepHandler(analyzer=OfflineMain()),jev_enabled=False)
     first=service._analyze_sync(resume_text=RESUME,job_description=BODY)
     warm=service._analyze_sync(resume_text=RESUME,job_description=BODY)
-    assert asked==['ResumeAnalysis','JobAnalysis','SkillAssessment']
+    # Resume and job extraction run concurrently; only matching depends on both.
+    assert sorted(asked[:2]) == ['JobAnalysis', 'ResumeAnalysis']
+    assert asked[2:] == ['SkillAssessment']
     assert first.catalogue_identity is None and warm.model_calls==0
     assert first.job_analysis==warm.job_analysis
 

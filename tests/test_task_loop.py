@@ -35,6 +35,32 @@ class Harness:
     def wake(self,state):return self.ready and state['wait']['token']!=self.version
 
 
+def test_changing_errors_and_progress_messages_cannot_reset_stall_guard(database):
+    harness = Harness()
+    def fail(*args, **kwargs):
+        harness.lookups += 1
+        return {'error': f'Invalid source reference {harness.lookups}'}
+    harness.execute = fail
+    class Model:
+        calls = 0
+        def invoke(self, messages, tools):
+            self.calls += 1
+            name = 'lookup' if self.calls % 2 else 'say'
+            args = {} if name == 'lookup' else {'text': f'Checking document issue {self.calls}.'}
+            return AIMessage(content='', tool_calls=[{'id':str(self.calls),'name':name,'args':args}])
+    model = Model()
+    repo = TaskRepository(database.session_factory)
+    loop = TaskLoop(repo, harness, model_factory=lambda:model)
+    try:
+        task = loop.start('Prepare my document.', 'changing-errors')
+        result = settled(repo, task['task_id'])
+        assert result['status'] == 'needs_input'
+        assert result['error']['code'] == 'no_progress'
+        assert 1 <= harness.lookups <= 3 and model.calls <= 5
+    finally:
+        loop.close()
+
+
 @pytest.mark.parametrize('broken', [
     AIMessage(content='Notice: pending_fields: []! The system message is: internal protocol'),
     AIMessage(content='partial private content', response_metadata={'finish_reason':'length'}),
@@ -112,11 +138,15 @@ def test_visual_input_is_ephemeral_and_respects_revocation(database,enabled,revo
 
 
 def test_work_can_continue_past_a_slice_without_a_fixed_pipeline(database):
-    repo=TaskRepository(database.session_factory);harness=Harness();counter=0
+    class ProgressingHarness(Harness):
+        def execute(self, *args, **kwargs):
+            self.lookups += 1
+            return {'new_result': self.lookups}
+    repo=TaskRepository(database.session_factory);harness=ProgressingHarness();counter=0
     def decide(s):
         nonlocal counter
         counter+=1
-        return ('update_plan',{'steps':[f'Step {counter}']}) if counter<=15 else ('finish_task',{'text':'Done.'})
+        return ('lookup',{}) if counter<=15 else ('finish_task',{'text':'Done.'})
     loop=TaskLoop(repo,harness,model_factory=lambda:ToolModel(decide))
     try:
         task=loop.start('Any task, with more than twelve decisions.','many-steps')
@@ -418,3 +448,25 @@ def test_a_reply_routed_to_its_capability_waits_without_a_model_turn(database):
         assert state['history'][-1]['tool']=='reply_application'
         time.sleep(.6);assert model.calls==0
     finally:loop.close()
+
+
+@pytest.mark.parametrize('control', ['say', 'update_plan'])
+def test_progress_only_tool_calls_are_bounded(database, control):
+    class Model:
+        calls = 0
+        def invoke(self, messages, tools):
+            self.calls += 1
+            return AIMessage(content='', tool_calls=[{'id': str(self.calls), 'name': control,
+                'args': ({'text': f'Preparing the resume, step {self.calls}.'}
+                         if control == 'say' else {'steps': [f'Prepare version {self.calls}']})}])
+    model = Model()
+    repo = TaskRepository(database.session_factory)
+    loop = TaskLoop(repo, Harness(), model_factory=lambda: model)
+    try:
+        task = loop.start('Generate my resume.', 'narration-only')
+        result = settled(repo, task['task_id'])
+        assert result['status'] == 'needs_input'
+        assert result['error']['code'] == 'no_progress'
+        assert model.calls <= 3
+    finally:
+        loop.close()

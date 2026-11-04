@@ -9,7 +9,7 @@ MONTH = r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(
 DATE = rf'(?:{MONTH}\s+\d{{4}}|\d{{4}}(?:-\d{{2}})?|Present|Current)(?:\s*\((?:expected|completed|in progress)\))?'
 DATE_RANGE = re.compile(rf'(?P<start>{DATE})\s*(?:[–—]|\s-\s|\s+to\s+)\s*(?P<end>{DATE})', re.I)
 DATE_ONLY = re.compile(DATE, re.I)
-DEGREE = re.compile(r'\b(?:bachelor|master|doctor|certificate|diploma|[BM]\.?[ASE]\.?|Ph\.?D\.?)\b', re.I)
+DEGREE = re.compile(r'\b(?:bachelor|master|doctor|certificate|diploma|[BM]\.?Eng\.?|[BM]\.?[ASE]\.?|Ph\.?D\.?)\b', re.I)
 SCHOOL_WORD = r'(?:University|Institute|College|School|Academy|Polytechnic|Assembly)'
 # A school either ends with its keyword (Stanford University) or starts with it
 # (University of Illinois Urbana-Champaign, Institute of Technology ...).
@@ -60,6 +60,15 @@ def header_metadata(text, kind):
             heading, organization = prefix, None
         else:
             return None
+    elif kind == 'education' and len(fields) == 2:
+        # PDF extraction can join the degree and its single graduation date.
+        # Require an explicit school/degree delimiter and keep Expected intact.
+        graduation = re.search(rf'(?P<date>(?:Expected\s+)?{MONTH}\s+\d{{4}})\s*$', fields[1], re.I)
+        if not graduation or not SCHOOL.fullmatch(fields[0]):return None
+        heading = fields[1][:graduation.start()].strip().rstrip(' ,')
+        if not DEGREE.search(heading):return None
+        organization, location = fields[0], None
+        start, end = None, graduation['date']
     else:
         return None
     if kind == 'education' and organization and not DEGREE.search(heading) and DEGREE.search(organization):

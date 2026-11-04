@@ -255,7 +255,10 @@ class ScriptedModel:
         name, args = step['tool'], copy.deepcopy(step.get('arguments', {}))
         self.browser.pending_capture = step.get('browser_capture')
         names = {t['function']['name'] for t in tools}
-        if name not in names:
+        # Stalled historical scripts deliberately keep asking for reads after
+        # the production guard removes them. Let the host reject the call and
+        # prove the circuit breaker stops the replay, rather than failing here.
+        if name not in names and not snapshot.get('must_decide'):
             self.failures.append(f'Tool unavailable: {name}')
             raise AssertionError(f'Script requested unavailable tool {name}')
         if 'application_url' in step:
@@ -426,7 +429,9 @@ def test_b6_r2_seen_public_searches_trigger_board_guidance_and_early_stop(replay
     assert result.state['error']['code'] == 'no_progress'
     assert result.state['model_calls'] < 30  # Well before the unchanged 60-call cap.
     assert not result.state.get('recommendations') and not result.state['jobs']
-    assert searches[-1]['arguments']['limit'] == 2
+    # Error/control calls now contribute to the stall count, so the replay
+    # stops before reaching its later attempt to narrow the same query.
+    assert all(h['arguments']['limit'] == 20 for h in searches)
     assert all(h['result']['no_new_evidence'] for h in searches[1:])
     assert not result.state['candidate_rejections']  # Read alone makes no semantic rejection.
 

@@ -227,7 +227,8 @@ def test_same_tool_provider_failure_has_bounded_retries(database):
     try:
         state=loop.start('Check a service.','bounded-provider-test')
         final=settled(repository,state['task_id'])
-        assert final['status']=='completed' and harness.lookups==2
+        assert final['status']=='needs_input' and harness.lookups==2
+        assert final['error']['code']=='no_progress'
         assert any(h['result'].get('error_code')=='retry_exhausted' for h in final['history'])
         assert 'private provider body' not in json.dumps(final)
     finally:loop.close()

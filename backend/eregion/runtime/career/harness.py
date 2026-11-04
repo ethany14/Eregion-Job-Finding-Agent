@@ -1391,9 +1391,11 @@ class CareerHarness:
             pack = rt.pack_workflow.create(app.application_id,expected_version=app.version,
                 idempotency_key=request_key,scope_to_inputs=not fresh)
             self.repository.link(task_id,'packs',pack.pack_id)
+            previous_version = rt.packs.get(pack.pack_id).version
             rt.pack_workflow.generate_many(pack.pack_id, artifacts, idempotency_key=request_key)
             result = self.materials(pack.pack_id)
-            if not fresh and pack.pack_id in previous:
+            if pack.pack_id in previous and result.get('version') == previous_version:
+                result['no_new_evidence'] = True
                 result['progress_feedback'] = ('Reused saved drafts for identical source inputs; no fresh set was generated. '
                     'If the latest user explicitly requested a new set, call generate_materials with fresh=true and their message_id. '
                     'Otherwise inspect these drafts or return their observed status. Repeating this call will reuse them again.')

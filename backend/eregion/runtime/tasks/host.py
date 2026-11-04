@@ -319,7 +319,7 @@ class TaskHost:
                     'Do not repeat it with reworded queries. Read an unread observed posting, or call search_jobs with '
                     'boards (greenhouse/lever/ashby company tokens or a public Workday host/site) for employers that '
                     'hire this role in the requested location. If alternatives are exhausted, finish with verified results and the limitation.')
-        stalled = bool(repeated and not control)
+        stalled = bool((repeated or outcome.get('error')) and not control)
         wait_after_read = getattr(self.loop.harness, 'wait_after_repeated_read', None)
         if repeated and not outcome.get('error') and wait_after_read:
             with self.loop.lock:
@@ -352,7 +352,12 @@ class TaskHost:
             return None
         if latest['status'] in {'needs_input', 'waiting', 'completed'} or not self.active():
             return {'reason': latest['status']}
-        if self.no_progress(turn, stalled, batched=name in turn.batchable):return {'reason':'no_progress'}
+        # Narration/plan changes are not capability progress. Counting them also
+        # bounds a stream of promises that never attempts the requested work.
+        narration = name in {'say', 'update_plan'}
+        if (not control or narration) and self.no_progress(
+                turn, stalled or narration, batched=name in turn.batchable):
+            return {'reason':'no_progress'}
         return None
 
     def image_message(self, image):

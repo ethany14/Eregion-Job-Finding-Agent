@@ -551,3 +551,15 @@ def test_application_owned_questions_hold_the_parent_and_form_replies_route_back
     assert routed['wait']=={'kind':'application','id':'run-1'} and routed['result']['direct']
     assert c.harness.route_application_reply(linked,{'text':'1 Yes'}) is None
     assert c.harness.route_application_reply({'application_runs':[]},{'text':'1 Yes','context':{'delivered_to_application':'run-1'}}) is None
+
+
+def test_unchanged_material_generation_reports_no_progress(career):
+    c = career
+    job, original = prepare(c)
+    assert not original.get('no_new_evidence')
+    repeated = execute(c, 'generate_materials', application_id=job['application_id'],
+                       artifacts=['tailored_resume', 'cover_letter'])
+    assert repeated['pack_id'] == original['pack_id']
+    assert repeated['version'] == original['version']
+    assert repeated['no_new_evidence'] is True
+    assert all(item['verification']['passed'] for item in repeated['items'])
