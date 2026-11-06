@@ -379,6 +379,27 @@ def ensure_foundational_resume_sections(
     })
 
 
+def role_like(source) -> bool:
+    """An 'other' entry with its own heading and an organization or dates is a role
+    (an activity, volunteering) and may be filed under experience. Loose facts are not."""
+    return bool(source is not None and source.entry_type == "other" and source.heading
+                and (source.organization or source.start_date))
+
+
+def entry_section(source) -> str | None:
+    """The one resume section a source entry may appear in as its own entry.
+
+    Shared by the writer contract and the validator so code never files an entry
+    where the validator rejects it. None: usable only as summary evidence.
+    """
+    if source is None:
+        return None
+    if source.entry_type == "other":
+        return "experience" if role_like(source) else None
+    return {"experience": "experience", "project": "projects", "education": "education",
+            "skills": "skills", "summary": "summary"}.get(source.entry_type)
+
+
 def validate_resume_structure(
     resume: TailoredResume,
     source_entries: Sequence[ResumeSourceEntry],
@@ -509,11 +530,7 @@ def validate_resume_structure(
                     "experience": {"experience"}, "projects": {"project"},
                     "education": {"education"}, "skills": {"skills", "experience", "project", "other"},
                 }[section.section_type]
-                # An 'other' entry with its own heading and an organization or dates is a role
-                # (an activity, volunteering); the writer files it under experience. Loose facts are not.
-                role_like = bool(source and source.entry_type == "other" and source.heading
-                                 and (source.organization or source.start_date))
-                if section.section_type == "experience" and role_like:
+                if section.section_type == "experience" and role_like(source):
                     allowed = allowed | {"other"}
                 if source and source.entry_type not in allowed:
                     issues.append(ResumeQualityIssue(

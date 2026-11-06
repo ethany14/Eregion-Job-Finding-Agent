@@ -3,8 +3,8 @@ from pydantic import Field
 from eregion.domain.schemas import (AnalysisModel, SupportedClaim, TailoredResume, ResumeEntry,
     ResumeSection)
 from eregion.domain.domain import normalize_text
-from eregion.domain.quality import (ensure_foundational_resume_sections, normalize_generated_resume_metadata,
-    validate_resume_structure)
+from eregion.domain.quality import (ensure_foundational_resume_sections, entry_section,
+    normalize_generated_resume_metadata, validate_resume_structure)
 
 class SelectionBullet(AnalysisModel):
     text: str = Field(min_length=1)
@@ -38,8 +38,10 @@ class ResumeSelection(AnalysisModel):
                 raise ValueError('Writer selected evidence from another entry.')
             if any(key not in selected.selected_evidence_ids for b in selected.bullets for key in b.evidence_ids):
                 raise ValueError('Writer cited evidence outside its selection.')
-            kind = {'project': 'projects', 'other': 'experience'}.get(source.entry_type, source.entry_type)
-            if kind == 'summary':
+            # The validator's placement rule: a loose 'other' fact (confirmed career
+            # evidence, a header line) has no section of its own and only backs the summary.
+            kind = entry_section(source)
+            if kind in {None, 'summary'}:
                 continue
             bullets = [claim(b, source.source_entry_id) for b in selected.bullets]
             if not bullets:

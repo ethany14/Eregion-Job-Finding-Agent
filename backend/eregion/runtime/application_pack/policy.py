@@ -39,8 +39,26 @@ def _same_source_entry(left, right) -> bool:
     if (left.category.value == right.category.value == 'skill'
             and section_name(left.source_section or '') != section_name(right.source_section or '')):
         return False
-    return (left.category, left.employer_or_project, left.role, left.start_date, left.end_date) == (
-        right.category, right.employer_or_project, right.role, right.start_date, right.end_date)
+    # Extractions of one resume can disagree on which line is the employer and
+    # which the role ("Acme | Analyst" vs "Analyst | Acme"); the pair is unordered.
+    names = lambda item: sorted([item.employer_or_project or '', item.role or ''])
+    return (left.category, left.start_date, left.end_date) == (
+        right.category, right.start_date, right.end_date) and names(left) == names(right)
+
+
+def _same_dated_entry(fragment, block) -> bool:
+    """A bullet from one import and a whole entry from another import of the same resume.
+
+    Requires the same resume, exactly the same non-empty dates, an owned block, and
+    shared name words; categories may differ (one import's project is another's job).
+    """
+    if not fragment.source_reference or fragment.source_reference != block.source_reference:
+        return False
+    if not (block.start_date or block.end_date) or (fragment.start_date, fragment.end_date) != (
+            block.start_date, block.end_date):
+        return False
+    words = lambda item: _words(f"{item.employer_or_project or ''} {item.role or ''}") - {'github', 'the', 'and'}
+    return bool(words(fragment) & words(block))
 
 
 class EvidenceSelectionPolicy:
@@ -97,7 +115,8 @@ class EvidenceSelectionPolicy:
                     by_id.pop(item.evidence_id, None)
                     continue
             if quote and any(other.evidence_id != item.evidence_id
-                   and _same_source_entry(other.current, item.current)
+                   and (_same_source_entry(other.current, item.current)
+                        or (len(quote) >= 40 and _same_dated_entry(item.current, other.current)))
                    and len(normalize_text(other.current.claim_text)) > len(quote)
                    and quote in normalize_text(other.current.claim_text)
                    for other in source_entries):

@@ -125,6 +125,15 @@ The work is done by `ApplicationPackWorkflow`
    checks immutable citations first (every cited evidence id and version must be
    in the snapshot), then structure, length and preference rules (for example a
    maximum number of summary sentences), then meaning through a semantic judge.
+   The writer contract and the structure check share one placement rule
+   (`entry_section` in [`quality.py`](../../backend/eregion/domain/quality.py)):
+   a loose `other` fact such as confirmed career evidence is summary evidence
+   only, never its own Experience entry, and an Education entry bound to its
+   source passes with its restored heading alone, because header-only quotes are
+   not repeated as bullets. Before writing, a resume quote holding only the
+   name/contact header is dropped, and a bullet from an older import of the
+   same resume is superseded by the same dated entry from a newer import even
+   when the imports swapped employer and role.
 4. **Revise.** An item with issues becomes `needs_revision` and is revised from
    the same evidence snapshot, at most `max_revisions` times (0–3, default 1).
    An opt-in patch mode revises only the cover-letter paragraphs named by the

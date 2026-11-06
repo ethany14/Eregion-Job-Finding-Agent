@@ -892,9 +892,12 @@ def test_activity_entries_are_accepted_under_experience_only_as_roles(organizati
     resume = ResumeSelection(summary=[], entries=[{"entry_id": "s1", "selected_evidence_ids": ["e1"],
         "bullets": [{"text": "Mentored six students.", "evidence_ids": ["e1"]}]}]).expand(
         SimpleNamespace(resume_analysis=analysis))
-    assert resume.sections[0].section_type == "experience"
     issues = validate_resume_structure(resume, [source], known_evidence_ids={"e1"})
-    assert any(issue.code == "invalid_section_membership" for issue in issues) is not accepted
+    assert not any(issue.code == "invalid_section_membership" for issue in issues)
+    # A role is filed under Experience; a loose fact is never filed where the
+    # validator would reject it (it can only back the summary).
+    filed = [section.section_type for section in resume.sections if any(e.entry_id == "s1" for e in section.entries)]
+    assert filed == (["experience"] if accepted else [])
 
 
 def test_resume_provider_failure_is_terminal_and_explicit_retry_recovers(setup):

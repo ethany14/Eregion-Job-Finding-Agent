@@ -8,6 +8,28 @@ from eregion.domain.schemas import ResumeAnalysis, ResumeEvidence, ResumeSourceE
 from test_application_pack import setup
 
 
+def test_snapshot_omits_fully_covered_legacy_education_section_only():
+    def item(key, text, school=None, date=None):
+        return SimpleNamespace(evidence_version_id=key, claim_text=text,
+            category='education', source_section='EDUCATION', source_type='resume',
+            employer_or_project=school, role=None, start_date=None, end_date=date)
+    first = item('first', 'Example University | MEng\nExpected May 2027', 'Example University', 'Expected May 2027')
+    second = item('second', 'Other University | BA\nDec 2025', 'Other University', 'Dec 2025')
+    aggregate = item('aggregate', first.claim_text + '\n' + second.claim_text)
+    snapshot = SimpleNamespace(items=[aggregate, first, second], resume_entries={
+        'aggregate': {'entry_type': 'education', 'heading': None, 'order': 0}})
+    result = resume_analysis_from_snapshot(snapshot)
+    assert len(result.source_entries) == 2
+    assert {e.evidence_id for e in result.evidence} == {'first', 'second'}
+    assert result.source_entries[0].end_date == 'Expected May 2027'
+    assert len(snapshot.items) == 3  # Frozen provenance is unchanged.
+
+    aggregate.claim_text += '\nUnresolved scholarship detail'
+    result = resume_analysis_from_snapshot(snapshot)
+    assert len(result.source_entries) == 3
+    assert 'aggregate' in {e.evidence_id for e in result.evidence}
+
+
 def source(role, quote):
     text = f'Test Candidate\nEXPERIENCE\nExample Corp\n{role}\n2022 - 2023\n{quote}'
     analysis = ResumeAnalysis(summary='', skills=[], education=[], evidence=[

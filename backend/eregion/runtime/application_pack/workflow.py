@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import os
+import re
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import uuid4
@@ -131,6 +132,70 @@ class PackModelClient(Protocol):
     def revise_blocks(self, artifact_type: str, context: str) -> CoverLetter | ApplicationAnswer: ...
 
 
+def _covered_source_sections(items, entries):
+    """Ignore legacy section aggregates only when owned quotes cover every word.
+
+    Keep the frozen evidence intact; this only removes redundant writer sources.
+    Partial coverage must still reach the unresolved-source validation.
+    """
+    covered = set()
+    for item in items:
+        if item.source_type != EvidenceSourceType.RESUME.value:
+            continue
+        meta = entries.get(item.evidence_version_id) or {}
+        kind = meta.get('entry_type') or item.category
+        if kind not in {'education', 'experience'}:
+            continue
+        if any(meta.get(k) for k in ('organization', 'start_date', 'end_date')) or any(
+                (item.employer_or_project, item.role, item.start_date, item.end_date)):
+            continue
+        remaining = normalize_text(item.claim_text)
+        count = 0
+        for child in items:
+            if child is item or child.source_type != item.source_type:
+                continue
+            if normalize_text(child.source_section or '') != normalize_text(item.source_section or ''):
+                continue
+            child_meta = entries.get(child.evidence_version_id) or {}
+            if (child_meta.get('entry_type') or child.category) != kind:
+                continue
+            if not (child_meta.get('organization') or child.employer_or_project or child.role):
+                continue
+            if not (child_meta.get('start_date') or child_meta.get('end_date') or child.start_date or child.end_date):
+                continue
+            quote = normalize_text(child.claim_text)
+            if quote and quote in remaining:
+                remaining = remaining.replace(quote, '', 1).strip()
+                count += 1
+        if count >= 2 and not remaining:
+            covered.add(item.evidence_version_id)
+    return covered
+
+
+def _header_only(item, header_lines) -> bool:
+    """A resume quote holding only the name/contact header is not experience evidence.
+
+    The header is restored from the source resume by code; as evidence it became a
+    heading-less 'other' entry the writer could cite or file as a job.
+    """
+    if item.source_type != EvidenceSourceType.RESUME.value or any(
+            (item.employer_or_project, item.role, item.start_date, item.end_date)):
+        return False
+    if header_lines:
+        remaining = normalize_text(item.claim_text)
+        for line in sorted(header_lines, key=len, reverse=True):
+            remaining = remaining.replace(normalize_text(line), ' ')
+        return bool(normalize_text(item.claim_text)) and not re.search(r'\w', remaining)
+    # Snapshots without stored header lines: the preamble before the first section
+    # heading, where every line is a contact detail or a short name/location line.
+    if normalize_text(item.source_section or 'resume') not in {'resume', 'header', 'contact'}:
+        return False
+    lines = [line.strip() for line in item.claim_text.splitlines() if line.strip()]
+    contact = re.compile(r'@|\+?\d[\d\s().-]{6,}\d|https?://|www\.|linkedin|github|\.(?:com|io|dev|me|org)\b', re.I)
+    return (any(contact.search(line) for line in lines)
+            and all(contact.search(line) or len(line.split()) <= 4 for line in lines))
+
+
 def resume_analysis_from_snapshot(
     snapshot: GenerationEvidenceSnapshot,
 ) -> ResumeAnalysis:
@@ -138,7 +203,11 @@ def resume_analysis_from_snapshot(
     grouped: dict[tuple, list] = {}
     located: dict[tuple, tuple[str | None, int]] = {}
     entries = getattr(snapshot, "resume_entries", None) or {}  # snapshots saved before v10 have none
+    covered_sections = _covered_source_sections(snapshot.items, entries)
+    header_lines = getattr(snapshot, "resume_header_lines", None) or []
     for item in snapshot.items:
+        if item.evidence_version_id in covered_sections or _header_only(item, header_lines):
+            continue
         entry = entries.get(item.evidence_version_id)
         if entry:
             # The resume's own entry: section type, heading, organization, location and order survive.
