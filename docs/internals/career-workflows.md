@@ -133,7 +133,10 @@ The work is done by `ApplicationPackWorkflow`
    not repeated as bullets. Before writing, a resume quote holding only the
    name/contact header is dropped, and a bullet from an older import of the
    same resume is superseded by the same dated entry from a newer import even
-   when the imports swapped employer and role.
+   when the imports swapped employer and role. The name/contact header comes
+   from the header lines frozen with the pack (a preferred name in parentheses,
+   such as "Alex (Sam) Example", counts as a name), or, for a pack frozen
+   without them, from the analyzed resume; it is display data, never evidence.
 4. **Revise.** An item with issues becomes `needs_revision` and is revised from
    the same evidence snapshot, at most `max_revisions` times (0–3, default 1).
    An opt-in patch mode revises only the cover-letter paragraphs named by the

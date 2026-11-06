@@ -196,6 +196,26 @@ def _header_only(item, header_lines) -> bool:
             and all(contact.search(line) or len(line.split()) <= 4 for line in lines))
 
 
+def snapshot_header_lines(snapshot) -> list[str]:
+    """The name/contact header for a pack.
+
+    Snapshots frozen when header extraction failed store none; their header is
+    still in the header-only resume quote, which is excluded from evidence but
+    must keep supplying the document header.
+    """
+    stored = list(getattr(snapshot, "resume_header_lines", None) or [])
+    if stored:
+        return stored
+    from eregion.domain.resume_headers import header_lines
+    for item in getattr(snapshot, "items", []):
+        if _header_only(item, []):
+            # header_lines reads the lines before the first section heading.
+            lines = header_lines(item.claim_text + "\nExperience")
+            if lines:
+                return lines
+    return []
+
+
 def resume_analysis_from_snapshot(
     snapshot: GenerationEvidenceSnapshot,
 ) -> ResumeAnalysis:
@@ -395,6 +415,11 @@ class ApplicationPackWorkflow:
             text = source[0] if source else None
         return text
 
+    def _pack_header_lines(self, snap) -> list[str]:
+        """The frozen header, else (packs frozen before header extraction worked)
+        the header of the analyzed resume. The header is display data, not evidence."""
+        return snapshot_header_lines(snap) or self._resume_header_lines(snap.application_id)
+
     def _resume_header_lines(self, application_id: str) -> list[str]:
         text = self._resume_source_text(application_id)
         return self.resume_header_lines(text) if text is not None else []
@@ -583,7 +608,7 @@ class ApplicationPackWorkflow:
         source = self._workspace.current_snapshot(snap.application_id)
         return json.dumps({"company": employer.company, "title": employer.title,
             "job_description": source.cleaned_job_description,
-            "resume_header_lines": snap.resume_header_lines,
+            "resume_header_lines": self._pack_header_lines(snap),
             "job_analysis": self._writing_job(job),
             "skill_match": self._writing_match(match),
             "evidence": [self._writing_evidence(e) for e in snap.items],
@@ -684,7 +709,7 @@ class ApplicationPackWorkflow:
         snap = self._packs.snapshot(pack_id)
         job, match = self._source(snap.application_id)
         resume_analysis = resume_analysis_from_snapshot(snap)
-        source_text = "\n".join([*snap.resume_header_lines, *self._sectioned_source(resume_analysis)])
+        source_text = "\n".join([*self._pack_header_lines(snap), *self._sectioned_source(resume_analysis)])
         verification = None
         if content is not None and item.regeneration_feedback:
             verification = VerificationResult(passed=True, unsupported_claims=[], revision_feedback=[])

@@ -115,3 +115,21 @@ def test_contact_header_is_not_resume_evidence():
     job = snapshot_item('j', JOB_TEXT, section='Experience', employer='Example Corp', role='Analyst', start='2023', end='2024')
     result = resume_analysis_from_snapshot(SimpleNamespace(items=[header, job], resume_entries={}, resume_header_lines=[]))
     assert {e.evidence_id for e in result.evidence} == {'j'}
+
+
+def test_a_preferred_name_in_parentheses_keeps_the_header():
+    from eregion.domain.resume_headers import header_lines
+    text = 'Alex (Sam) Example\nSpringfield, IL | alex@example.com\nEXPERIENCE\nExample Corp'
+    assert header_lines(text) == ['Alex (Sam) Example', 'Springfield, IL | alex@example.com']
+    # A document banner is still not mistaken for a name.
+    assert header_lines('Resume (Confidential)\nEXPERIENCE\nExample Corp') == []
+
+
+def test_pack_header_comes_from_the_snapshot_or_its_header_quote():
+    from eregion.runtime.application_pack.workflow import snapshot_header_lines
+    header = snapshot_item('h', 'Alex (Sam) Example\nSpringfield, IL | +1 555-010-0199 | alex@example.com')
+    stored = SimpleNamespace(items=[], resume_header_lines=['Alex Example'])
+    assert snapshot_header_lines(stored) == ['Alex Example']
+    recovered = snapshot_header_lines(SimpleNamespace(items=[header], resume_header_lines=[]))
+    assert recovered[0] == 'Alex (Sam) Example' and len(recovered) == 2
+    assert snapshot_header_lines(SimpleNamespace(items=[], resume_header_lines=[])) == []
